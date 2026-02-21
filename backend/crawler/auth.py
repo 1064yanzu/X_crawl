@@ -1,0 +1,108 @@
+"""
+登录状态验证模块
+通过检查 X/Twitter Cookie 判断是否已登录
+
+改动（v2）：
+- 修复 tab.cookies(as_dict=True) 不支持关键字参数的问题（DrissionPage ≥ 4.x 已移除该参数）
+- 新增 inject_cookies()：在访问 X 前先注入持久化 Cookie
+- ensure_login() 成功后自动回写最新 Cookie 以刷新过期时间
+"""
+import logging
+from DrissionPage._pages.chromium_tab import ChromiumTab
+
+from crawler.cookie_manager import (
+    inject_cookies_to_tab,
+    capture_cookies_from_tab,
+)
+
+logger = logging.getLogger(__name__)
+
+X_HOME_URL = "https://x.com/home"
+X_BASE_URL = "https://x.com"
+
+# X 登录必需的两个 Cookie
+_REQUIRED_COOKIES = {"auth_token", "twid"}
+
+
+def _get_cookie_dict(tab: ChromiumTab) -> dict[str, str]:
+    """
+    安全地获取当前 tab 的所有 Cookie，返回 {name: value} 字典。
+    兼容 DrissionPage 各版本（不使用 as_dict 参数）。
+    """
+    try:
+        raw = tab.cookies()  # ≥ 4.x 返回 list[dict] 或 CookieJar
+        if isinstance(raw, list):
+            return {c.get("name", ""): c.get("value", "") for c in raw if c.get("name")}
+        # 兼容旧版本返回字典的情况
+        if isinstance(raw, dict):
+            return raw
+        # 兜底：尝试转为字典
+        return {c.name: c.value for c in raw}
+    except Exception as e:
+        logger.error(f"读取 Cookie 失败: {e}")
+        return {}
+
+
+def check_login(tab: ChromiumTab) -> bool:
+    """
+    检查当前 tab 是否已登录 X
+    通过检查 Cookie 中是否存在 auth_token 和 twid 判断
+
+    Args:
+        tab: DrissionPage ChromiumTab 对象
+
+    Returns:
+        True 表示已登录，False 表示未登录
+    """
+    cookies = _get_cookie_dict(tab)
+    logged_in = all(cookies.get(key) for key in _REQUIRED_COOKIES)
+
+    if logged_in:
+        logger.info("X 登录状态验证通过")
+    else:
+        missing = [k for k in _REQUIRED_COOKIES if not cookies.get(k)]
+        logger.warning(
+            f"未检测到 X 登录凭证（缺少: {missing}）。"
+            "可在设置页手动录入 Cookie 或使用已登录的 Chrome。"
+        )
+    return logged_in
+
+
+def ensure_login(tab: ChromiumTab) -> bool:
+    """
+    确保 tab 已经登录 X。
+    流程：
+      1. 注入持久化 Cookie（若有）
+      2. 访问 x.com
+      3. 检测登录状态
+      4. 若已登录，回写最新 Cookie（刷新持久化）
+
+    Args:
+        tab: DrissionPage ChromiumTab 对象
+
+    Returns:
+        True 表示已登录，False 表示仍未登录
+    """
+    # Step 1: 注入持久化 Cookie（注入后需刷新页面才生效）
+    injected = inject_cookies_to_tab(tab)
+    if injected > 0:
+        logger.info(f"已注入 {injected} 条持久化 Cookie，即将刷新页面...")
+
+    # Step 2: 访问 x.com（注入的 Cookie 会随请求发送）
+    if "x.com" not in tab.url:
+        tab.get(X_BASE_URL + "/", timeout=20)
+    elif injected > 0:
+        # 若已在 x.com，刷新以让注入的 Cookie 生效
+        tab.get(tab.url, timeout=20)
+
+    # Step 3: 检测登录状态
+    logged_in = check_login(tab)
+
+    # Step 4: 登录成功后回写最新 Cookie（更新持久化，防止过期）
+    if logged_in:
+        try:
+            capture_cookies_from_tab(tab)
+        except Exception as e:
+            logger.warning(f"回写 Cookie 失败（不影响爬取）: {e}")
+
+    return logged_in

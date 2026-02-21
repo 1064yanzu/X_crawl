@@ -1,0 +1,80 @@
+"""
+原始响应文件管理 API
+
+提供查询和下载已保存的原始 SearchTimeline 响应文件的接口。
+"""
+import os
+from pathlib import Path
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+
+from crawler.response_saver import (
+    list_task_responses,
+    list_all_tasks,
+    delete_task_responses,
+    get_task_response_dir,
+)
+from config import settings
+
+router = APIRouter(prefix="/api/v1/raw-responses", tags=["raw-responses"])
+
+
+@router.get("/", summary="列出所有已保存原始响应的任务")
+async def get_all_tasks():
+    """
+    返回所有任务的归档摘要，包括：
+    - task_id
+    - 已保存的页数
+    - 总文件大小（字节）
+    - 最后保存时间
+    """
+    tasks = list_all_tasks()
+    return {
+        "save_enabled": settings.save_raw_responses,
+        "storage_dir": str(Path(settings.raw_responses_dir).resolve()),
+        "tasks": tasks,
+    }
+
+
+@router.get("/{task_id}", summary="列出某任务的所有原始响应文件")
+async def get_task_files(task_id: str):
+    """返回指定任务目录下所有 JSON 文件的列表（文件名、大小、保存时间）"""
+    files = list_task_responses(task_id)
+    return {
+        "task_id": task_id,
+        "file_count": len(files),
+        "files": files,
+    }
+
+
+@router.get("/{task_id}/{filename}", summary="下载某个原始响应文件")
+async def download_response_file(task_id: str, filename: str):
+    """
+    下载指定任务下的某个原始响应 JSON 文件。
+    文件名格式：page_{页码}_{时间戳}.json
+    """
+    # 安全校验：只允许 page_*.json 格式，防止路径穿透
+    if not filename.startswith("page_") or not filename.endswith(".json"):
+        raise HTTPException(status_code=400, detail="非法文件名")
+
+    task_dir = get_task_response_dir(task_id)
+    file_path = task_dir / filename
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"文件不存在: task_id={task_id}, filename={filename}",
+        )
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/json",
+        filename=filename,
+    )
+
+
+@router.delete("/{task_id}", summary="删除某任务的所有原始响应文件")
+async def delete_task_files(task_id: str):
+    """删除指定任务目录及其下所有原始响应文件"""
+    count = delete_task_responses(task_id)
+    return {"task_id": task_id, "deleted_files": count}
