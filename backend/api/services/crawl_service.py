@@ -4,6 +4,7 @@
 import logging
 from api.services import task_manager
 from crawler.x_searcher import search, StopSignal
+from crawler.browser import ensure_browser_alive
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,9 @@ def run_search_task(
         f"任务开始: task_id={task_id}, keyword='{keyword}', "
         f"strategy={crawl_strategy}, fetch_replies={fetch_replies}, resume={resume}"
     )
+
+    # 启动前确保浏览器单例可用（处理浏览器被关闭后重启的场景）
+    ensure_browser_alive()
 
     try:
         result = search(
@@ -63,3 +67,5 @@ def run_search_task(
         error_msg = str(e)
         task_manager.update_task_error(task_id, error_msg)
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
+    finally:
+        task_manager.clear_thread(task_id)

@@ -18,6 +18,9 @@ _tasks: dict[str, dict] = {}
 _task_signals: dict[str, str] = {}
 _signal_lock = threading.Lock()
 
+# ── 爬虫线程注册表 ─────────────────────────────────────────────────────
+_task_threads: dict[str, threading.Thread] = {}
+
 # ── 延迟初始化标志 ─────────────────────────────────────────────────────
 _db_initialized = False
 _db_lock = threading.Lock()
@@ -45,9 +48,9 @@ def _ensure_db():
         for task in history:
             tid = task["task_id"]
             _tasks[tid] = task
-            # 历史任务中如果状态为 running/pending，重置为 stopped
+            # 历史任务中如果状态为 running/pending/paused，重置为 stopped
             # （未正常结束的任务，重启后标记为 stopped 避免误导用户）
-            if _tasks[tid]["status"] in ("running", "pending"):
+            if _tasks[tid]["status"] in ("running", "pending", "paused"):
                 _tasks[tid]["status"] = "stopped"
                 _tasks[tid]["finished_at"] = _now_iso()
                 db.save_task(_tasks[tid])
@@ -92,6 +95,22 @@ def clear_signal(task_id: str) -> None:
     """清除任务信号（任务结束后调用）"""
     with _signal_lock:
         _task_signals.pop(task_id, None)
+
+
+def register_thread(task_id: str, thread: threading.Thread) -> None:
+    """注册任务对应的爬虫线程"""
+    _task_threads[task_id] = thread
+
+
+def is_thread_alive(task_id: str) -> bool:
+    """检查任务的爬虫线程是否存活"""
+    thread = _task_threads.get(task_id)
+    return thread is not None and thread.is_alive()
+
+
+def clear_thread(task_id: str) -> None:
+    """清除线程注册（任务结束后调用）"""
+    _task_threads.pop(task_id, None)
 
 
 def pause_task(task_id: str) -> bool:

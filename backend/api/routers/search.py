@@ -53,6 +53,7 @@ async def create_search_task(
         name=f"crawler-{task_id[:8]}",
     )
     thread.start()
+    task_manager.register_thread(task_id, thread)
     task_data = task_manager.get_task(task_id)
     return TaskOut(**task_data)
 

@@ -106,6 +106,17 @@ def get_new_tab():
     return get_browser().new_tab()
 
 
+def ensure_browser_alive() -> None:
+    """检查浏览器单例是否可用，若已失效则重置以便下次 get_browser() 重新创建"""
+    global _browser
+    if _browser is not None:
+        try:
+            _browser.latest_tab
+        except Exception:
+            logger.warning("浏览器实例已失效，重置单例以便重新创建")
+            _browser = None
+
+
 def close_browser():
     """释放浏览器资源（服务关闭时调用）"""
     global _browser

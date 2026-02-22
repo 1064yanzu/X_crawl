@@ -6,9 +6,10 @@ POST   /api/v1/tasks/{task_id}/pause  暂停任务
 POST   /api/v1/tasks/{task_id}/resume 继续任务
 POST   /api/v1/tasks/{task_id}/stop   主动终止任务
 """
+import threading
 from fastapi import APIRouter, HTTPException
 from api.schemas.task import TaskOut
-from api.services import task_manager
+from api.services import task_manager, crawl_service
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
 
@@ -60,20 +61,51 @@ async def pause_task(task_id: str) -> dict:
 @router.post(
     "/{task_id}/resume",
     summary="继续任务",
-    description="唤醒已暂停的任务，爬虫将从暂停位置继续爬取。",
+    description="唤醒已暂停的任务，爬虫将从暂停位置继续爬取。若爬虫线程已死（浏览器被关闭等），会自动重启爬虫线程从断点恢复。",
 )
 async def resume_task(task_id: str) -> dict:
     """继续指定任务"""
-    success = task_manager.resume_task(task_id)
-    if not success:
-        task = task_manager.get_task(task_id)
-        if not task:
-            raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    task = task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+    current_signal = task_manager.get_signal(task_id)
+    if task["status"] not in ("paused",) and current_signal != "pause":
         raise HTTPException(
             status_code=409,
             detail=f"任务当前状态为 '{task['status']}'，无法继续（仅已暂停任务可继续）",
         )
-    return {"message": f"任务 {task_id} 继续信号已发送", "status": "running"}
+
+    if task_manager.is_thread_alive(task_id):
+        # 爬虫线程还活着，只需发送 run 信号即可唤醒轮询
+        task_manager.resume_task(task_id)
+        return {"message": f"任务 {task_id} 继续信号已发送", "status": "running"}
+    else:
+        # 爬虫线程已死（浏览器被关闭等），需要重新启动爬虫线程从断点恢复
+        task_manager.resume_task(task_id)
+        _restart_crawler_thread(task_id, task)
+        return {"message": f"任务 {task_id} 爬虫线程已重启，从断点恢复", "status": "running"}
+
+
+def _restart_crawler_thread(task_id: str, task: dict) -> None:
+    """重新启动爬虫线程，从 checkpoint 恢复爬取"""
+    thread = threading.Thread(
+        target=crawl_service.run_search_task,
+        kwargs=dict(
+            task_id=task_id,
+            keyword=task["keyword"],
+            max_count=task["max_count"],
+            product=task["product"],
+            resume=True,
+            fetch_replies=task.get("fetch_replies", False),
+            max_replies_per_tweet=task.get("max_replies_per_tweet", 20),
+            crawl_strategy=task.get("crawl_strategy", "bfs"),
+        ),
+        daemon=True,
+        name=f"crawler-{task_id[:8]}-resume",
+    )
+    thread.start()
+    task_manager.register_thread(task_id, thread)
 
 
 @router.post(
