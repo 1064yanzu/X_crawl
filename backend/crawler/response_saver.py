@@ -148,3 +148,65 @@ def delete_task_responses(task_id: str) -> int:
     shutil.rmtree(task_dir, ignore_errors=True)
     logger.info(f"已删除任务 {task_id} 的 {count} 个原始响应文件")
     return count
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  回复原始响应存储
+# ═══════════════════════════════════════════════════════════════════
+
+def _get_reply_dir(task_id: str, tweet_id: str) -> Path:
+    """获取指定任务+推文的回复响应存储目录（自动创建）"""
+    task_dir = Path(settings.raw_responses_dir) / task_id / "replies" / tweet_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    return task_dir
+
+
+def save_reply_response(task_id: str, tweet_id: str, page_num: int, body: dict) -> Optional[str]:
+    """
+    保存推文回复的原始 TweetDetail 响应 JSON 到磁盘。
+
+    存储路径：{raw_responses_dir}/{task_id}/replies/{tweet_id}/page_{n}_{ts}.json
+
+    Args:
+        task_id:  任务 ID
+        tweet_id: 推文 ID
+        page_num: 评论页码（从 1 开始）
+        body:     原始响应 dict
+
+    Returns:
+        保存的文件绝对路径，若未开启则返回 None
+    """
+    if not settings.save_raw_responses:
+        return None
+
+    try:
+        reply_dir = _get_reply_dir(task_id, tweet_id)
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+        filename = f"page_{page_num:03d}_{ts}.json"
+        file_path = reply_dir / filename
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(body, f, ensure_ascii=False, indent=2)
+
+        size_kb = file_path.stat().st_size / 1024
+        logger.info(f"回复原始响应已保存: replies/{tweet_id}/{file_path.name} ({size_kb:.1f} KB)")
+        return str(file_path)
+    except Exception as e:
+        logger.warning(f"保存回复原始响应失败（task_id={task_id}, tweet_id={tweet_id}, page={page_num}）: {e}")
+        return None
+
+
+def list_reply_responses(task_id: str, tweet_id: str) -> list[dict]:
+    """列出某推文回复的所有已存储原始响应文件"""
+    reply_dir = Path(settings.raw_responses_dir) / task_id / "replies" / tweet_id
+    if not reply_dir.exists():
+        return []
+    result = []
+    for f in sorted(reply_dir.glob("page_*.json")):
+        stat = f.stat()
+        result.append({
+            "filename": f.name,
+            "size_bytes": stat.st_size,
+            "saved_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return result

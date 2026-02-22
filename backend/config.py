@@ -38,10 +38,19 @@ class Settings(BaseSettings):
 
     # 爬虫配置
     crawler_timeout: float = Field(
-        default=30.0, description="等待数据包超时时间（秒）"
+        default=45.0, description="等待数据包超时时间（秒），适当加大以减少误判"
     )
     crawler_page_interval: float = Field(
-        default=2.0, description="翻页操作间隔（秒）"
+        default=5.0, description="翻页操作间隔（秒），适当放慢避免触发反爬"
+    )
+    crawler_initial_wait: float = Field(
+        default=3.0, description="页面首次访问后额外等待时间（秒），确保初始内容完全加载"
+    )
+    crawler_reply_wait: float = Field(
+        default=4.0, description="评论区每次翻页后额外等待时间（秒），确保评论内容完全加载"
+    )
+    crawler_preview_count: int = Field(
+        default=10, description="实时数据预览展示的最大条数，避免前端性能问题"
     )
 
     # 原始响应持久化配置
@@ -53,6 +62,11 @@ class Settings(BaseSettings):
     )
     raw_responses_max_pages: int = Field(
         default=0, description="每任务最多保存页数，0 = 不限制"
+    )
+
+    # 任务历史数据库
+    tasks_db_path: str = Field(
+        default="tasks.db", description="任务历史 SQLite 数据库路径（相对于 backend/ 或绝对路径）"
     )
 
 

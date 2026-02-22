@@ -13,6 +13,7 @@ from api.routers import search, tasks, checkpoints
 from api.routers import raw_responses as raw_responses_router
 from api.routers import cookies as cookies_router
 from api.routers import export as export_router
+from api.routers import crawler_config as crawler_config_router
 from crawler.browser import close_browser
 from crawler.browser_detector import detect_all
 from config import settings
@@ -73,6 +74,7 @@ app.include_router(checkpoints.router)
 app.include_router(raw_responses_router.router)
 app.include_router(cookies_router.router)
 app.include_router(export_router.router)
+app.include_router(crawler_config_router.router)
 
 
 @app.exception_handler(Exception)

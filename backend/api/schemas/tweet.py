@@ -123,3 +123,18 @@ class TweetOut(BaseModel):
     edit_info: Optional[EditInfo] = None
     # ── 关键词高亮 ──
     text_highlights: list[TextHighlight] = Field(default_factory=list)
+    # ── 回复（评论）列表 ──
+    replies: list[dict] = Field(
+        default_factory=list,
+        description="该推文下抓取到的回复列表（每个元素本身也是推文结构，含 thread_context）"
+    )
+    # ── 线程上下文（当作为回复出现时） ──
+    thread_context: Optional[dict] = Field(
+        default=None,
+        description="当该推文是回复时，包含其所在对话串的上下文信息"
+    )
+    thread_more_cursor: Optional[str] = Field(
+        default=None,
+        description="展开更多同串回复的 cursor（若该串回复未完全展示）"
+    )
+
