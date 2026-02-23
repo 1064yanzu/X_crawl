@@ -38,8 +38,11 @@ _TAB_MAP: dict[str, str] = {
 
 
 class StopSignal(Exception):
-    """爬虫被主动终止时抛出"""
-    pass
+    """爬虫被主动终止时抛出，可携带已处理的部分数据"""
+
+    def __init__(self, message: str = "", partial_tweets: list[dict] | None = None):
+        super().__init__(message)
+        self.partial_tweets = partial_tweets or []
 
 
 class SearchResult:
@@ -91,7 +94,7 @@ def _check_signal(task_id: Optional[str]) -> None:
 
 def search(
     keyword: str,
-    max_count: int = 20,
+    max_count: int = 0,
     product: ProductType = "Top",
     timeout: Optional[float] = None,
     task_id: Optional[str] = None,
@@ -105,7 +108,7 @@ def search(
 
     Args:
         keyword:               搜索关键词
-        max_count:             最多获取的推文数量
+        max_count:             最多获取的推文数量（0 表示不限制）
         product:               搜索类型
         timeout:               等待每个数据包的超时（秒）
         task_id:               任务 ID（用于检查点文件命名和原始响应存储）
@@ -139,15 +142,15 @@ def search(
                 f"从断点恢复：task_id={task_id}，"
                 f"已有 {len(all_tweets)} 条，cursor={'有' if start_cursor else '无'}"
             )
-            if len(all_tweets) >= max_count or not start_cursor:
+            if (max_count and len(all_tweets) >= max_count) or not start_cursor:
                 # 断点恢复时若搜索已完成，直接进入回复抓取阶段
                 if fetch_replies and not _tweets_have_replies(all_tweets):
                     all_tweets = _fetch_replies_for_tweets(
                         all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
                     )
                 return SearchResult(
-                    tweets=all_tweets[:max_count],
-                    total_fetched=len(all_tweets[:max_count]),
+                    tweets=all_tweets[:max_count] if max_count else all_tweets,
+                    total_fetched=len(all_tweets[:max_count] if max_count else all_tweets),
                     keyword=keyword,
                     resumed=resumed,
                     replies_fetched=_count_replies(all_tweets),
@@ -188,7 +191,7 @@ def search(
 
         page_num = page_fetched + 1
 
-        while len(all_tweets) < max_count:
+        while not max_count or len(all_tweets) < max_count:
             # 每页开始前检查控制信号
             _check_signal(task_id)
 
@@ -253,11 +256,20 @@ def search(
                         if task_id:
                             _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
 
-                    new_tweets = _fetch_replies_for_tweets_with_tab(
-                        new_tweets, max_replies_per_tweet, task_id, timeout,
-                        progress_callback=_on_reply_progress,
-                    )
-                    tab.listen.start(SEARCH_TIMELINE_PATTERN)
+                    try:
+                        new_tweets = _fetch_replies_for_tweets_with_tab(
+                            new_tweets, max_replies_per_tweet, task_id, timeout,
+                            progress_callback=_on_reply_progress,
+                        )
+                    except StopSignal as e:
+                        # 即使被中断，也要合并已处理的部分结果（含已抓取的回复）
+                        if e.partial_tweets:
+                            all_tweets.extend(e.partial_tweets)
+                        if task_id:
+                            _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
+                        raise
+                    finally:
+                        tab.listen.start(SEARCH_TIMELINE_PATTERN)
 
                 all_tweets.extend(new_tweets)
 
@@ -282,7 +294,7 @@ def search(
                 if not bottom_cursor:
                     logger.info("无更多数据（bottom_cursor 为空），停止")
                     break
-                if len(all_tweets) >= max_count:
+                if max_count and len(all_tweets) >= max_count:
                     logger.info(f"已达目标 {max_count} 条，停止")
                     break
 
@@ -304,20 +316,29 @@ def search(
         except Exception:
             pass
 
-    all_tweets = all_tweets[:max_count]
+    if max_count:
+        all_tweets = all_tweets[:max_count]
 
     # ── BFS：搜索完成后统一抓取所有推文的回复 ──────────────────────
     if fetch_replies and crawl_strategy == "bfs":
         logger.info(f"[BFS] 搜索完成，开始统一抓取 {len(all_tweets)} 条推文的回复...")
-        all_tweets = _fetch_replies_for_tweets(
-            all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
-        )
+        try:
+            all_tweets = _fetch_replies_for_tweets(
+                all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
+            )
+        except StopSignal as e:
+            # 即使被中断，也要保存已处理的部分结果（含已抓取的回复）
+            if e.partial_tweets:
+                all_tweets = e.partial_tweets
+            if task_id:
+                _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
+            raise
         # 更新最终进度
         if task_id:
             _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
 
     # 爬取完成，删除检查点
-    if task_id and len(all_tweets) >= max_count:
+    if task_id and (not max_count or len(all_tweets) >= max_count):
         delete_checkpoint(task_id)
 
     result = SearchResult(
@@ -368,14 +389,22 @@ def _fetch_replies_for_tweets_with_tab(
     timeout: Optional[float],
     progress_callback=None,
 ) -> list[dict]:
-    """DFS 模式：在当前进程内顺序抓取回复（每条推文单独新开标签页）"""
+    """DFS 模式：在当前进程内顺序抓取回复（每条推文单独新开标签页）
+
+    当收到 StopSignal 时，会将已抓取回复的推文 + 剩余未处理推文合并后
+    通过 StopSignal.partial_tweets 携带，确保已抓取的回复数据不丢失。
+    """
     from crawler.reply_fetcher import fetch_replies
 
     updated = []
     total = len(tweets)
     for idx, tweet in enumerate(tweets):
-        # 检查停止信号
-        _check_signal(task_id)
+        # 检查停止信号——若被终止，携带已处理数据抛出
+        try:
+            _check_signal(task_id)
+        except StopSignal as e:
+            _merge_remaining(updated, tweets, idx)
+            raise StopSignal(str(e), partial_tweets=updated)
 
         tweet_id = tweet.get("id", "")
         screen_name = (tweet.get("author") or {}).get("screen_name", "")
@@ -402,8 +431,13 @@ def _fetch_replies_for_tweets_with_tab(
             )
             tweet = dict(tweet)
             tweet["replies"] = replies
-        except StopSignal:
-            raise
+        except StopSignal as e:
+            # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
+            tweet = dict(tweet)
+            tweet["replies"] = []
+            updated.append(tweet)
+            _merge_remaining(updated, tweets, idx + 1)
+            raise StopSignal(str(e), partial_tweets=updated)
         except Exception as e:
             logger.error(f"[DFS] 抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
             tweet = dict(tweet)
@@ -426,6 +460,14 @@ def _tweets_have_replies(tweets: list[dict]) -> bool:
 def _count_replies(tweets: list[dict]) -> int:
     """统计推文列表中回复总数"""
     return sum(len(tweet.get("replies", [])) for tweet in tweets)
+
+
+def _merge_remaining(updated: list[dict], tweets: list[dict], start_idx: int) -> None:
+    """将未处理的推文（无 replies）追加到 updated 列表中，用于 StopSignal 中断时保留完整数据"""
+    for t in tweets[start_idx:]:
+        t_copy = dict(t)
+        t_copy.setdefault("replies", [])
+        updated.append(t_copy)
 
 
 # ═══════════════════════════════════════════════════════════════════

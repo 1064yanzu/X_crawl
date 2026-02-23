@@ -195,6 +195,9 @@ def fetch_replies_batch(
     批量抓取多条推文的回复（BFS 广度优先模式下使用）。
     每条推文开独立标签页抓取，顺序执行。
 
+    当收到 StopSignal 时，会将已抓取回复的推文 + 剩余未处理推文合并后
+    通过 StopSignal.partial_tweets 携带，确保已抓取的回复数据不丢失。
+
     Args:
         tweets:                推文 dict 列表（需含 id 和 author.screen_name）
         max_replies_per_tweet: 每条推文最多抓取的回复数量
@@ -210,7 +213,11 @@ def fetch_replies_batch(
     updated_tweets = []
     for i, tweet in enumerate(tweets):
         # 每条推文前检查信号
-        _check_signal(task_id)
+        try:
+            _check_signal(task_id)
+        except StopSignal as e:
+            _merge_remaining_batch(updated_tweets, tweets, i)
+            raise StopSignal(str(e), partial_tweets=updated_tweets)
 
         tweet_id = tweet.get("id", "")
         screen_name = (tweet.get("author") or {}).get("screen_name", "")
@@ -231,8 +238,13 @@ def fetch_replies_batch(
             )
             tweet = dict(tweet)  # 浅拷贝，防止污染原对象
             tweet["replies"] = replies
-        except StopSignal:
-            raise
+        except StopSignal as e:
+            # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
+            tweet = dict(tweet)
+            tweet["replies"] = []
+            updated_tweets.append(tweet)
+            _merge_remaining_batch(updated_tweets, tweets, i + 1)
+            raise StopSignal(str(e), partial_tweets=updated_tweets)
         except Exception as e:
             logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
             tweet = dict(tweet)
@@ -250,3 +262,11 @@ def fetch_replies_batch(
         _jittered_sleep(settings.crawler_page_interval)
 
     return updated_tweets
+
+
+def _merge_remaining_batch(updated: list[dict], tweets: list[dict], start_idx: int) -> None:
+    """将未处理的推文（无 replies）追加到 updated 列表中"""
+    for t in tweets[start_idx:]:
+        t_copy = dict(t)
+        t_copy.setdefault("replies", [])
+        updated.append(t_copy)

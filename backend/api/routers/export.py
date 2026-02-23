@@ -44,6 +44,9 @@ EXPORT_FIELDS = [
     ("bookmark_count", "收藏数"),
     # 链接
     ("url", "推文链接"),
+    # 数据类型（区分原帖/回复）
+    ("row_type", "数据类型"),
+    ("parent_tweet_id", "所属推文ID"),
     # 回复关系
     ("reply_to_tweet_id", "回复目标推文ID"),
     ("reply_to_username", "回复目标用户"),
@@ -148,15 +151,31 @@ def _flatten_tweet(tweet: dict) -> dict:
     return flat
 
 
+def _collect_replies(replies: list[dict], parent_id: str) -> list[dict]:
+    """递归收集回复，并标注数据类型和所属推文ID"""
+    all_replies = []
+    for reply in replies:
+        reply_copy = dict(reply)
+        reply_copy["row_type"] = "回复"
+        reply_copy["parent_tweet_id"] = parent_id
+        all_replies.append(reply_copy)
+        nested = reply.get("replies", [])
+        if nested and isinstance(nested, list):
+            all_replies.extend(_collect_replies(nested, parent_id=parent_id))
+    return all_replies
+
+
 def _collect_all_rows(tweets: list[dict]) -> list[dict]:
-    """递归收集所有推文及其嵌套回复，展平为独立行"""
+    """递归收集所有推文及其嵌套回复，展平为独立行，并标注数据类型"""
     all_rows = []
     for tweet in tweets:
-        all_rows.append(tweet)
+        tweet_copy = dict(tweet)
+        tweet_copy["row_type"] = "原帖"
+        tweet_copy["parent_tweet_id"] = ""
+        all_rows.append(tweet_copy)
         replies = tweet.get("replies", [])
         if replies and isinstance(replies, list):
-            # 递归展平嵌套回复
-            all_rows.extend(_collect_all_rows(replies))
+            all_rows.extend(_collect_replies(replies, parent_id=tweet.get("id", "")))
     return all_rows
 
 
@@ -177,6 +196,11 @@ def _get_task_data(task_id: str) -> tuple[dict, list[dict]]:
     logger.info(
         f"导出任务 {task_id}: {tweet_count} 条推文 + {reply_count} 条回复 = {len(all_rows)} 行"
     )
+    if reply_count == 0 and task.get("fetch_replies"):
+        logger.warning(
+            f"任务 {task_id} 开启了回复抓取但导出回复数为 0，"
+            f"请检查推文数据中 replies 字段是否存在"
+        )
 
     return task, all_rows
 
@@ -276,6 +300,8 @@ def _build_excel(tweets: list[dict]) -> bytes:
         10,  # 浏览数
         10,  # 收藏数
         50,  # 推文链接
+        10,  # 数据类型
+        20,  # 所属推文ID
         20,  # 回复目标推文ID
         16,  # 回复目标用户
         10,  # 是否转推

@@ -12,6 +12,7 @@
 docs
 backend/raw_responses
 .agents
+CLAUDE.md
 # testing
 /coverage
 backend/.venv
