@@ -56,6 +56,7 @@ class SearchResult:
         resumed: bool = False,
         replies_fetched: int = 0,
         stopped: bool = False,
+        failed_replies: list[dict] | None = None,
     ):
         self.tweets = tweets
         self.total_fetched = total_fetched
@@ -63,6 +64,7 @@ class SearchResult:
         self.resumed = resumed
         self.replies_fetched = replies_fetched
         self.stopped = stopped
+        self.failed_replies = failed_replies or []
 
 
 def _jittered_sleep(base_seconds: float) -> None:
@@ -129,6 +131,7 @@ def search(
     start_cursor: Optional[str] = None
     page_fetched: int = 0
     resumed = False
+    _all_failed_records: list[dict] = []  # 收集所有失败的回复记录
 
     if resume and task_id:
         ckpt = load_checkpoint(task_id)
@@ -144,8 +147,9 @@ def search(
             )
             if (max_count and len(all_tweets) >= max_count) or not start_cursor:
                 # 断点恢复时若搜索已完成，直接进入回复抓取阶段
+                _resume_failed: list[dict] = []
                 if fetch_replies and not _tweets_have_replies(all_tweets):
-                    all_tweets = _fetch_replies_for_tweets(
+                    all_tweets, _resume_failed = _fetch_replies_for_tweets(
                         all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
                     )
                 return SearchResult(
@@ -154,6 +158,7 @@ def search(
                     keyword=keyword,
                     resumed=resumed,
                     replies_fetched=_count_replies(all_tweets),
+                    failed_replies=_resume_failed,
                 )
 
     # ── 2. 启动浏览器标签页 ─────────────────────────────────────────
@@ -238,14 +243,17 @@ def search(
                 if fetch_replies and crawl_strategy == "dfs" and new_tweets:
                     logger.info(f"[DFS] 立即抓取 {len(new_tweets)} 条新推文的回复...")
 
-                    # ★ 关键修复：进入回复抓取前，先把已搜到的推文推入预览
-                    # 让前端可以立即看到搜索结果，不必等回复全部抓完
-                    _tmp_all = list(all_tweets) + new_tweets
+                    # 进入回复抓取前，先把已搜到的推文推入预览（仅更新预览，不覆盖 tweets）
+                    # ★ 关键修复：不使用 update_task_progress 保存无回复的 tweets，
+                    #   避免后续 _persist 调用用无回复版本覆盖数据库
                     if task_id:
-                        _task_mgr.update_task_progress(task_id, page_num, _tmp_all)
                         _task_mgr.update_task_phase(
                             task_id,
                             f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复..."
+                        )
+                        # 仅更新预览推文，让前端看到搜索结果
+                        _task_mgr.update_preview_tweets(
+                            task_id, page_num, list(all_tweets) + new_tweets
                         )
 
                     # 停止搜索监听，切换到回复抓取，完成后重新开启搜索监听
@@ -257,10 +265,11 @@ def search(
                             _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
 
                     try:
-                        new_tweets = _fetch_replies_for_tweets_with_tab(
+                        new_tweets, _dfs_failed = _fetch_replies_for_tweets_with_tab(
                             new_tweets, max_replies_per_tweet, task_id, timeout,
                             progress_callback=_on_reply_progress,
                         )
+                        _all_failed_records.extend(_dfs_failed)
                     except StopSignal as e:
                         # 即使被中断，也要合并已处理的部分结果（含已抓取的回复）
                         if e.partial_tweets:
@@ -323,9 +332,10 @@ def search(
     if fetch_replies and crawl_strategy == "bfs":
         logger.info(f"[BFS] 搜索完成，开始统一抓取 {len(all_tweets)} 条推文的回复...")
         try:
-            all_tweets = _fetch_replies_for_tweets(
+            all_tweets, _bfs_failed = _fetch_replies_for_tweets(
                 all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
             )
+            _all_failed_records.extend(_bfs_failed)
         except StopSignal as e:
             # 即使被中断，也要保存已处理的部分结果（含已抓取的回复）
             if e.partial_tweets:
@@ -347,10 +357,13 @@ def search(
         keyword=keyword,
         resumed=resumed,
         replies_fetched=_count_replies(all_tweets),
+        failed_replies=_all_failed_records,
     )
     logger.info(
         f"搜索完成：{result.total_fetched} 条推文，"
-        f"回复 {result.replies_fetched} 条，resumed={resumed}"
+        f"回复 {result.replies_fetched} 条，"
+        f"失败 {len(result.failed_replies)} 条，"
+        f"resumed={resumed}"
     )
     return result
 
@@ -365,8 +378,8 @@ def _fetch_replies_for_tweets(
     task_id: Optional[str],
     timeout: Optional[float],
     strategy: str,
-) -> list[dict]:
-    """BFS 模式批量抓取回复（延迟导入防止循环引用）"""
+) -> tuple[list[dict], list[dict]]:
+    """BFS 模式批量抓取回复（延迟导入防止循环引用），返回 (updated_tweets, failed_records)"""
     from crawler.reply_fetcher import fetch_replies_batch
 
     def on_progress(tweet_id: str, replies: list[dict]):
@@ -388,15 +401,19 @@ def _fetch_replies_for_tweets_with_tab(
     task_id: Optional[str],
     timeout: Optional[float],
     progress_callback=None,
-) -> list[dict]:
+) -> tuple[list[dict], list[dict]]:
     """DFS 模式：在当前进程内顺序抓取回复（每条推文单独新开标签页）
 
     当收到 StopSignal 时，会将已抓取回复的推文 + 剩余未处理推文合并后
     通过 StopSignal.partial_tweets 携带，确保已抓取的回复数据不丢失。
+
+    Returns:
+        (updated_tweets, failed_records) 元组
     """
     from crawler.reply_fetcher import fetch_replies
 
     updated = []
+    failed_records: list[dict] = []
     total = len(tweets)
     for idx, tweet in enumerate(tweets):
         # 检查停止信号——若被终止，携带已处理数据抛出
@@ -408,29 +425,45 @@ def _fetch_replies_for_tweets_with_tab(
 
         tweet_id = tweet.get("id", "")
         screen_name = (tweet.get("author") or {}).get("screen_name", "")
+        # 从推文元数据获取预期评论数
+        expected_count = (tweet.get("metrics") or {}).get("replies", 0)
         if not tweet_id or not screen_name:
             tweet = dict(tweet)
             tweet["replies"] = []
             updated.append(tweet)
             continue
 
+        # 跳过 0 评论的帖子，无需打开详情页
+        if expected_count == 0:
+            logger.info(f"[DFS] 跳过 tweet_id={tweet_id}（0 条评论），无需抓取回复")
+            tweet = dict(tweet)
+            tweet["replies"] = []
+            updated.append(tweet)
+            if progress_callback:
+                progress_callback(tweet_id, [])
+            continue
+
         # 更新阶段提示（告知用户正在抓第几条推文的回复）
         if task_id:
             _task_mgr.update_task_phase(
                 task_id,
-                f"正在抓取第 {idx + 1}/{total} 条推文的回复 (@{screen_name})..."
+                f"正在抓取第 {idx + 1}/{total} 条推文的回复 (@{screen_name}，预期 {expected_count} 条)..."
             )
 
         try:
-            replies = fetch_replies(
+            replies, failure_info = fetch_replies(
                 tweet_id=tweet_id,
                 screen_name=screen_name,
                 max_count=max_replies_per_tweet,
                 task_id=task_id,
                 timeout=timeout,
+                expected_count=expected_count,
             )
             tweet = dict(tweet)
             tweet["replies"] = replies
+            if failure_info:
+                failure_info["task_id"] = task_id or ""
+                failed_records.append(failure_info)
         except StopSignal as e:
             # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
             tweet = dict(tweet)
@@ -442,6 +475,14 @@ def _fetch_replies_for_tweets_with_tab(
             logger.error(f"[DFS] 抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
             tweet = dict(tweet)
             tweet["replies"] = []
+            failed_records.append({
+                "task_id": task_id or "",
+                "tweet_id": tweet_id,
+                "screen_name": screen_name,
+                "expected_count": expected_count,
+                "fetched_count": 0,
+                "error_reason": f"异常: {str(e)[:200]}",
+            })
         updated.append(tweet)
 
         # 每条回复抓完后触发回调（更新 replies_fetched 计数）
@@ -449,7 +490,7 @@ def _fetch_replies_for_tweets_with_tab(
             progress_callback(tweet_id, tweet.get("replies", []))
 
         _jittered_sleep(settings.crawler_page_interval)
-    return updated
+    return updated, failed_records
 
 
 def _tweets_have_replies(tweets: list[dict]) -> bool:

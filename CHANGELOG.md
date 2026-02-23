@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-02-23
+
+### ✨ 新增：浏览器切换功能 + SPA 优化
+
+**浏览器管理**
+- 重构 `browser_detector.py`：支持检测 13 种主流浏览器（Chrome/Edge/Brave/Arc/Firefox/Safari 等）
+- 新增 `browser_selector.py` 路由：3 个 API 接口（列出/选择/查询已选浏览器）
+- `config.py` 新增 `browser_selected_id` 持久化字段
+- `browser.py` 新增 `_resolve_browser_paths()` 三级优先级浏览器解析
+
+**前端**
+- 新增 `BrowserSelector.tsx`：浏览器选择卡片组件（自动检测、持久化选择、不兼容标记）
+- 设置页新增「浏览器选择」卡片
+- API 服务层新增 browsers 和 rawResponses 命名空间
+- SPA 优化：统一使用 API 服务层，消除内联 fetch() 调用
+
+## 2026-02-23
+
+### 🐛 修复：每个帖子仅获取约 10 条评论（翻页失效）
+
+**问题**：每个推文下明明有几十甚至上百条评论，却每次只获取约 10 条。
+
+**根本原因**：`reply_fetcher.py` 的翻页机制使用 `tab.scroll.to_bottom()` 来加载更多评论，但 X 的推文详情页实际上需要**点击 "Show more replies" 按钮**才能触发新的 TweetDetail API 请求。简单滚动只能捕获第一批评论。
+
+**修复**：`crawler/reply_fetcher.py`（v3 重写）
+- 新增 `_click_show_more(tab)` 函数：检测并点击 "Show more replies" / "显示更多回复" 等按钮（多语言兼容 + CSS 选择器兜底）
+- 新增 `_scroll_incremental(tab)` 函数：渐进式多步滚动（每步 500px × 5 步），替代简单的 `scroll.to_bottom()`
+- 翻页策略由「直接滚动」改为「优先点击按钮 → 兜底渐进式滚动」
+- 利用推文元数据 `metrics.replies`（reply_count）作为预期评论数参考，超时但远未达预期时自动重试
+- 连续空页计数器（默认 3 次）自动停止，防止无限循环
+
+**修复**：`crawler/x_searcher.py`
+- DFS 模式 `_fetch_replies_for_tweets_with_tab` 从推文 `metrics.replies` 提取预期评论数并传递给 `fetch_replies()`
+- 阶段提示增加预期评论数显示
+
 ## 2026-02-22
 
 ### ✨ 优化：将 GitHub 仓库连接方式改为 SSH

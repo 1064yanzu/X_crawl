@@ -1,5 +1,6 @@
 """
 浏览器管理模块
+- 策略零（用户选择）：使用用户在设置界面选择的浏览器启动
 - 策略一（推荐）：接管模式 —— 连接用户以 --remote-debugging-port=9222 启动的 Chrome
   优点：完全复用真实浏览器指纹、Cookie、登录状态，无任何冲突风险
 - 策略二（回退）：独立 Profile 模式 —— 使用与系统 Chrome 隔离的专用目录启动
@@ -20,7 +21,7 @@ from typing import Optional
 from DrissionPage import Chromium, ChromiumOptions
 
 from config import settings
-from crawler.browser_detector import detect_browser_path
+from crawler.browser_detector import detect_browser_path, get_browser_by_id
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,21 @@ _browser: Optional[Chromium] = None
 
 # 爬虫专用独立 Profile 目录（与系统 Chrome 完全隔离）
 _CRAWLER_PROFILE_DIR = str(Path.home() / ".xcrawl-browser-profile")
+
+
+def _is_user_data_locked(user_data_path: str) -> bool:
+    """
+    检测浏览器用户数据目录是否已被另一个浏览器进程占用。
+    
+    Chromium 内核浏览器运行时会在用户数据目录下创建 SingletonLock 文件。
+    如果该文件存在，说明有另一个 Chrome 实例正在使用该目录，
+    此时再用同一目录启动新实例会导致 BrowserConnectError。
+    """
+    lock_file = os.path.join(user_data_path, "SingletonLock")
+    if os.path.exists(lock_file) or os.path.islink(lock_file):
+        logger.info(f"检测到锁文件: {lock_file}，该目录正被另一个浏览器进程使用")
+        return True
+    return False
 
 
 def _is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
@@ -47,6 +63,37 @@ def get_browser() -> Chromium:
     return _browser
 
 
+def _resolve_browser_paths() -> tuple[Optional[str], Optional[str]]:
+    """
+    根据用户选择 + 配置项 + 自动检测，解析浏览器可执行文件路径和用户数据目录。
+
+    优先级：
+    1. settings.browser_exec_path（手动配置的路径，最高优先级）
+    2. settings.browser_selected_id（用户在 UI 中选择的浏览器）
+    3. 自动检测（detect_browser_path）
+
+    Returns:
+        (exec_path, user_data_path)  任一可能为 None
+    """
+    # 1. 手动配置优先
+    if settings.browser_exec_path:
+        logger.info(f"使用手动配置的浏览器路径: {settings.browser_exec_path}")
+        return settings.browser_exec_path, settings.browser_user_data_path or None
+
+    # 2. 用户在 UI 选择的浏览器
+    selected_id = settings.browser_selected_id
+    if selected_id:
+        browser_info = get_browser_by_id(selected_id)
+        if browser_info and browser_info["compatible"]:
+            logger.info(f"使用用户选择的浏览器: {browser_info['name']} ({selected_id})")
+            return browser_info["path"], browser_info.get("user_data_path")
+        else:
+            logger.warning(f"用户选择的浏览器 '{selected_id}' 不可用或不兼容，回退到自动检测")
+
+    # 3. 自动检测
+    return detect_browser_path(), None
+
+
 def _create_browser() -> Chromium:
     debug_port = settings.browser_debug_port  # 默认 9222
 
@@ -63,19 +110,26 @@ def _create_browser() -> Chromium:
         except Exception as e:
             logger.warning(f"接管浏览器失败（{e}），降级使用独立 Profile 模式")
 
-    # ── 策略二：独立 Profile 启动（回退）─────────────────────────────────────
-    # 使用与系统 Chrome 完全隔离的专用目录，避免用户目录冲突
+    # ── 策略二：根据用户选择/自动检测启动 ─────────────────────────────────────
     logger.info("未检测到可接管的浏览器，使用独立 Profile 启动...")
     co = ChromiumOptions()
 
-    # 浏览器可执行文件路径
-    exec_path = settings.browser_exec_path or detect_browser_path()
+    # 解析浏览器路径（用户选择 → 自动检测）
+    exec_path, detected_user_data = _resolve_browser_paths()
     if exec_path:
         co.set_browser_path(exec_path)
         logger.info(f"使用浏览器: {exec_path}")
 
-    # 用户数据目录：优先使用配置项，否则使用爬虫专用隔离目录
-    user_data = settings.browser_user_data_path or _CRAWLER_PROFILE_DIR
+    # 用户数据目录：手动配置 > 用户选择的浏览器自带 > 爬虫专用隔离目录
+    # 如果检测到的目录已被另一个浏览器进程占用（存在 SingletonLock），回退到隔离目录
+    candidate_user_data = settings.browser_user_data_path or detected_user_data
+    if candidate_user_data and _is_user_data_locked(candidate_user_data):
+        logger.warning(
+            f"用户数据目录 {candidate_user_data} 已被另一个浏览器进程占用，"
+            f"回退到爬虫专用隔离目录: {_CRAWLER_PROFILE_DIR}"
+        )
+        candidate_user_data = None
+    user_data = candidate_user_data or _CRAWLER_PROFILE_DIR
     os.makedirs(user_data, exist_ok=True)
     co.set_user_data_path(user_data)
     logger.info(f"使用用户数据目录: {user_data}")
@@ -114,6 +168,22 @@ def ensure_browser_alive() -> None:
             _browser.latest_tab
         except Exception:
             logger.warning("浏览器实例已失效，重置单例以便重新创建")
+            _browser = None
+
+
+def reset_browser() -> None:
+    """关闭并重置浏览器单例，下次 get_browser() 将根据最新设置重新创建。
+
+    用于任务恢复时，确保使用用户最新选择的浏览器。
+    """
+    global _browser
+    if _browser is not None:
+        try:
+            _browser.quit()
+            logger.info("已关闭旧浏览器实例，将根据最新配置重新创建")
+        except Exception as e:
+            logger.warning(f"关闭旧浏览器时出错（不影响后续操作）: {e}")
+        finally:
             _browser = None
 
 

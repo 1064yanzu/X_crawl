@@ -1,10 +1,11 @@
 """
-爬虫服务层（v3 - 支持回复抓取、BFS/DFS 策略、任务主动终止）
+爬虫服务层（v4 - 支持失败评论记录 + 回复抓取 + BFS/DFS 策略 + 任务主动终止）
 """
 import logging
 from api.services import task_manager
+from api.services.failed_replies_db import record_failed_replies_batch
 from crawler.x_searcher import search, StopSignal
-from crawler.browser import ensure_browser_alive
+from crawler.browser import ensure_browser_alive, reset_browser
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ def run_search_task(
     fetch_replies: bool = False,
     max_replies_per_tweet: int = 20,
     crawl_strategy: str = "bfs",
+    force_new_browser: bool = False,
 ) -> None:
     """
     执行搜索任务（BackgroundTasks 后台运行）
@@ -25,6 +27,7 @@ def run_search_task(
     - 支持回复抓取（BFS/DFS 策略）
     - 解析结果直接以 dict 存储
     - 捕获 StopSignal，将任务状态设为 stopped（区别于 failed）
+    - 记录失败/不全的评论抓取到数据库
     """
     task_manager.update_task_status(task_id, "running")
     logger.info(
@@ -32,7 +35,10 @@ def run_search_task(
         f"strategy={crawl_strategy}, fetch_replies={fetch_replies}, resume={resume}"
     )
 
-    # 启动前确保浏览器单例可用（处理浏览器被关闭后重启的场景）
+    # 启动前确保浏览器可用
+    # 恢复已结束任务时重置浏览器单例，确保使用最新的浏览器设置
+    if force_new_browser:
+        reset_browser()
     ensure_browser_alive()
 
     try:
@@ -52,9 +58,13 @@ def run_search_task(
             resumed=result.resumed,
             replies_fetched=result.replies_fetched,
         )
+        # 记录失败的评论抓取
+        if result.failed_replies:
+            _persist_failed_records(task_id, result.failed_replies)
         logger.info(
             f"任务完成: task_id={task_id}, "
             f"推文 {len(result.tweets)} 条, 回复 {result.replies_fetched} 条, "
+            f"失败 {len(result.failed_replies)} 条, "
             f"resumed={result.resumed}"
         )
     except StopSignal as e:
@@ -69,3 +79,14 @@ def run_search_task(
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
     finally:
         task_manager.clear_thread(task_id)
+
+
+def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:
+    """将失败记录批量写入数据库"""
+    try:
+        for rec in failed_records:
+            rec.setdefault("task_id", task_id)
+        record_failed_replies_batch(failed_records)
+        logger.info(f"已记录 {len(failed_records)} 条失败评论抓取: task_id={task_id}")
+    except Exception as e:
+        logger.error(f"记录失败评论失败: task_id={task_id}, error={e}", exc_info=True)

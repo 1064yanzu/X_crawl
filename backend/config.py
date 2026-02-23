@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     browser_proxy: str = Field(
         default="", description="代理配置，格式：http://ip:port"
     )
+    browser_selected_id: str = Field(
+        default="", description="用户选择的浏览器 ID（如 chrome、edge），留空则自动检测"
+    )
     browser_headless: bool = Field(
         default=False, description="是否无头模式"
     )
@@ -71,3 +74,32 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def apply_user_settings() -> None:
+    """
+    从数据库加载用户设置，覆盖 .env 默认值。
+    用户在设置界面配置的值优先级最高。
+    应在数据库初始化之后调用。
+    """
+    try:
+        from api.services.settings_db import get_all_settings
+        user_settings = get_all_settings()
+        if not user_settings:
+            return
+
+        applied = []
+        for key, value in user_settings.items():
+            if hasattr(settings, key):
+                try:
+                    setattr(settings, key, value)
+                    applied.append(key)
+                except Exception:
+                    pass  # 类型不匹配等异常忽略
+
+        if applied:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"已加载用户持久化设置（覆盖 .env）: {', '.join(applied)}")
+    except Exception:
+        pass  # 数据库未初始化时静默跳过

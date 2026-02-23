@@ -55,6 +55,9 @@ def _ensure_db():
                 _tasks[tid]["finished_at"] = _now_iso()
                 db.save_task(_tasks[tid])
         _db_initialized = True
+        # 数据库初始化完成后，加载用户持久化设置覆盖 .env 默认值
+        from config import apply_user_settings
+        apply_user_settings()
 
 
 # 在模块加载时立即初始化
@@ -138,6 +141,25 @@ def resume_task(task_id: str) -> bool:
     send_signal(task_id, "run")
     _tasks[task_id]["status"] = "running"
     logger.info(f"任务已恢复: task_id={task_id}")
+    _persist(task_id)
+    return True
+
+
+def resume_finished_task(task_id: str) -> bool:
+    """恢复已结束的任务（done/stopped/failed），从断点继续爬取"""
+    _ensure_db()
+    task = _tasks.get(task_id)
+    if not task:
+        return False
+    if task["status"] not in ("done", "stopped", "failed"):
+        return False
+    # 重置状态
+    _tasks[task_id]["status"] = "running"
+    _tasks[task_id]["finished_at"] = None
+    _tasks[task_id]["error"] = None
+    _tasks[task_id]["crawl_phase"] = ""
+    send_signal(task_id, "run")
+    logger.info(f"已结束任务恢复爬取: task_id={task_id}, 原状态={task['status']}")
     _persist(task_id)
     return True
 
@@ -242,6 +264,24 @@ def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[di
             "preview_tweets": preview,
         })
         _persist(task_id)
+
+
+def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: list[dict]) -> None:
+    """仅更新预览推文和 result_count（不修改 tweets 字段，避免覆盖已有回复数据）
+
+    用于 DFS 模式下，回复抓取前推送预览——让前端先看到搜索结果，
+    但不会把无回复的 tweets 写入 _tasks["tweets"]。
+    """
+    from config import settings
+    if task_id in _tasks:
+        preview_count = settings.crawler_preview_count
+        preview = tweets_for_preview[-preview_count:] if len(tweets_for_preview) > preview_count else tweets_for_preview
+        _tasks[task_id].update({
+            "current_page": current_page,
+            "result_count": len(tweets_for_preview),
+            "preview_tweets": preview,
+        })
+        # 注意：不调用 _persist()，避免将无回复的预览数据写入数据库
 
 
 def update_task_replies_progress(task_id: str, tweet_id: str, reply_count: int) -> None:

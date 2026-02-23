@@ -62,6 +62,36 @@ def init_db(db_path: str | Path) -> None:
                 preview_json          TEXT DEFAULT '[]'
             )
         """)
+
+        # 失败评论记录表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS failed_replies (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id         TEXT NOT NULL,
+                tweet_id        TEXT NOT NULL,
+                screen_name     TEXT DEFAULT '',
+                expected_count  INTEGER DEFAULT 0,
+                fetched_count   INTEGER DEFAULT 0,
+                error_reason    TEXT DEFAULT '',
+                status          TEXT DEFAULT 'pending',
+                created_at      TEXT NOT NULL,
+                retried_at      TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_failed_replies_task
+            ON failed_replies(task_id)
+        """)
+
+        # 用户设置持久化表
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                key         TEXT PRIMARY KEY,
+                value       TEXT NOT NULL,
+                updated_at  TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
 

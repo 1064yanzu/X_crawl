@@ -61,19 +61,35 @@ async def pause_task(task_id: str) -> dict:
 @router.post(
     "/{task_id}/resume",
     summary="继续任务",
-    description="唤醒已暂停的任务，爬虫将从暂停位置继续爬取。若爬虫线程已死（浏览器被关闭等），会自动重启爬虫线程从断点恢复。",
+    description=(
+        "恢复任务爬取。支持以下场景：\n"
+        "- **已暂停 (paused)**：唤醒暂停中的爬虫，从暂停位置继续\n"
+        "- **已完成/已终止/已失败 (done/stopped/failed)**：重启爬虫线程，从断点继续爬取\n"
+        "若爬虫线程已死（浏览器被关闭等），会自动重启爬虫线程。"
+    ),
 )
 async def resume_task(task_id: str) -> dict:
-    """继续指定任务"""
+    """继续指定任务（支持已暂停和已结束的任务）"""
     task = task_manager.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
+    status = task["status"]
+
+    # ── 已结束的任务：重启爬虫线程从断点恢复 ──
+    if status in ("done", "stopped", "failed"):
+        success = task_manager.resume_finished_task(task_id)
+        if not success:
+            raise HTTPException(status_code=409, detail=f"任务恢复失败: {task_id}")
+        _restart_crawler_thread(task_id, task)
+        return {"message": f"任务 {task_id} 已从断点恢复爬取", "status": "running"}
+
+    # ── 已暂停的任务：唤醒或重启 ──
     current_signal = task_manager.get_signal(task_id)
-    if task["status"] not in ("paused",) and current_signal != "pause":
+    if status not in ("paused",) and current_signal != "pause":
         raise HTTPException(
             status_code=409,
-            detail=f"任务当前状态为 '{task['status']}'，无法继续（仅已暂停任务可继续）",
+            detail=f"任务当前状态为 '{status}'，无法继续",
         )
 
     if task_manager.is_thread_alive(task_id):
@@ -100,6 +116,7 @@ def _restart_crawler_thread(task_id: str, task: dict) -> None:
             fetch_replies=task.get("fetch_replies", False),
             max_replies_per_tweet=task.get("max_replies_per_tweet", 20),
             crawl_strategy=task.get("crawl_strategy", "bfs"),
+            force_new_browser=True,
         ),
         daemon=True,
         name=f"crawler-{task_id[:8]}-resume",
