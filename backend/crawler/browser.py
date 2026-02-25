@@ -144,10 +144,27 @@ def _create_browser() -> Chromium:
         co.headless(True)
         logger.info("浏览器运行于无头模式")
 
-    # 性能优化
-    co.no_imgs(True)
+    # 反识别与运行稳定策略
+    # 1) 显式窗口尺寸与语言，减少自动化默认指纹
+    co.set_argument("--window-size", "1366,860")
+    co.set_argument("--lang", "en-US,en")
+    # 2) 尽量降低 webdriver 痕迹（对不同版本 Chromium 生效程度不同）
+    co.set_argument("--disable-blink-features", "AutomationControlled")
+    co.set_argument("--disable-infobars")
+    co.set_argument("--no-first-run")
+    co.set_argument("--no-default-browser-check")
+
+    # 图片加载策略
+    co.no_imgs(settings.browser_block_images)
+    if settings.browser_block_images:
+        logger.info("已启用禁图模式（browser_block_images=True）")
+
+    # 统一加载模式配置
+    load_mode = settings.browser_load_mode if settings.browser_load_mode in ("normal", "eager", "none") else "normal"
+    co.set_load_mode(load_mode)
+    logger.info(f"页面加载模式: {load_mode}")
+
     co.mute(True)
-    co.set_load_mode("eager")
 
     logger.info("正在初始化浏览器...")
     browser = Chromium(co)

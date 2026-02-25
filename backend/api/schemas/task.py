@@ -6,6 +6,7 @@ from typing import Optional, Literal
 
 TaskStatus = Literal["pending", "running", "done", "failed", "paused", "stopped"]
 CrawlStrategy = Literal["bfs", "dfs"]
+RiskState = Literal["none", "challenge", "rate_limited", "login_required"]
 
 
 class SearchRequest(BaseModel):
@@ -51,6 +52,7 @@ class TaskOut(BaseModel):
     created_at: str
     finished_at: Optional[str] = None
     error: Optional[str] = None
+    risk_state: RiskState = Field(default="none", description="风险状态：none/challenge/rate_limited/login_required")
     resumed: bool = Field(default=False, description="是否从断点恢复")
     # ── 回复相关字段 ──
     fetch_replies: bool = Field(default=False)
@@ -63,4 +65,3 @@ class TaskOut(BaseModel):
     preview_tweets: list[dict] = Field(default_factory=list)
     # ── 爬虫实时阶段状态（空字符串代表尚未开始）──
     crawl_phase: str = Field(default="", description="爬虫当前阶段描述，如 '等待第 1 页数据'")
-

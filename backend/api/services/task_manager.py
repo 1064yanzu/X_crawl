@@ -8,7 +8,7 @@ import threading
 import logging
 from datetime import datetime, timezone
 from typing import Optional
-from api.schemas.task import TaskStatus
+from api.schemas.task import TaskStatus, RiskState
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,7 @@ def _ensure_db():
         history = db.load_all_tasks()
         for task in history:
             tid = task["task_id"]
+            task.setdefault("risk_state", "none")
             _tasks[tid] = task
             # 历史任务中如果状态为 running/pending/paused，重置为 stopped
             # （未正常结束的任务，重启后标记为 stopped 避免误导用户）
@@ -75,6 +76,13 @@ def _persist(task_id: str) -> None:
             _get_db().save_task(task)
         except Exception as e:
             logger.error(f"持久化任务失败 task_id={task_id}: {e}")
+
+
+def _make_preview(tweets: list[dict]) -> list[dict]:
+    """从推文列表中截取预览子集（取最新的 N 条）"""
+    from config import settings
+    n = settings.crawler_preview_count
+    return tweets[-n:] if len(tweets) > n else list(tweets)
 
 
 # ── 任务控制信号 ──────────────────────────────────────────────────────
@@ -140,6 +148,7 @@ def resume_task(task_id: str) -> bool:
         return False
     send_signal(task_id, "run")
     _tasks[task_id]["status"] = "running"
+    _tasks[task_id]["risk_state"] = "none"
     logger.info(f"任务已恢复: task_id={task_id}")
     _persist(task_id)
     return True
@@ -157,6 +166,7 @@ def resume_finished_task(task_id: str) -> bool:
     _tasks[task_id]["status"] = "running"
     _tasks[task_id]["finished_at"] = None
     _tasks[task_id]["error"] = None
+    _tasks[task_id]["risk_state"] = "none"
     _tasks[task_id]["crawl_phase"] = ""
     send_signal(task_id, "run")
     logger.info(f"已结束任务恢复爬取: task_id={task_id}, 原状态={task['status']}")
@@ -175,6 +185,12 @@ def stop_task(task_id: str) -> bool:
     return True
 
 
+def count_active_tasks() -> int:
+    """统计当前处于运行态的任务数（pending/running）。"""
+    _ensure_db()
+    return sum(1 for task in _tasks.values() if task.get("status") in ("pending", "running"))
+
+
 # ── 任务 CRUD ─────────────────────────────────────────────────────────
 
 def create_task(
@@ -189,6 +205,12 @@ def create_task(
     """创建（或复用）任务，返回 task_id"""
     _ensure_db()
     tid = task_id or str(uuid.uuid4())
+
+    # 并发防护：如果该 task_id 的爬虫线程仍在运行，拒绝重复创建
+    if tid in _tasks and is_thread_alive(tid):
+        logger.warning(f"任务 {tid} 的爬虫线程仍在运行中，忽略重复创建请求")
+        return tid
+
     existing = _tasks.get(tid, {})
     _tasks[tid] = {
         "task_id": tid,
@@ -201,6 +223,7 @@ def create_task(
         "created_at": existing.get("created_at") or _now_iso(),
         "finished_at": None,
         "error": None,
+        "risk_state": "none",
         "resumed": False,
         # 回复相关
         "fetch_replies": fetch_replies,
@@ -237,6 +260,8 @@ def list_tasks() -> list[dict]:
 def update_task_status(task_id: str, status: TaskStatus) -> None:
     if task_id in _tasks:
         _tasks[task_id]["status"] = status
+        if status in ("running", "done", "stopped"):
+            _tasks[task_id]["risk_state"] = "none"
         if status in ("done", "failed", "stopped"):
             _tasks[task_id]["finished_at"] = _now_iso()
             clear_signal(task_id)
@@ -251,17 +276,14 @@ def update_task_phase(task_id: str, phase: str) -> None:
 
 def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[dict]) -> None:
     """爬虫每爬完一页后调用，实时更新进度（同步持久化）"""
-    from config import settings
     if task_id in _tasks:
         replies_fetched = sum(len(t.get("replies", [])) for t in tweets_so_far)
-        preview_count = settings.crawler_preview_count
-        preview = tweets_so_far[-preview_count:] if len(tweets_so_far) > preview_count else tweets_so_far
         _tasks[task_id].update({
             "current_page": current_page,
             "result_count": len(tweets_so_far),
             "replies_fetched": replies_fetched,
             "tweets": tweets_so_far,
-            "preview_tweets": preview,
+            "preview_tweets": _make_preview(tweets_so_far),
         })
         _persist(task_id)
 
@@ -272,14 +294,11 @@ def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: l
     用于 DFS 模式下，回复抓取前推送预览——让前端先看到搜索结果，
     但不会把无回复的 tweets 写入 _tasks["tweets"]。
     """
-    from config import settings
     if task_id in _tasks:
-        preview_count = settings.crawler_preview_count
-        preview = tweets_for_preview[-preview_count:] if len(tweets_for_preview) > preview_count else tweets_for_preview
         _tasks[task_id].update({
             "current_page": current_page,
             "result_count": len(tweets_for_preview),
-            "preview_tweets": preview,
+            "preview_tweets": _make_preview(tweets_for_preview),
         })
         # 注意：不调用 _persist()，避免将无回复的预览数据写入数据库
 
@@ -294,16 +313,14 @@ def update_task_replies_progress(task_id: str, tweet_id: str, reply_count: int) 
 
 
 def update_task_result(task_id: str, tweets: list[dict], resumed: bool = False, replies_fetched: int = 0) -> None:
-    from config import settings
     if task_id in _tasks:
-        preview_count = settings.crawler_preview_count
-        preview = tweets[-preview_count:] if len(tweets) > preview_count else tweets
         _tasks[task_id].update({
             "tweets": tweets,
-            "preview_tweets": preview,
+            "preview_tweets": _make_preview(tweets),
             "result_count": len(tweets),
             "status": "done",
             "finished_at": _now_iso(),
+            "risk_state": "none",
             "resumed": resumed,
             "replies_fetched": replies_fetched,
         })
@@ -313,16 +330,14 @@ def update_task_result(task_id: str, tweets: list[dict], resumed: bool = False, 
 
 def update_task_stopped(task_id: str, tweets_so_far: list[dict]) -> None:
     """主动终止任务时调用，保存已抓取数据"""
-    from config import settings
     if task_id in _tasks:
-        preview_count = settings.crawler_preview_count
-        preview = tweets_so_far[-preview_count:] if len(tweets_so_far) > preview_count else tweets_so_far
         _tasks[task_id].update({
             "tweets": tweets_so_far,
-            "preview_tweets": preview,
+            "preview_tweets": _make_preview(tweets_so_far),
             "result_count": len(tweets_so_far),
             "status": "stopped",
             "finished_at": _now_iso(),
+            "risk_state": "none",
         })
         clear_signal(task_id)
         _persist(task_id)
@@ -337,6 +352,19 @@ def update_task_error(task_id: str, error: str) -> None:
         })
         clear_signal(task_id)
         _persist(task_id)
+
+
+def update_task_risk_paused(task_id: str, risk_state: RiskState, phase: str) -> None:
+    """风险触发时将任务切换为 paused，等待人工处理后继续。"""
+    if task_id not in _tasks:
+        return
+    send_signal(task_id, "pause")
+    _tasks[task_id].update({
+        "status": "paused",
+        "risk_state": risk_state,
+        "crawl_phase": phase,
+    })
+    _persist(task_id)
 
 
 def delete_task(task_id: str) -> bool:

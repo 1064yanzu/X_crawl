@@ -1,0 +1,66 @@
+"""监听数据包守卫：过滤无关数据包并保证响应结构可解析。"""
+from __future__ import annotations
+
+import time
+from typing import Callable, Optional, Any
+
+
+BodyPredicate = Callable[[dict], bool]
+
+
+def _safe_packet_body(packet) -> Optional[dict]:
+    try:
+        body = packet.response.body
+        if isinstance(body, dict):
+            return body
+    except Exception:
+        return None
+    return None
+
+
+def wait_for_target_packet(
+    tab,
+    *,
+    timeout: float,
+    accept_body: BodyPredicate,
+    max_ignored: int = 12,
+):
+    """等待目标 JSON 包，忽略无关包，直到超时。"""
+    deadline = time.monotonic() + max(0.5, timeout)
+    ignored = 0
+
+    while time.monotonic() < deadline:
+        remaining = max(0.2, deadline - time.monotonic())
+        packet = tab.listen.wait(timeout=min(remaining, 2.5), raise_err=False)
+        if not packet:
+            continue
+
+        body = _safe_packet_body(packet)
+        if body is None:
+            ignored += 1
+            if ignored >= max_ignored:
+                break
+            continue
+
+        if accept_body(body):
+            return packet, ignored
+
+        ignored += 1
+        if ignored >= max_ignored:
+            break
+
+    return None, ignored
+
+
+def is_search_timeline_body(body: dict) -> bool:
+    try:
+        return "search_timeline" in body["data"]["search_by_raw_query"]
+    except Exception:
+        return False
+
+
+def is_tweet_detail_body(body: dict) -> bool:
+    try:
+        return "threaded_conversation_with_injections_v2" in body["data"]
+    except Exception:
+        return False

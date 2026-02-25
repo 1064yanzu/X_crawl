@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     browser_headless: bool = Field(
         default=False, description="是否无头模式"
     )
+    browser_load_mode: str = Field(
+        default="normal", description="页面加载模式：normal/eager"
+    )
+    browser_block_images: bool = Field(
+        default=False, description="是否禁用图片加载（稳健模式建议关闭）"
+    )
 
     # API 配置
     api_host: str = Field(default="0.0.0.0")
@@ -54,6 +60,21 @@ class Settings(BaseSettings):
     )
     crawler_preview_count: int = Field(
         default=10, description="实时数据预览展示的最大条数，避免前端性能问题"
+    )
+    crawler_packet_soft_retries: int = Field(
+        default=2, description="监听数据包超时后的软重试次数"
+    )
+    crawler_refresh_max_retries: int = Field(
+        default=3, description="软重试失败后的硬刷新重试次数"
+    )
+    crawler_challenge_retry_times: int = Field(
+        default=2, description="检测到风控挑战页时自动重试次数"
+    )
+    crawler_challenge_cooldown: float = Field(
+        default=8.0, description="挑战页重试前冷却时间（秒）"
+    )
+    crawler_max_concurrent_tasks: int = Field(
+        default=1, description="允许并发运行的任务数上限（1 表示串行）"
     )
 
     # 原始响应持久化配置

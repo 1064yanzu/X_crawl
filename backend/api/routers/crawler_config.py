@@ -21,9 +21,16 @@ class CrawlerConfig(BaseModel):
     crawler_initial_wait: float = Field(description="页面首次加载后额外等待（秒）", ge=0.0, le=30.0)
     crawler_reply_wait: float = Field(description="评论区每次翻页后额外等待（秒）", ge=0.0, le=30.0)
     crawler_preview_count: int = Field(description="实时预览最大展示条数", ge=1, le=50)
+    crawler_packet_soft_retries: int = Field(description="单页数据包软重试次数", ge=0, le=8)
+    crawler_refresh_max_retries: int = Field(description="硬刷新最大重试次数", ge=1, le=10)
+    crawler_challenge_retry_times: int = Field(description="挑战页自动重试次数", ge=0, le=8)
+    crawler_challenge_cooldown: float = Field(description="挑战页重试冷却时间（秒）", ge=1.0, le=60.0)
+    crawler_max_concurrent_tasks: int = Field(description="并发运行任务上限", ge=1, le=5)
     # 浏览器配置
     browser_headless: Optional[bool] = Field(default=None, description="是否无头模式")
     browser_proxy: Optional[str] = Field(default=None, description="代理配置，格式：http://ip:port")
+    browser_load_mode: Optional[str] = Field(default=None, description="页面加载模式：normal 或 eager")
+    browser_block_images: Optional[bool] = Field(default=None, description="是否禁用图片加载")
 
 
 @router.get(
@@ -40,8 +47,15 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_initial_wait=settings.crawler_initial_wait,
         crawler_reply_wait=settings.crawler_reply_wait,
         crawler_preview_count=settings.crawler_preview_count,
+        crawler_packet_soft_retries=settings.crawler_packet_soft_retries,
+        crawler_refresh_max_retries=settings.crawler_refresh_max_retries,
+        crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
+        crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
+        crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
         browser_headless=settings.browser_headless,
         browser_proxy=settings.browser_proxy,
+        browser_load_mode=settings.browser_load_mode,
+        browser_block_images=settings.browser_block_images,
     )
 
 
@@ -62,6 +76,11 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.crawler_initial_wait = config.crawler_initial_wait
     settings.crawler_reply_wait = config.crawler_reply_wait
     settings.crawler_preview_count = config.crawler_preview_count
+    settings.crawler_packet_soft_retries = config.crawler_packet_soft_retries
+    settings.crawler_refresh_max_retries = config.crawler_refresh_max_retries
+    settings.crawler_challenge_retry_times = config.crawler_challenge_retry_times
+    settings.crawler_challenge_cooldown = config.crawler_challenge_cooldown
+    settings.crawler_max_concurrent_tasks = config.crawler_max_concurrent_tasks
 
     # 构建要持久化的设置 dict
     persist = {
@@ -70,6 +89,11 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "crawler_initial_wait": config.crawler_initial_wait,
         "crawler_reply_wait": config.crawler_reply_wait,
         "crawler_preview_count": config.crawler_preview_count,
+        "crawler_packet_soft_retries": config.crawler_packet_soft_retries,
+        "crawler_refresh_max_retries": config.crawler_refresh_max_retries,
+        "crawler_challenge_retry_times": config.crawler_challenge_retry_times,
+        "crawler_challenge_cooldown": config.crawler_challenge_cooldown,
+        "crawler_max_concurrent_tasks": config.crawler_max_concurrent_tasks,
     }
 
     # 可选字段：只在显式传入时持久化
@@ -80,6 +104,15 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     if config.browser_proxy is not None:
         settings.browser_proxy = config.browser_proxy
         persist["browser_proxy"] = config.browser_proxy
+    if config.browser_load_mode is not None:
+        mode = config.browser_load_mode.strip().lower()
+        if mode not in ("normal", "eager"):
+            mode = "normal"
+        settings.browser_load_mode = mode
+        persist["browser_load_mode"] = mode
+    if config.browser_block_images is not None:
+        settings.browser_block_images = config.browser_block_images
+        persist["browser_block_images"] = config.browser_block_images
 
     # 写入数据库
     set_settings_batch(persist)
@@ -90,6 +123,13 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         crawler_initial_wait=settings.crawler_initial_wait,
         crawler_reply_wait=settings.crawler_reply_wait,
         crawler_preview_count=settings.crawler_preview_count,
+        crawler_packet_soft_retries=settings.crawler_packet_soft_retries,
+        crawler_refresh_max_retries=settings.crawler_refresh_max_retries,
+        crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
+        crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
+        crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
         browser_headless=settings.browser_headless,
         browser_proxy=settings.browser_proxy,
+        browser_load_mode=settings.browser_load_mode,
+        browser_block_images=settings.browser_block_images,
     )

@@ -15,18 +15,23 @@
 import json
 import sqlite3
 import logging
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 _DB_PATH: Path | None = None
+_local = threading.local()  # 线程本地存储，缓存连接
 
 
 def _get_conn() -> sqlite3.Connection:
-    """获取数据库连接（每次调用返回新连接，线程安全）"""
+    """获取数据库连接（线程本地缓存，避免频繁创建）"""
     assert _DB_PATH is not None, "task_db 未初始化，请先调用 init_db()"
-    conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+    conn = getattr(_local, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        _local.conn = conn
     return conn
 
 
@@ -52,6 +57,7 @@ def init_db(db_path: str | Path) -> None:
                 created_at            TEXT NOT NULL,
                 finished_at           TEXT,
                 error                 TEXT,
+                risk_state            TEXT DEFAULT 'none',
                 resumed               INTEGER DEFAULT 0,
                 fetch_replies         INTEGER DEFAULT 0,
                 max_replies_per_tweet INTEGER DEFAULT 0,
@@ -92,8 +98,18 @@ def init_db(db_path: str | Path) -> None:
             )
         """)
 
+        _ensure_column(conn, "tasks", "risk_state", "TEXT DEFAULT 'none'")
+
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """对历史数据库做轻量补列，避免破坏已有数据。"""
+    cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    names = {c["name"] for c in cols}
+    if column not in names:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def save_task(task: dict) -> None:
@@ -111,13 +127,13 @@ def save_task(task: dict) -> None:
                 INSERT OR REPLACE INTO tasks (
                     task_id, status, keyword, product, max_count,
                     result_count, current_page, created_at, finished_at,
-                    error, resumed, fetch_replies, max_replies_per_tweet,
+                    error, risk_state, resumed, fetch_replies, max_replies_per_tweet,
                     crawl_strategy, replies_fetched, crawl_phase,
                     tweets_json, preview_json
                 ) VALUES (
                     :task_id, :status, :keyword, :product, :max_count,
                     :result_count, :current_page, :created_at, :finished_at,
-                    :error, :resumed, :fetch_replies, :max_replies_per_tweet,
+                    :error, :risk_state, :resumed, :fetch_replies, :max_replies_per_tweet,
                     :crawl_strategy, :replies_fetched, :crawl_phase,
                     :tweets_json, :preview_json
                 )
@@ -132,6 +148,7 @@ def save_task(task: dict) -> None:
                 "created_at":            task["created_at"],
                 "finished_at":           task.get("finished_at"),
                 "error":                 task.get("error"),
+                "risk_state":            task.get("risk_state", "none"),
                 "resumed":               int(task.get("resumed", False)),
                 "fetch_replies":         int(task.get("fetch_replies", False)),
                 "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
@@ -163,6 +180,7 @@ def load_all_tasks() -> list[dict]:
             d = dict(row)
             d["tweets"]        = json.loads(d.pop("tweets_json", "[]") or "[]")
             d["preview_tweets"] = json.loads(d.pop("preview_json", "[]") or "[]")
+            d["risk_state"]     = d.get("risk_state") or "none"
             d["resumed"]        = bool(d["resumed"])
             d["fetch_replies"]  = bool(d["fetch_replies"])
             tasks.append(d)

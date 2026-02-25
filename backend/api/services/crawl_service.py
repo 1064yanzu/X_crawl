@@ -1,13 +1,52 @@
 """
-爬虫服务层（v4 - 支持失败评论记录 + 回复抓取 + BFS/DFS 策略 + 任务主动终止）
+爬虫服务层（v5 - 统一线程启动入口 + 失败评论记录 + 回复抓取 + 任务主动终止）
 """
+import threading
 import logging
 from api.services import task_manager
 from api.services.failed_replies_db import record_failed_replies_batch
-from crawler.x_searcher import search, StopSignal
+from crawler.x_searcher import search
+from crawler.crawl_signals import StopSignal, ChallengeSignal
 from crawler.browser import ensure_browser_alive, reset_browser
 
 logger = logging.getLogger(__name__)
+
+
+def start_crawler_thread(
+    task_id: str,
+    task: dict,
+    force_new_browser: bool = False,
+    resume: bool = True,
+) -> None:
+    """
+    统一的爬虫线程启动入口。
+
+    将线程创建、启动、注册集中到此方法，避免在多个路由文件中重复编写。
+
+    Args:
+        task_id:           任务 ID
+        task:              任务数据 dict（需含 keyword, max_count, product 等字段）
+        force_new_browser: 是否强制重建浏览器单例（恢复任务时应传 True）
+        resume:            是否从断点恢复
+    """
+    thread = threading.Thread(
+        target=run_search_task,
+        kwargs=dict(
+            task_id=task_id,
+            keyword=task["keyword"],
+            max_count=task["max_count"],
+            product=task["product"],
+            resume=resume,
+            fetch_replies=task.get("fetch_replies", False),
+            max_replies_per_tweet=task.get("max_replies_per_tweet", 20),
+            crawl_strategy=task.get("crawl_strategy", "bfs"),
+            force_new_browser=force_new_browser,
+        ),
+        daemon=True,
+        name=f"crawler-{task_id[:8]}",
+    )
+    thread.start()
+    task_manager.register_thread(task_id, thread)
 
 
 def run_search_task(
@@ -67,6 +106,10 @@ def run_search_task(
             f"失败 {len(result.failed_replies)} 条, "
             f"resumed={result.resumed}"
         )
+    except ChallengeSignal as e:
+        phase = f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
+        task_manager.update_task_risk_paused(task_id, e.risk_state, phase)
+        logger.warning(f"任务进入风控暂停: task_id={task_id}, risk={e.risk_state}, reason={e}")
     except StopSignal as e:
         # 用户主动终止，保存已抓取的数据
         task_data = task_manager.get_task(task_id) or {}

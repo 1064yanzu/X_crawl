@@ -6,8 +6,6 @@ X 搜索爬虫核心模块（v3 - 支持可暂停/可中止的回复抓取与 BF
 - 页面首次加载后等待 crawler_initial_wait 秒，确保内容渲染完毕
 - 翻页间隔引入 ±20% 随机扰动，模拟人工操作降低被反爬概率
 """
-import time
-import random
 import logging
 from typing import Literal, Optional
 from urllib.parse import quote
@@ -17,7 +15,12 @@ from crawler.auth import ensure_login
 from crawler.parser import parse_search_response
 from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
 from crawler.response_saver import save_raw_response
-from crawler.page_health import navigate_with_retry, is_error_page
+from crawler.page_health import navigate_with_retry
+from crawler.page_state import detect_page_state, PageState
+from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body
+from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
+from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
+from crawler.utils import jittered_sleep, check_signal, merge_remaining
 import api.services.task_manager as _task_mgr
 from config import settings
 
@@ -35,15 +38,6 @@ _TAB_MAP: dict[str, str] = {
     "Photos": "&f=image",
     "Videos": "&f=video",
 }
-
-
-class StopSignal(Exception):
-    """爬虫被主动终止时抛出，可携带已处理的部分数据"""
-
-    def __init__(self, message: str = "", partial_tweets: list[dict] | None = None):
-        super().__init__(message)
-        self.partial_tweets = partial_tweets or []
-
 
 class SearchResult:
     """搜索结果容器"""
@@ -67,31 +61,87 @@ class SearchResult:
         self.failed_replies = failed_replies or []
 
 
-def _jittered_sleep(base_seconds: float) -> None:
-    """带随机扰动的等待（±20%），模拟人工操作节奏"""
-    jitter = base_seconds * 0.2
-    actual = base_seconds + random.uniform(-jitter, jitter)
-    time.sleep(max(0.5, actual))
+def _to_risk_state(state: PageState) -> RiskState:
+    if state == PageState.RATE_LIMITED:
+        return "rate_limited"
+    if state == PageState.LOGIN_REQUIRED:
+        return "login_required"
+    return "challenge"
 
 
-def _check_signal(task_id: Optional[str]) -> None:
-    """
-    检查任务控制信号：
-    - stop  → 抛出 StopSignal 异常，终止爬虫
-    - pause → 轮询等待，直到信号变为 run（支持继续）
-    - run   → 直接返回（正常）
-    """
-    if not task_id:
-        return
-    while True:
-        signal = _task_mgr.get_signal(task_id)
-        if signal == "stop":
-            raise StopSignal(f"任务 {task_id} 收到终止信号")
-        elif signal == "pause":
-            logger.info(f"任务 {task_id} 已暂停，等待继续信号...")
-            time.sleep(1)
-        else:
-            break
+def _wait_search_packet_with_recovery(
+    *,
+    tab,
+    timeout: float,
+    page_num: int,
+    task_id: Optional[str],
+    policy: RecoveryPolicy,
+):
+    """等待搜索包：软重试失败后进入硬刷新恢复。"""
+    challenge_hits = 0
+
+    for soft_attempt in range(policy.packet_soft_retries + 1):
+        packet, ignored = wait_for_target_packet(
+            tab,
+            timeout=timeout,
+            accept_body=is_search_timeline_body,
+        )
+        if packet:
+            if ignored:
+                logger.debug(f"第 {page_num} 页过滤无关包 {ignored} 个")
+            return packet
+
+        state, reason = detect_page_state(tab)
+        if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
+            challenge_hits += 1
+            if challenge_hits > policy.challenge_retry_times:
+                raise ChallengeSignal(
+                    f"第 {page_num} 页检测到 {state.value} 且重试耗尽：{reason}",
+                    risk_state=_to_risk_state(state),
+                )
+            logger.warning(
+                f"第 {page_num} 页检测到风险状态 state={state.value}，"
+                f"将在冷却后重试（{challenge_hits}/{policy.challenge_retry_times}）"
+            )
+            sleep_with_jitter(policy.challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+
+        if soft_attempt < policy.packet_soft_retries:
+            logger.info(f"第 {page_num} 页软恢复重试 {soft_attempt + 1}/{policy.packet_soft_retries}")
+            soft_recover_for_packet(tab, soft_attempt)
+
+    for hard_attempt in range(policy.refresh_max_retries):
+        wait = backoff_seconds(hard_attempt, base=2.0, cap=35.0)
+        logger.warning(
+            f"第 {page_num} 页进入硬恢复：第 {hard_attempt + 1}/{policy.refresh_max_retries} 次刷新，"
+            f"退避 {wait:.1f}s"
+        )
+        sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.6)
+        tab.listen.stop()
+        ok = navigate_with_retry(
+            tab,
+            tab.url,
+            max_retries=1,
+            base_wait=2.5,
+            post_load_wait=settings.crawler_initial_wait,
+            challenge_retry_times=policy.challenge_retry_times,
+            challenge_cooldown=policy.challenge_cooldown,
+            raise_on_risk=True,
+            task_id=task_id,
+        )
+        tab.listen.start(SEARCH_TIMELINE_PATTERN)
+        if not ok:
+            continue
+        packet, _ = wait_for_target_packet(
+            tab,
+            timeout=timeout,
+            accept_body=is_search_timeline_body,
+        )
+        if packet:
+            return packet
+
+    return None
+
+
 
 
 def search(
@@ -124,6 +174,11 @@ def search(
     """
     if timeout is None:
         timeout = settings.crawler_timeout
+    policy = RecoveryPolicy.from_settings(settings)
+
+    # DFS 增量保存 checkpoint 时闭包需要的搜索参数
+    _search_keyword = keyword
+    _search_product = product
 
     # ── 1. 尝试加载检查点 ───────────────────────────────────────────
     all_tweets: list[dict] = []
@@ -148,10 +203,19 @@ def search(
             if (max_count and len(all_tweets) >= max_count) or not start_cursor:
                 # 断点恢复时若搜索已完成，直接进入回复抓取阶段
                 _resume_failed: list[dict] = []
-                if fetch_replies and not _tweets_have_replies(all_tweets):
-                    all_tweets, _resume_failed = _fetch_replies_for_tweets(
-                        all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
-                    )
+                if fetch_replies:
+                    # 检查是否还有未抓取回复的推文（跳过已有 replies 的推文由下层处理）
+                    tweets_without_replies = [t for t in all_tweets if not t.get("replies")]
+                    if tweets_without_replies:
+                        logger.info(
+                            f"断点恢复：{len(all_tweets)} 条推文中 {len(tweets_without_replies)} 条"
+                            f"尚未抓取回复，继续抓取..."
+                        )
+                        all_tweets, _resume_failed = _fetch_replies_for_tweets(
+                            all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
+                        )
+                    else:
+                        logger.info("断点恢复：所有推文已有回复数据，跳过回复抓取")
                 return SearchResult(
                     tweets=all_tweets[:max_count] if max_count else all_tweets,
                     total_fetched=len(all_tweets[:max_count] if max_count else all_tweets),
@@ -185,10 +249,13 @@ def search(
         ok = navigate_with_retry(
             tab,
             search_url,
-            max_retries=3,
+            max_retries=policy.refresh_max_retries,
             base_wait=3.0,
             load_timeout=30.0,
             post_load_wait=settings.crawler_initial_wait,
+            challenge_retry_times=policy.challenge_retry_times,
+            challenge_cooldown=policy.challenge_cooldown,
+            raise_on_risk=True,
             task_id=task_id,
         )
         if not ok:
@@ -198,28 +265,20 @@ def search(
 
         while not max_count or len(all_tweets) < max_count:
             # 每页开始前检查控制信号
-            _check_signal(task_id)
+            check_signal(task_id)
 
             logger.info(f"等待第 {page_num} 页数据包（timeout={timeout}s）...")
             if task_id:
                 _task_mgr.update_task_phase(task_id, f"等待第 {page_num} 页数据包...")
-            packet = tab.listen.wait(timeout=timeout, raise_err=False)
+            packet = _wait_search_packet_with_recovery(
+                tab=tab,
+                timeout=timeout,
+                page_num=page_num,
+                task_id=task_id,
+                policy=policy,
+            )
             if not packet:
-                # 超时时先检测是否出现了错误页
-                if is_error_page(tab):
-                    logger.warning(f"第 {page_num} 页：检测到 X 错误页面，尝试刷新重试...")
-                    tab.listen.stop()
-                    ok = navigate_with_retry(
-                        tab, tab.url,
-                        max_retries=2, base_wait=3.0,
-                        post_load_wait=settings.crawler_initial_wait,
-                        task_id=task_id,
-                    )
-                    tab.listen.start(SEARCH_TIMELINE_PATTERN)
-                    if ok:
-                        logger.info(f"第 {page_num} 页：刷新成功，继续等待数据包")
-                        continue  # 重新等待数据包
-                logger.warning(f"第 {page_num} 页等待超时，停止爬取")
+                logger.warning(f"第 {page_num} 页连续恢复后仍超时，停止爬取")
                 break
 
             try:
@@ -259,23 +318,53 @@ def search(
                     # 停止搜索监听，切换到回复抓取，完成后重新开启搜索监听
                     tab.listen.stop()
 
+                    # 闭包引用 all_tweets，使回调能增量保存 checkpoint
+                    _dfs_all_tweets_ref = all_tweets  # 引用当前 all_tweets
+                    _dfs_new_tweets_ref = new_tweets   # 引用当前页 new_tweets
+
                     def _on_reply_progress(tweet_id: str, replies: list[dict]):
-                        """每条推文回复抓取完成后更新整体进度"""
+                        """每条推文回复抓取完成后更新整体进度 + 增量保存 checkpoint"""
                         if task_id:
                             _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
+                            # 增量保存 checkpoint：合并已有推文 + 当前页已处理推文
+                            # 这样即使线程死亡，恢复时也能跳过已抓回复的推文
+                            interim_tweets = list(_dfs_all_tweets_ref) + [
+                                t for t in _dfs_new_tweets_ref
+                                if t.get("replies") is not None
+                            ]
+                            save_checkpoint(
+                                task_id=task_id,
+                                keyword=_search_keyword,
+                                product=_search_product,
+                                tweets_so_far=interim_tweets,
+                                next_cursor=bottom_cursor,
+                                page_fetched=page_num,
+                            )
+                            _task_mgr.update_task_progress(task_id, page_num, interim_tweets)
 
                     try:
-                        new_tweets, _dfs_failed = _fetch_replies_for_tweets_with_tab(
+                        new_tweets, _dfs_failed = _fetch_replies_for_tweets(
                             new_tweets, max_replies_per_tweet, task_id, timeout,
+                            strategy=crawl_strategy,
                             progress_callback=_on_reply_progress,
                         )
                         _all_failed_records.extend(_dfs_failed)
+                    except ChallengeSignal:
+                        raise
                     except StopSignal as e:
                         # 即使被中断，也要合并已处理的部分结果（含已抓取的回复）
                         if e.partial_tweets:
                             all_tweets.extend(e.partial_tweets)
                         if task_id:
                             _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
+                            save_checkpoint(
+                                task_id=task_id,
+                                keyword=_search_keyword,
+                                product=_search_product,
+                                tweets_so_far=list(all_tweets),
+                                next_cursor=bottom_cursor,
+                                page_fetched=page_num,
+                            )
                         raise
                     finally:
                         tab.listen.start(SEARCH_TIMELINE_PATTERN)
@@ -309,13 +398,15 @@ def search(
 
             except StopSignal:
                 raise
+            except ChallengeSignal:
+                raise
             except Exception as e:
                 logger.error(f"第 {page_num} 页解析失败: {e}", exc_info=True)
                 break
 
             # 滚动翻页（带随机扰动的间隔）
             page_num += 1
-            _jittered_sleep(settings.crawler_page_interval)
+            jittered_sleep(settings.crawler_page_interval)
             tab.scroll.to_bottom()
 
     finally:
@@ -336,6 +427,8 @@ def search(
                 all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy
             )
             _all_failed_records.extend(_bfs_failed)
+        except ChallengeSignal:
+            raise
         except StopSignal as e:
             # 即使被中断，也要保存已处理的部分结果（含已抓取的回复）
             if e.partial_tweets:
@@ -378,13 +471,16 @@ def _fetch_replies_for_tweets(
     task_id: Optional[str],
     timeout: Optional[float],
     strategy: str,
+    progress_callback=None,
 ) -> tuple[list[dict], list[dict]]:
-    """BFS 模式批量抓取回复（延迟导入防止循环引用），返回 (updated_tweets, failed_records)"""
+    """统一的回复抓取入口（BFS/DFS 共用），返回 (updated_tweets, failed_records)"""
     from crawler.reply_fetcher import fetch_replies_batch
 
     def on_progress(tweet_id: str, replies: list[dict]):
         if task_id:
             _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
+        if progress_callback:
+            progress_callback(tweet_id, replies)
 
     return fetch_replies_batch(
         tweets=tweets,
@@ -392,123 +488,13 @@ def _fetch_replies_for_tweets(
         task_id=task_id,
         timeout=timeout,
         progress_callback=on_progress,
+        strategy=strategy,
     )
-
-
-def _fetch_replies_for_tweets_with_tab(
-    tweets: list[dict],
-    max_replies_per_tweet: int,
-    task_id: Optional[str],
-    timeout: Optional[float],
-    progress_callback=None,
-) -> tuple[list[dict], list[dict]]:
-    """DFS 模式：在当前进程内顺序抓取回复（每条推文单独新开标签页）
-
-    当收到 StopSignal 时，会将已抓取回复的推文 + 剩余未处理推文合并后
-    通过 StopSignal.partial_tweets 携带，确保已抓取的回复数据不丢失。
-
-    Returns:
-        (updated_tweets, failed_records) 元组
-    """
-    from crawler.reply_fetcher import fetch_replies
-
-    updated = []
-    failed_records: list[dict] = []
-    total = len(tweets)
-    for idx, tweet in enumerate(tweets):
-        # 检查停止信号——若被终止，携带已处理数据抛出
-        try:
-            _check_signal(task_id)
-        except StopSignal as e:
-            _merge_remaining(updated, tweets, idx)
-            raise StopSignal(str(e), partial_tweets=updated)
-
-        tweet_id = tweet.get("id", "")
-        screen_name = (tweet.get("author") or {}).get("screen_name", "")
-        # 从推文元数据获取预期评论数
-        expected_count = (tweet.get("metrics") or {}).get("replies", 0)
-        if not tweet_id or not screen_name:
-            tweet = dict(tweet)
-            tweet["replies"] = []
-            updated.append(tweet)
-            continue
-
-        # 跳过 0 评论的帖子，无需打开详情页
-        if expected_count == 0:
-            logger.info(f"[DFS] 跳过 tweet_id={tweet_id}（0 条评论），无需抓取回复")
-            tweet = dict(tweet)
-            tweet["replies"] = []
-            updated.append(tweet)
-            if progress_callback:
-                progress_callback(tweet_id, [])
-            continue
-
-        # 更新阶段提示（告知用户正在抓第几条推文的回复）
-        if task_id:
-            _task_mgr.update_task_phase(
-                task_id,
-                f"正在抓取第 {idx + 1}/{total} 条推文的回复 (@{screen_name}，预期 {expected_count} 条)..."
-            )
-
-        try:
-            replies, failure_info = fetch_replies(
-                tweet_id=tweet_id,
-                screen_name=screen_name,
-                max_count=max_replies_per_tweet,
-                task_id=task_id,
-                timeout=timeout,
-                expected_count=expected_count,
-            )
-            tweet = dict(tweet)
-            tweet["replies"] = replies
-            if failure_info:
-                failure_info["task_id"] = task_id or ""
-                failed_records.append(failure_info)
-        except StopSignal as e:
-            # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
-            tweet = dict(tweet)
-            tweet["replies"] = []
-            updated.append(tweet)
-            _merge_remaining(updated, tweets, idx + 1)
-            raise StopSignal(str(e), partial_tweets=updated)
-        except Exception as e:
-            logger.error(f"[DFS] 抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
-            tweet = dict(tweet)
-            tweet["replies"] = []
-            failed_records.append({
-                "task_id": task_id or "",
-                "tweet_id": tweet_id,
-                "screen_name": screen_name,
-                "expected_count": expected_count,
-                "fetched_count": 0,
-                "error_reason": f"异常: {str(e)[:200]}",
-            })
-        updated.append(tweet)
-
-        # 每条回复抓完后触发回调（更新 replies_fetched 计数）
-        if progress_callback:
-            progress_callback(tweet_id, tweet.get("replies", []))
-
-        _jittered_sleep(settings.crawler_page_interval)
-    return updated, failed_records
-
-
-def _tweets_have_replies(tweets: list[dict]) -> bool:
-    """检查推文列表中是否已有回复数据（断点恢复时用于判断是否需要重新抓取回复）"""
-    return any("replies" in tweet and tweet["replies"] for tweet in tweets)
 
 
 def _count_replies(tweets: list[dict]) -> int:
     """统计推文列表中回复总数"""
     return sum(len(tweet.get("replies", [])) for tweet in tweets)
-
-
-def _merge_remaining(updated: list[dict], tweets: list[dict], start_idx: int) -> None:
-    """将未处理的推文（无 replies）追加到 updated 列表中，用于 StopSignal 中断时保留完整数据"""
-    for t in tweets[start_idx:]:
-        t_copy = dict(t)
-        t_copy.setdefault("replies", [])
-        updated.append(t_copy)
 
 
 # ═══════════════════════════════════════════════════════════════════

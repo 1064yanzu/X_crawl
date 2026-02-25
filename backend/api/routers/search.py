@@ -1,10 +1,10 @@
 """
-搜索路由（v3 - 使用 threading.Thread 运行爬虫，避免阻塞事件循环）
+搜索路由（v4 - 使用统一线程启动入口）
 """
-import threading
 from fastapi import APIRouter, HTTPException
 from api.schemas.task import SearchRequest, TaskOut
 from api.services import task_manager, crawl_service
+from config import settings
 
 router = APIRouter(prefix="/api/v1/search", tags=["搜索"])
 
@@ -26,6 +26,14 @@ router = APIRouter(prefix="/api/v1/search", tags=["搜索"])
 async def create_search_task(
     req: SearchRequest,
 ) -> TaskOut:
+    active_count = task_manager.count_active_tasks()
+    limit = max(1, int(settings.crawler_max_concurrent_tasks))
+    if active_count >= limit:
+        raise HTTPException(
+            status_code=409,
+            detail=f"当前运行任务数已达上限（{limit}），请等待任务完成或暂停后再新建任务",
+        )
+
     task_id = task_manager.create_task(
         keyword=req.keyword,
         max_count=req.max_count,
@@ -35,26 +43,13 @@ async def create_search_task(
         max_replies_per_tweet=req.max_replies_per_tweet,
         crawl_strategy=req.crawl_strategy,
     )
-    # 使用独立线程运行爬虫，避免阻塞 uvicorn 事件循环
-    # （BackgroundTasks 的同步函数会占用事件循环，导致 pause/resume 等控制接口无法响应）
-    thread = threading.Thread(
-        target=crawl_service.run_search_task,
-        kwargs=dict(
-            task_id=task_id,
-            keyword=req.keyword,
-            max_count=req.max_count,
-            product=req.product,
-            resume=req.resume,
-            fetch_replies=req.fetch_replies,
-            max_replies_per_tweet=req.max_replies_per_tweet,
-            crawl_strategy=req.crawl_strategy,
-        ),
-        daemon=True,
-        name=f"crawler-{task_id[:8]}",
-    )
-    thread.start()
-    task_manager.register_thread(task_id, thread)
     task_data = task_manager.get_task(task_id)
+    # 使用统一的线程启动入口
+    crawl_service.start_crawler_thread(
+        task_id=task_id,
+        task=task_data,
+        resume=req.resume,
+    )
     return TaskOut(**task_data)
 
 

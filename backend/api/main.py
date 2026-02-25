@@ -96,7 +96,7 @@ async def root():
     return {
         "status": "ok",
         "service": "X_crawl API",
-        "version": "1.1.0",
+        "version": "1.1.1",
         "features": ["cross-platform", "checkpoint-resume", "full-fields", "async-tasks"],
         "docs": "/docs",
     }

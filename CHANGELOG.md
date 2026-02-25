@@ -130,3 +130,24 @@
 **修改 `crawler/x_searcher.py`**
 - 在"等待第N页数据包"节点调用 `update_task_phase()`
 - 在"完成第N页"节点调用 `update_task_phase()`（同时包含已获取总数）
+
+## 2026-02-26
+
+### 稳定性与反识别一体化改造（全量）
+
+- 新增：`backend/crawler/page_state.py`、`recovery_policy.py`、`packet_guard.py`、`crawl_signals.py`
+- 重构：`x_searcher.py` / `reply_fetcher.py` 恢复链路，支持软重试、硬恢复、挑战页冷却重试
+- 新增：风控暂停状态 `risk_state`，并在 `crawl_service` 中实现 challenge 自动转 `paused`
+- 新增：搜索创建并发上限（超限返回 `409`）
+- 新增配置：
+  - `crawler_packet_soft_retries`
+  - `crawler_refresh_max_retries`
+  - `crawler_challenge_retry_times`
+  - `crawler_challenge_cooldown`
+  - `crawler_max_concurrent_tasks`
+  - `browser_load_mode`
+  - `browser_block_images`
+- 浏览器策略更新：默认 `normal` 加载模式、默认不禁图，增强启动参数反识别
+- 前端更新：设置页高级反风控参数、任务详情风控暂停提示、创建任务 409 友好提示
+- 文档更新：`docs/api.md`、`docs/施工文档.md`、`docs/changelog.md`
+- 测试新增：`backend/tests/*`（5 组），验证通过 `11 passed`

@@ -1,12 +1,11 @@
 """
-任务管理路由（v2 - 新增 pause/resume/stop 控制接口）
+任务管理路由（v3 - 使用统一线程启动入口）
 GET    /api/v1/tasks           查看所有任务列表
 DELETE /api/v1/tasks/{task_id} 删除任务记录
 POST   /api/v1/tasks/{task_id}/pause  暂停任务
 POST   /api/v1/tasks/{task_id}/resume 继续任务
 POST   /api/v1/tasks/{task_id}/stop   主动终止任务
 """
-import threading
 from fastapi import APIRouter, HTTPException
 from api.schemas.task import TaskOut
 from api.services import task_manager, crawl_service
@@ -81,7 +80,7 @@ async def resume_task(task_id: str) -> dict:
         success = task_manager.resume_finished_task(task_id)
         if not success:
             raise HTTPException(status_code=409, detail=f"任务恢复失败: {task_id}")
-        _restart_crawler_thread(task_id, task)
+        crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
         return {"message": f"任务 {task_id} 已从断点恢复爬取", "status": "running"}
 
     # ── 已暂停的任务：唤醒或重启 ──
@@ -99,30 +98,8 @@ async def resume_task(task_id: str) -> dict:
     else:
         # 爬虫线程已死（浏览器被关闭等），需要重新启动爬虫线程从断点恢复
         task_manager.resume_task(task_id)
-        _restart_crawler_thread(task_id, task)
+        crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
         return {"message": f"任务 {task_id} 爬虫线程已重启，从断点恢复", "status": "running"}
-
-
-def _restart_crawler_thread(task_id: str, task: dict) -> None:
-    """重新启动爬虫线程，从 checkpoint 恢复爬取"""
-    thread = threading.Thread(
-        target=crawl_service.run_search_task,
-        kwargs=dict(
-            task_id=task_id,
-            keyword=task["keyword"],
-            max_count=task["max_count"],
-            product=task["product"],
-            resume=True,
-            fetch_replies=task.get("fetch_replies", False),
-            max_replies_per_tweet=task.get("max_replies_per_tweet", 20),
-            crawl_strategy=task.get("crawl_strategy", "bfs"),
-            force_new_browser=True,
-        ),
-        daemon=True,
-        name=f"crawler-{task_id[:8]}-resume",
-    )
-    thread.start()
-    task_manager.register_thread(task_id, thread)
 
 
 @router.post(

@@ -23,7 +23,7 @@ backend/checkpoints
 
 # production
 /build
-
+CHANGELOG.md
 # misc
 .DS_Store
 *.pem
