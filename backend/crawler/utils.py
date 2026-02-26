@@ -8,15 +8,38 @@ import random
 import logging
 from typing import Optional
 from crawler.crawl_signals import StopSignal
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 
-def jittered_sleep(base_seconds: float) -> None:
-    """带随机扰动的等待（±20%），模拟人工操作节奏"""
-    jitter = base_seconds * 0.2
-    actual = base_seconds + random.uniform(-jitter, jitter)
-    time.sleep(max(0.5, actual))
+def interruptible_sleep(seconds: float, task_id: Optional[str] = None) -> None:
+    """
+    可中断等待：长 sleep 会分片执行，期间可响应 pause/stop。
+    """
+    total = max(0.0, float(seconds))
+    poll_ms = max(50, int(getattr(settings, "crawler_interrupt_poll_ms", 300)))
+    step = poll_ms / 1000.0
+    elapsed = 0.0
+    while elapsed < total:
+        if task_id:
+            check_signal(task_id)
+        remain = total - elapsed
+        slice_s = min(step, remain)
+        time.sleep(slice_s)
+        elapsed += slice_s
+
+
+def jittered_sleep(base_seconds: float, task_id: Optional[str] = None) -> None:
+    """带随机扰动的等待（±20%），并可响应任务控制信号。"""
+    base = max(0.0, float(base_seconds))
+    if getattr(settings, "crawler_adaptive_wait_enabled", True):
+        lower = max(0.2, float(getattr(settings, "crawler_page_interval_min", base or 0.2)))
+        upper = max(lower, float(getattr(settings, "crawler_page_interval_max", max(base, lower))))
+        base = min(max(base, lower), upper)
+    jitter = base * 0.2
+    actual = max(0.5, base + random.uniform(-jitter, jitter))
+    interruptible_sleep(actual, task_id=task_id)
 
 
 def check_signal(task_id: Optional[str]) -> None:
@@ -37,7 +60,7 @@ def check_signal(task_id: Optional[str]) -> None:
             raise StopSignal(f"任务 {task_id} 收到终止信号")
         elif signal == "pause":
             logger.info(f"任务 {task_id} 已暂停，等待继续信号...")
-            time.sleep(1)
+            interruptible_sleep(1.0)
         else:
             break
 

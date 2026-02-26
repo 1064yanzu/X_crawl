@@ -18,12 +18,11 @@ from api.routers import failed_replies as failed_replies_router
 from api.routers import browser_selector as browser_selector_router
 from crawler.browser import close_browser
 from crawler.browser_detector import detect_all
+from crawler.log_config import setup_logging
 from config import settings
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s - %(message)s",
-)
+# 初始化结构化日志（控制台 + 文件轮转）
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

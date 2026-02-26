@@ -1,15 +1,56 @@
 """
-爬虫服务层（v5 - 统一线程启动入口 + 失败评论记录 + 回复抓取 + 任务主动终止）
+爬虫服务层（调度器驱动）。
 """
-import threading
+from __future__ import annotations
+
 import logging
+import threading
+
 from api.services import task_manager
 from api.services.failed_replies_db import record_failed_replies_batch
-from crawler.x_searcher import search
-from crawler.crawl_signals import StopSignal, ChallengeSignal
+from api.services.task_scheduler import scheduler
 from crawler.browser import ensure_browser_alive, reset_browser
+from crawler.crawl_signals import ChallengeSignal, StopSignal
+from crawler.runtime_metrics import clear_metrics, get_metrics, start_task_metrics
+from crawler.x_searcher import search
 
 logger = logging.getLogger(__name__)
+
+
+def _spawn_worker(task_id: str, payload: dict) -> threading.Thread:
+    thread = threading.Thread(
+        target=run_search_task,
+        kwargs=payload,
+        daemon=True,
+        name=f"crawler-{task_id[:8]}",
+    )
+    thread.start()
+    task_manager.register_thread(task_id, thread)
+    return thread
+
+
+scheduler.register_executor(_spawn_worker)
+
+
+def _build_worker_payload(
+    task_id: str,
+    task: dict,
+    *,
+    force_new_browser: bool,
+    resume: bool,
+) -> dict:
+    return dict(
+        task_id=task_id,
+        keyword=task["keyword"],
+        max_count=task["max_count"],
+        product=task["product"],
+        resume=resume,
+        fetch_replies=task.get("fetch_replies", False),
+        max_replies_per_tweet=task.get("max_replies_per_tweet", 20),
+        reply_depth=task.get("reply_depth", 2),
+        crawl_strategy=task.get("crawl_strategy", "bfs"),
+        force_new_browser=force_new_browser,
+    )
 
 
 def start_crawler_thread(
@@ -18,35 +59,18 @@ def start_crawler_thread(
     force_new_browser: bool = False,
     resume: bool = True,
 ) -> None:
-    """
-    统一的爬虫线程启动入口。
-
-    将线程创建、启动、注册集中到此方法，避免在多个路由文件中重复编写。
-
-    Args:
-        task_id:           任务 ID
-        task:              任务数据 dict（需含 keyword, max_count, product 等字段）
-        force_new_browser: 是否强制重建浏览器单例（恢复任务时应传 True）
-        resume:            是否从断点恢复
-    """
-    thread = threading.Thread(
-        target=run_search_task,
-        kwargs=dict(
-            task_id=task_id,
-            keyword=task["keyword"],
-            max_count=task["max_count"],
-            product=task["product"],
-            resume=resume,
-            fetch_replies=task.get("fetch_replies", False),
-            max_replies_per_tweet=task.get("max_replies_per_tweet", 20),
-            crawl_strategy=task.get("crawl_strategy", "bfs"),
-            force_new_browser=force_new_browser,
-        ),
-        daemon=True,
-        name=f"crawler-{task_id[:8]}",
+    payload = _build_worker_payload(
+        task_id=task_id,
+        task=task,
+        force_new_browser=force_new_browser,
+        resume=resume,
     )
-    thread.start()
-    task_manager.register_thread(task_id, thread)
+    enqueued = scheduler.enqueue(task_id, payload)
+    if enqueued:
+        task_manager.update_task_status(task_id, "pending")
+        task_manager.update_task_phase(task_id, "任务已进入调度队列，等待执行...")
+    else:
+        logger.info(f"任务重复入队已忽略: task_id={task_id}")
 
 
 def run_search_task(
@@ -57,25 +81,19 @@ def run_search_task(
     resume: bool = True,
     fetch_replies: bool = False,
     max_replies_per_tweet: int = 20,
+    reply_depth: int = 2,
     crawl_strategy: str = "bfs",
     force_new_browser: bool = False,
 ) -> None:
-    """
-    执行搜索任务（BackgroundTasks 后台运行）
-    - 自动透传 task_id 给爬虫，实现断点续爬
-    - 支持回复抓取（BFS/DFS 策略）
-    - 解析结果直接以 dict 存储
-    - 捕获 StopSignal，将任务状态设为 stopped（区别于 failed）
-    - 记录失败/不全的评论抓取到数据库
-    """
     task_manager.update_task_status(task_id, "running")
+    task_manager.update_task_phase(task_id, "任务开始执行，正在初始化浏览器...")
+    start_task_metrics(task_id)
+
     logger.info(
         f"任务开始: task_id={task_id}, keyword='{keyword}', "
         f"strategy={crawl_strategy}, fetch_replies={fetch_replies}, resume={resume}"
     )
 
-    # 启动前确保浏览器可用
-    # 恢复已结束任务时重置浏览器单例，确保使用最新的浏览器设置
     if force_new_browser:
         reset_browser()
     ensure_browser_alive()
@@ -89,43 +107,58 @@ def run_search_task(
             resume=resume,
             fetch_replies=fetch_replies,
             max_replies_per_tweet=max_replies_per_tweet,
+            reply_depth=reply_depth,
             crawl_strategy=crawl_strategy,
         )
+        runtime_metrics = get_metrics(task_id)
+        quality_state = "partial" if result.failed_replies else "complete"
         task_manager.update_task_result(
             task_id=task_id,
             tweets=result.tweets,
             resumed=result.resumed,
             replies_fetched=result.replies_fetched,
+            quality_state=quality_state,
+            runtime_metrics=runtime_metrics,
         )
-        # 记录失败的评论抓取
         if result.failed_replies:
             _persist_failed_records(task_id, result.failed_replies)
         logger.info(
-            f"任务完成: task_id={task_id}, "
-            f"推文 {len(result.tweets)} 条, 回复 {result.replies_fetched} 条, "
-            f"失败 {len(result.failed_replies)} 条, "
-            f"resumed={result.resumed}"
+            f"任务完成: task_id={task_id}, 推文={len(result.tweets)}, "
+            f"回复={result.replies_fetched}, 失败评论={len(result.failed_replies)}"
         )
     except ChallengeSignal as e:
         phase = f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
-        task_manager.update_task_risk_paused(task_id, e.risk_state, phase)
+        task_manager.update_task_risk_paused(
+            task_id,
+            e.risk_state,
+            phase,
+            runtime_metrics=get_metrics(task_id),
+        )
         logger.warning(f"任务进入风控暂停: task_id={task_id}, risk={e.risk_state}, reason={e}")
     except StopSignal as e:
-        # 用户主动终止，保存已抓取的数据
         task_data = task_manager.get_task(task_id) or {}
         tweets_so_far = task_data.get("tweets", [])
-        task_manager.update_task_stopped(task_id, tweets_so_far)
+        task_manager.update_task_stopped(task_id, tweets_so_far, runtime_metrics=get_metrics(task_id))
         logger.info(f"任务主动终止: task_id={task_id}, 已保存 {len(tweets_so_far)} 条数据, reason={e}")
     except Exception as e:
         error_msg = str(e)
-        task_manager.update_task_error(task_id, error_msg)
+        # 先尝试保存已采集的数据（即使任务出错，已抓到的推文不应丢失）
+        task_data = task_manager.get_task(task_id) or {}
+        tweets_so_far = task_data.get("tweets", [])
+        if tweets_so_far:
+            task_manager.update_task_stopped(task_id, tweets_so_far, runtime_metrics=get_metrics(task_id))
+            task_manager.update_task_error(task_id, error_msg)
+            logger.info(f"任务异常终止但已保存 {len(tweets_so_far)} 条数据: task_id={task_id}")
+        else:
+            task_manager.update_task_error(task_id, error_msg, runtime_metrics=get_metrics(task_id))
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
     finally:
         task_manager.clear_thread(task_id)
+        scheduler.mark_done(task_id)
+        clear_metrics(task_id)
 
 
 def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:
-    """将失败记录批量写入数据库"""
     try:
         for rec in failed_records:
             rec.setdefault("task_id", task_id)

@@ -1,10 +1,9 @@
 """
-搜索路由（v4 - 使用统一线程启动入口）
+搜索路由（v5 - 调度器队列化执行）
 """
 from fastapi import APIRouter, HTTPException
 from api.schemas.task import SearchRequest, TaskOut
 from api.services import task_manager, crawl_service
-from config import settings
 
 router = APIRouter(prefix="/api/v1/search", tags=["搜索"])
 
@@ -26,14 +25,6 @@ router = APIRouter(prefix="/api/v1/search", tags=["搜索"])
 async def create_search_task(
     req: SearchRequest,
 ) -> TaskOut:
-    active_count = task_manager.count_active_tasks()
-    limit = max(1, int(settings.crawler_max_concurrent_tasks))
-    if active_count >= limit:
-        raise HTTPException(
-            status_code=409,
-            detail=f"当前运行任务数已达上限（{limit}），请等待任务完成或暂停后再新建任务",
-        )
-
     task_id = task_manager.create_task(
         keyword=req.keyword,
         max_count=req.max_count,
@@ -41,16 +32,21 @@ async def create_search_task(
         task_id=req.task_id if req.resume and req.task_id else None,
         fetch_replies=req.fetch_replies,
         max_replies_per_tweet=req.max_replies_per_tweet,
+        reply_depth=req.reply_depth,
         crawl_strategy=req.crawl_strategy,
     )
     task_data = task_manager.get_task(task_id)
-    # 使用统一的线程启动入口
+    if not task_data:
+        raise HTTPException(status_code=500, detail="任务创建失败")
+
+    # 统一调度入口：先入队，再由调度器按并发上限执行
     crawl_service.start_crawler_thread(
         task_id=task_id,
         task=task_data,
         resume=req.resume,
     )
-    return TaskOut(**task_data)
+    refreshed = task_manager.get_task(task_id) or task_data
+    return TaskOut(**refreshed)
 
 
 @router.get(

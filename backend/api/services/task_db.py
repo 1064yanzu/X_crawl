@@ -58,6 +58,9 @@ def init_db(db_path: str | Path) -> None:
                 finished_at           TEXT,
                 error                 TEXT,
                 risk_state            TEXT DEFAULT 'none',
+                quality_state         TEXT DEFAULT 'complete',
+                runtime_metrics_json  TEXT DEFAULT '{}',
+                last_event_at         TEXT,
                 resumed               INTEGER DEFAULT 0,
                 fetch_replies         INTEGER DEFAULT 0,
                 max_replies_per_tweet INTEGER DEFAULT 0,
@@ -99,6 +102,9 @@ def init_db(db_path: str | Path) -> None:
         """)
 
         _ensure_column(conn, "tasks", "risk_state", "TEXT DEFAULT 'none'")
+        _ensure_column(conn, "tasks", "quality_state", "TEXT DEFAULT 'complete'")
+        _ensure_column(conn, "tasks", "runtime_metrics_json", "TEXT DEFAULT '{}'")
+        _ensure_column(conn, "tasks", "last_event_at", "TEXT")
 
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
@@ -122,18 +128,21 @@ def save_task(task: dict) -> None:
     try:
         tweets_json = json.dumps(task.get("tweets", []), ensure_ascii=False)
         preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
+        runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
         with _get_conn() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO tasks (
                     task_id, status, keyword, product, max_count,
                     result_count, current_page, created_at, finished_at,
-                    error, risk_state, resumed, fetch_replies, max_replies_per_tweet,
+                    error, risk_state, quality_state, runtime_metrics_json, last_event_at,
+                    resumed, fetch_replies, max_replies_per_tweet,
                     crawl_strategy, replies_fetched, crawl_phase,
                     tweets_json, preview_json
                 ) VALUES (
                     :task_id, :status, :keyword, :product, :max_count,
                     :result_count, :current_page, :created_at, :finished_at,
-                    :error, :risk_state, :resumed, :fetch_replies, :max_replies_per_tweet,
+                    :error, :risk_state, :quality_state, :runtime_metrics_json, :last_event_at,
+                    :resumed, :fetch_replies, :max_replies_per_tweet,
                     :crawl_strategy, :replies_fetched, :crawl_phase,
                     :tweets_json, :preview_json
                 )
@@ -149,6 +158,9 @@ def save_task(task: dict) -> None:
                 "finished_at":           task.get("finished_at"),
                 "error":                 task.get("error"),
                 "risk_state":            task.get("risk_state", "none"),
+                "quality_state":         task.get("quality_state", "complete"),
+                "runtime_metrics_json":  runtime_metrics_json,
+                "last_event_at":         task.get("last_event_at"),
                 "resumed":               int(task.get("resumed", False)),
                 "fetch_replies":         int(task.get("fetch_replies", False)),
                 "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
@@ -181,6 +193,8 @@ def load_all_tasks() -> list[dict]:
             d["tweets"]        = json.loads(d.pop("tweets_json", "[]") or "[]")
             d["preview_tweets"] = json.loads(d.pop("preview_json", "[]") or "[]")
             d["risk_state"]     = d.get("risk_state") or "none"
+            d["quality_state"]  = d.get("quality_state") or "complete"
+            d["runtime_metrics"] = json.loads(d.pop("runtime_metrics_json", "{}") or "{}")
             d["resumed"]        = bool(d["resumed"])
             d["fetch_replies"]  = bool(d["fetch_replies"])
             tasks.append(d)

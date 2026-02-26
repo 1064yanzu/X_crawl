@@ -7,6 +7,7 @@ from typing import Optional, Literal
 TaskStatus = Literal["pending", "running", "done", "failed", "paused", "stopped"]
 CrawlStrategy = Literal["bfs", "dfs"]
 RiskState = Literal["none", "challenge", "rate_limited", "login_required"]
+QualityState = Literal["complete", "partial", "interrupted"]
 
 
 class SearchRequest(BaseModel):
@@ -20,6 +21,10 @@ class SearchRequest(BaseModel):
     max_replies_per_tweet: int = Field(
         default=0,
         description="每条推文最多抓取的回复数量（0代表无限制，fetch_replies=true 时生效）"
+    )
+    reply_depth: int = Field(
+        default=2, ge=1, le=5,
+        description="评论抓取深度（1=仅一级评论，2=含二级评论，依此类推）"
     )
     crawl_strategy: CrawlStrategy = Field(
         default="dfs",
@@ -53,11 +58,15 @@ class TaskOut(BaseModel):
     finished_at: Optional[str] = None
     error: Optional[str] = None
     risk_state: RiskState = Field(default="none", description="风险状态：none/challenge/rate_limited/login_required")
+    quality_state: QualityState = Field(default="complete", description="任务质量：complete/partial/interrupted")
+    runtime_metrics: dict = Field(default_factory=dict, description="任务运行期指标汇总")
+    last_event_at: Optional[str] = Field(default=None, description="最近状态事件时间（ISO）")
     resumed: bool = Field(default=False, description="是否从断点恢复")
     # ── 回复相关字段 ──
     fetch_replies: bool = Field(default=False)
     crawl_strategy: CrawlStrategy = Field(default="bfs")
     max_replies_per_tweet: int = Field(default=20)
+    reply_depth: int = Field(default=2, description="评论抓取深度")
     replies_fetched: int = Field(default=0, description="已抓取的总回复数")
     # ── 推文数据 ──
     tweets: list[dict] = Field(default_factory=list)

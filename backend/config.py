@@ -76,6 +76,35 @@ class Settings(BaseSettings):
     crawler_max_concurrent_tasks: int = Field(
         default=1, description="允许并发运行的任务数上限（1 表示串行）"
     )
+    scheduler_backend: str = Field(
+        default="memory", description="任务调度后端：memory/redis（当前 redis 为预留）"
+    )
+    crawler_adaptive_wait_enabled: bool = Field(
+        default=True, description="是否启用自适应等待区间（对翻页间隔做上下限约束）"
+    )
+    crawler_page_interval_min: float = Field(
+        default=2.5, description="翻页间隔下限（秒），自适应等待启用时生效"
+    )
+    crawler_page_interval_max: float = Field(
+        default=8.0, description="翻页间隔上限（秒），自适应等待启用时生效"
+    )
+    crawler_interrupt_poll_ms: int = Field(
+        default=300, description="中断可响应睡眠的轮询粒度（毫秒）"
+    )
+
+    # 日志配置
+    log_dir: str = Field(
+        default="", description="日志文件目录（留空使用 backend/logs/）"
+    )
+    log_level: str = Field(
+        default="DEBUG", description="文件日志级别: DEBUG/INFO/WARNING/ERROR"
+    )
+    log_max_bytes: int = Field(
+        default=10485760, description="单个日志文件最大字节数，默认 10MB"
+    )
+    log_backup_count: int = Field(
+        default=5, description="日志文件保留份数"
+    )
 
     # 原始响应持久化配置
     save_raw_responses: bool = Field(

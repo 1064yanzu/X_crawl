@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from config import settings
 from api.services.settings_db import set_settings_batch
+from api.services.task_scheduler import scheduler
 
 router = APIRouter(prefix="/api/v1/crawler-config", tags=["爬虫配置"])
 
@@ -26,6 +27,11 @@ class CrawlerConfig(BaseModel):
     crawler_challenge_retry_times: int = Field(description="挑战页自动重试次数", ge=0, le=8)
     crawler_challenge_cooldown: float = Field(description="挑战页重试冷却时间（秒）", ge=1.0, le=60.0)
     crawler_max_concurrent_tasks: int = Field(description="并发运行任务上限", ge=1, le=5)
+    scheduler_backend: str = Field(default="memory", description="调度后端：memory/redis")
+    crawler_adaptive_wait_enabled: bool = Field(default=True, description="是否启用自适应等待")
+    crawler_page_interval_min: float = Field(default=2.5, ge=0.5, le=120.0, description="翻页间隔下限（秒）")
+    crawler_page_interval_max: float = Field(default=8.0, ge=0.5, le=180.0, description="翻页间隔上限（秒）")
+    crawler_interrupt_poll_ms: int = Field(default=300, ge=50, le=3000, description="中断轮询粒度（毫秒）")
     # 浏览器配置
     browser_headless: Optional[bool] = Field(default=None, description="是否无头模式")
     browser_proxy: Optional[str] = Field(default=None, description="代理配置，格式：http://ip:port")
@@ -52,6 +58,11 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
         crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
         crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
+        scheduler_backend=settings.scheduler_backend,
+        crawler_adaptive_wait_enabled=settings.crawler_adaptive_wait_enabled,
+        crawler_page_interval_min=settings.crawler_page_interval_min,
+        crawler_page_interval_max=settings.crawler_page_interval_max,
+        crawler_interrupt_poll_ms=settings.crawler_interrupt_poll_ms,
         browser_headless=settings.browser_headless,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
@@ -81,6 +92,13 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.crawler_challenge_retry_times = config.crawler_challenge_retry_times
     settings.crawler_challenge_cooldown = config.crawler_challenge_cooldown
     settings.crawler_max_concurrent_tasks = config.crawler_max_concurrent_tasks
+    settings.scheduler_backend = (config.scheduler_backend or "memory").strip().lower()
+    if settings.scheduler_backend not in ("memory", "redis"):
+        settings.scheduler_backend = "memory"
+    settings.crawler_adaptive_wait_enabled = config.crawler_adaptive_wait_enabled
+    settings.crawler_page_interval_min = config.crawler_page_interval_min
+    settings.crawler_page_interval_max = max(config.crawler_page_interval_max, config.crawler_page_interval_min)
+    settings.crawler_interrupt_poll_ms = config.crawler_interrupt_poll_ms
 
     # 构建要持久化的设置 dict
     persist = {
@@ -94,6 +112,11 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "crawler_challenge_retry_times": config.crawler_challenge_retry_times,
         "crawler_challenge_cooldown": config.crawler_challenge_cooldown,
         "crawler_max_concurrent_tasks": config.crawler_max_concurrent_tasks,
+        "scheduler_backend": settings.scheduler_backend,
+        "crawler_adaptive_wait_enabled": settings.crawler_adaptive_wait_enabled,
+        "crawler_page_interval_min": settings.crawler_page_interval_min,
+        "crawler_page_interval_max": settings.crawler_page_interval_max,
+        "crawler_interrupt_poll_ms": settings.crawler_interrupt_poll_ms,
     }
 
     # 可选字段：只在显式传入时持久化
@@ -116,6 +139,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
 
     # 写入数据库
     set_settings_batch(persist)
+    scheduler.reconfigure_backend()
 
     return CrawlerConfig(
         crawler_timeout=settings.crawler_timeout,
@@ -128,6 +152,11 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
         crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
         crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
+        scheduler_backend=settings.scheduler_backend,
+        crawler_adaptive_wait_enabled=settings.crawler_adaptive_wait_enabled,
+        crawler_page_interval_min=settings.crawler_page_interval_min,
+        crawler_page_interval_max=settings.crawler_page_interval_max,
+        crawler_interrupt_poll_ms=settings.crawler_interrupt_poll_ms,
         browser_headless=settings.browser_headless,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,

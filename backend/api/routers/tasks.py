@@ -81,7 +81,7 @@ async def resume_task(task_id: str) -> dict:
         if not success:
             raise HTTPException(status_code=409, detail=f"任务恢复失败: {task_id}")
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
-        return {"message": f"任务 {task_id} 已从断点恢复爬取", "status": "running"}
+        return {"message": f"任务 {task_id} 已恢复并加入调度队列", "status": "pending"}
 
     # ── 已暂停的任务：唤醒或重启 ──
     current_signal = task_manager.get_signal(task_id)
@@ -96,10 +96,10 @@ async def resume_task(task_id: str) -> dict:
         task_manager.resume_task(task_id)
         return {"message": f"任务 {task_id} 继续信号已发送", "status": "running"}
     else:
-        # 爬虫线程已死（浏览器被关闭等），需要重新启动爬虫线程从断点恢复
+        # 爬虫线程已死（浏览器被关闭等），重新入队从断点恢复
         task_manager.resume_task(task_id)
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
-        return {"message": f"任务 {task_id} 爬虫线程已重启，从断点恢复", "status": "running"}
+        return {"message": f"任务 {task_id} 已重新加入调度队列，从断点恢复", "status": "pending"}
 
 
 @router.post(

@@ -1,5 +1,97 @@
 # Changelog
 
+## 2026-02-26
+
+### 📦 新增：结构化日志系统
+
+- 新增 `crawler/log_config.py`：双输出日志（控制台 INFO + 文件 DEBUG），RotatingFileHandler（10MB × 5 份）
+- `config.py` 新增 4 个日志配置项：`log_dir` / `log_level` / `log_max_bytes` / `log_backup_count`
+- `api/main.py`：`logging.basicConfig` 替换为 `setup_logging()`
+
+### 🔧 修复：回复翻页策略（v5 重写）
+
+**问题**：v3/v4 中添加的 `_click_show_more()` 按钮点击逻辑基于错误假设。
+
+**抓包分析发现**：X 评论区翻页实际是**纯滚动触发**同一个 `TweetDetail` API（带 `cursor` 参数）。二级评论则是导航到新页面（`focalTweetId` = 一级评论 ID），而非在评论区内展开。
+
+**修复**：`crawler/reply_fetcher.py`（v5）
+- 删除 `_SHOW_MORE_TEXTS` 常量和 `_click_show_more()` 函数（约 60 行冗余代码）
+- 翻页策略简化为：渐进式滚动 → 等待 TweetDetail 数据包 → 解析
+- 恢复逻辑和 no-cursor 分支中也移除了按钮点击调用
+- 日志级别调整：高频翻页日志从 INFO 调为 DEBUG
+
+### ✨ 新增：二级评论递归抓取
+
+- 新增 `crawler/nested_reply_fetcher.py`：递归抓取评论的子评论（自动对 `reply_count > 0` 的评论导航到新页面获取子评论）
+- 新增 `reply_depth` 参数（默认 2）：1=仅一级评论，2=含二级评论
+- 参数贯穿整条调用链：`SearchRequest` → `task_manager` → `crawl_service` → `x_searcher` → `reply_fetcher` → `nested_reply_fetcher`
+- 前端 `CrawlerTaskBuilder` 新增「评论抓取深度」选项（仅一级 / 含二级）
+- 导出模块 `export.py` 已原生支持嵌套 `reply["replies"]` 结构
+
+### 🐛 修复：DFS 模式下前端预览数据全部为 0
+
+**问题**：DFS 策略抓取时，`crawl_phase` 显示正在抓取回复（如"正在抓取第 3/19 条推文的回复"），但前端 `result_count = 0`、`preview_tweets` 为空，数据库中 `tweets_json` 也为空。
+
+**根本原因**：`x_searcher.py` DFS 分支中 `_on_reply_progress` 回调使用 `_dfs_new_tweets_ref` 过滤原始推文列表中 `replies is not None` 的条目来构建 `interim_tweets`。然而 `fetch_replies_batch` 对每条推文做了 `dict()` 浅拷贝后才设置 `replies`，原始列表中的推文对象始终没有 `replies` 字段，过滤结果始终为空。`update_task_progress` 被调用时用空列表覆盖了之前 `update_preview_tweets` 设置的数据。
+
+**修复**：`crawler/x_searcher.py`
+- 改用 `_dfs_processed` 共享可变列表 + `_dfs_tweet_index` 索引
+- `_on_reply_progress` 回调中通过 `tweet_id` 从索引查找原始推文，合并 `replies` 后追加到已处理列表
+- `interim_tweets` 改为 `_dfs_all_tweets_ref + _dfs_processed`，确保增量数据正确传递
+
+### 🔒 修复：任务中断时已采集数据全部丢失
+
+**问题**：任务被中断（停止/崩溃/异常）后已采集的全部推文数据均丢失，`result_count` 归零。
+
+**根本原因**：三条数据丢失路径：
+1. `update_preview_tweets` 不更新 `tweets` 字段也不持久化，中断时内存/DB中 `tweets` 为空
+2. `crawl_service.py` 异常处理从未保存已有推文
+3. `search()` 的 `finally` 块没有保存进度
+
+**修复**：
+- `api/services/task_manager.py`：`update_preview_tweets` 增加 `tweets` 字段同步 + 节流持久化
+- `api/services/crawl_service.py`：`Exception` 处理中先保存已有推文再标记错误
+- `crawler/x_searcher.py`：DFS 回复抓取前保存 checkpoint + `finally` 块安全兜底保存
+
+## 2026-02-26
+
+### ✨ 重构：前后端深度优化（调度队列 + UI/UX 升级 + 设置闭环）
+
+**后端（FastAPI + Crawler）**
+- 新增 `api/services/task_scheduler.py`：内置内存队列调度器，统一任务入队执行，预留 Redis 后端扩展接口。
+- `api/services/crawl_service.py` 改为调度器驱动：`start_crawler_thread()` 从直启线程改为入队；任务结束统一回写并清理调度状态。
+- 新增 `crawler/runtime_metrics.py`：运行指标采集（超时、软重试、硬刷新、风控命中、空页等）。
+- `crawler/x_searcher.py`、`crawler/reply_fetcher.py`、`crawler/page_health.py` 接入运行指标上报。
+- `crawler/utils.py` 新增 `interruptible_sleep()`，长等待可响应 `pause/stop`，并将 `jittered_sleep()` 升级为可中断 + 自适应区间约束。
+- `api/services/task_manager.py` 重写为线程安全版本：统一锁保护、节流持久化、新增质量状态与事件时间字段。
+- `api/services/task_db.py` 轻量补列迁移：新增 `quality_state`、`runtime_metrics_json`、`last_event_at`。
+- `api/routers/search.py` 创建任务改为统一入队语义（返回 `pending`）。
+- `api/routers/crawler_config.py` 新增配置并持久化：
+  - `scheduler_backend`
+  - `crawler_adaptive_wait_enabled`
+  - `crawler_page_interval_min`
+  - `crawler_page_interval_max`
+  - `crawler_interrupt_poll_ms`
+
+**前端（Next.js 16 + React 19）**
+- 引入 `@tanstack/react-query`，新增 `AppProviders`，统一任务/健康状态轮询数据层。
+- 新增全局 Toast 与确认弹层组件（`toast.tsx`、`confirm-dialog.tsx`），移除阻塞式 `alert/confirm`。
+- `tasks/[id]` 页面重构：接入 React Query 条件轮询、拆分任务状态/告警/运行指标子组件，修复不稳定 key（移除 `Math.random()`）。
+- `settings` 页面拆分：
+  - 新增 `useCrawlerConfig` Hook
+  - 新增 `features/settings/*` 组件化卡片
+  - 新增调度与自适应等待配置 UI，形成设置闭环
+- `SearchForm` 合并为 `CrawlerTaskBuilder` 兼容包装，消除重复实现分叉。
+- `CookieManager` 重写，清理历史重复片段并改为非阻塞确认流程。
+- `globals.css` 重建设计 token（中性色 + 蓝色强调 + 琥珀预警），新增 Skip Link、focus 可视化与 `prefers-reduced-motion` 降级。
+
+**测试与验证**
+- 新增测试：`backend/tests/test_task_scheduler.py`
+- 更新测试：`backend/tests/test_search_api_concurrency.py`（并发超限 409 语义改为入队 `pending`）
+- 通过：`PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests`（13 passed）
+- 通过：`frontend npm run lint`
+- 通过：`frontend npm run build`
+
 ## 2026-02-23
 
 ### ✨ 新增：浏览器切换功能 + SPA 优化

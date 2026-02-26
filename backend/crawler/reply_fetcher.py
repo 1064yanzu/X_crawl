@@ -1,15 +1,11 @@
 """
-回复抓取器模块（v4 - 支持快速退出 + Show More 点击 + 渐进式滚动 + expected_count 参考）
+回复抓取器模块（v5 - 纯滚动翻页 + expected_count 参考）
 
-变更：
-- 第一页解析后判断：若已获取评论数 >= 预期数量或覆盖率足够高，则跳过翻页
-- 翻页由简单滚动改为：滚动 + 检测并点击 "Show more replies" 按钮
-- 使用推文元数据中的 reply_count 作为预期评论数参考
-- 连续空页计数器防止无限循环
-- 渐进式多步滚动确保懒加载内容完全触发
-- 每次翻页后额外等待 crawler_reply_wait 秒，确保评论区内容完全加载
-- 支持任务控制信号检查（通过 task_id 传入），可随时终止
-- 翻页间隔引入随机扰动，模拟人工操作
+变更（v5）：
+- 根据抓包分析，确认 X 评论区翻页是纯滚动触发 TweetDetail API，无 "Show more" 按钮
+- 删除 _click_show_more 及相关逻辑，简化翻页为：滚动 → 等待数据包 → 解析
+- 保留渐进式多步滚动确保懒加载内容完全触发
+- 保留快速退出、连续空页计数器、随机扰动等策略
 """
 import time
 import random
@@ -24,20 +20,11 @@ from crawler.page_state import detect_page_state, PageState
 from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
-from crawler.utils import jittered_sleep, check_signal, merge_remaining
+from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
+from crawler.runtime_metrics import bump_metric
 from config import settings
 
 logger = logging.getLogger(__name__)
-
-# "Show more replies" 按钮的文案（多语言兼容）
-_SHOW_MORE_TEXTS = [
-    "Show more replies",
-    "Show additional replies",
-    "显示更多回复",
-    "显示其他回复",
-    "もっと返信を表示",
-    "Show",  # 兜底：部分场景下按钮只显示 "Show"
-]
 
 # 连续无新评论的最大重试次数（超过后认为评论区已到底）
 _MAX_EMPTY_PAGES = 3
@@ -51,63 +38,9 @@ def _to_risk_state(state: PageState) -> RiskState:
     return "challenge"
 
 
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  翻页辅助函数
 # ═══════════════════════════════════════════════════════════════════
-
-def _click_show_more(tab) -> bool:
-    """
-    检测并点击 "Show more replies" / "显示更多回复" 等按钮。
-
-    X 的推文详情页在评论区底部会放置这类按钮，点击后才会触发
-    新的 TweetDetail API 请求加载更多评论。
-
-    Returns:
-        True 如果找到并成功点击了按钮，False 如果未找到
-    """
-    for text in _SHOW_MORE_TEXTS:
-        try:
-            # 使用 DrissionPage 的模糊文本匹配
-            ele = tab.ele(f'text:{text}', timeout=2)
-            if ele:
-                # 先滚动到该元素可见位置
-                ele.scroll.to_see()
-                time.sleep(0.3)
-                ele.click()
-                logger.info(f"  ✅ 点击了 '{text}' 按钮")
-                return True
-        except Exception as e:
-            logger.debug(f"  查找 '{text}' 按钮时异常: {e}")
-            continue
-
-    # 尝试通过 CSS 选择器查找（X 的 "Show more" 有时在特殊容器内）
-    _CSS_SELECTORS = [
-        # "Show more replies" 通常在 role=button 的 div 中
-        'css:[role="button"] span',
-        # cursor-type 按钮
-        'css:[data-testid="cellInnerDiv"] [role="button"]',
-    ]
-    for selector in _CSS_SELECTORS:
-        try:
-            elements = tab.eles(selector, timeout=1)
-            for ele in elements:
-                ele_text = (ele.text or "").strip().lower()
-                if any(keyword in ele_text for keyword in [
-                    "show", "more", "replies",
-                    "显示", "更多", "回复",
-                ]):
-                    ele.scroll.to_see()
-                    time.sleep(0.3)
-                    ele.click()
-                    logger.info(f"  ✅ 通过 CSS 选择器点击了按钮（文本: '{ele_text}'）")
-                    return True
-        except Exception as e:
-            logger.debug(f"  CSS 选择器 '{selector}' 查找异常: {e}")
-            continue
-
-    return False
 
 
 def _scroll_incremental(tab, steps: int = 5, pause: float = 0.8) -> None:
@@ -151,10 +84,12 @@ def _wait_reply_packet_with_recovery(
             if ignored:
                 logger.debug(f"  回复第 {page_num} 页过滤无关包 {ignored} 个")
             return packet
+        bump_metric(task_id, "reply_packet_timeouts")
 
         state, reason = detect_page_state(tab)
         if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
             risk_hits += 1
+            bump_metric(task_id, "risk_hits")
             if risk_hits > policy.challenge_retry_times:
                 raise ChallengeSignal(
                     f"回复页检测到 {state.value} 且重试耗尽：{reason}",
@@ -167,10 +102,12 @@ def _wait_reply_packet_with_recovery(
             sleep_with_jitter(policy.challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
 
         if soft_attempt < policy.packet_soft_retries:
+            bump_metric(task_id, "soft_retries")
             soft_recover_for_packet(tab, soft_attempt)
             continue
 
     for hard_attempt in range(policy.refresh_max_retries):
+        bump_metric(task_id, "hard_refreshes")
         wait = backoff_seconds(hard_attempt, base=2.0, cap=35.0)
         logger.warning(
             f"  回复第 {page_num} 页硬恢复刷新 {hard_attempt + 1}/{policy.refresh_max_retries}，"
@@ -291,25 +228,20 @@ def fetch_replies(
             )
 
             if not packet:
-                # 连续恢复失败但覆盖率明显不足时，再做一次 UI 触发尝试
+                # 恢复失败但覆盖率不足时，尝试额外滚动触发加载
                 if expected_count and len(all_replies) < expected_count * 0.5:
                     logger.info(
-                        f"  恢复后仍未抓到数据（{len(all_replies)}/{expected_count}），尝试点击加载更多..."
+                        f"  恢复后仍未抓到数据（{len(all_replies)}/{expected_count}），"
+                        f"尝试额外滚动触发加载..."
                     )
-                    clicked = _click_show_more(tab)
-                    if clicked:
-                        time.sleep(settings.crawler_reply_wait)
-                        continue
                     _scroll_incremental(tab)
-                    time.sleep(settings.crawler_reply_wait)
+                    interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
                     packet, _ = wait_for_target_packet(
                         tab,
                         timeout=max(5.0, timeout / 2),
                         accept_body=is_tweet_detail_body,
                     )
-                    if packet:
-                        pass
-                    else:
+                    if not packet:
                         logger.warning(f"  回复第 {page_num} 页连续超时（tweet_id={tweet_id}）")
                         break
                 else:
@@ -347,6 +279,7 @@ def fetch_replies(
                 # 更新连续空页计数
                 if len(new_replies) == 0:
                     empty_page_count += 1
+                    bump_metric(task_id, "empty_pages")
                     if empty_page_count >= _MAX_EMPTY_PAGES:
                         logger.info(
                             f"  连续 {_MAX_EMPTY_PAGES} 页无新评论，停止翻页"
@@ -381,38 +314,31 @@ def fetch_replies(
 
                 # 无更多评论（API 没有返回 bottom_cursor）
                 if not bottom_cursor:
-                    # 如果预期还有更多评论，尝试通过点击按钮加载
                     if expected_count and len(all_replies) < expected_count * 0.5:
+                        # 覆盖率不足但 API 没给 cursor，尝试额外滚动
                         logger.info(
                             f"  API 无 cursor 但仅抓到 {len(all_replies)}/{expected_count} 条，"
-                            f"尝试点击按钮加载更多..."
+                            f"尝试额外滚动触发加载..."
                         )
-                        clicked = _click_show_more(tab)
-                        if clicked:
-                            time.sleep(settings.crawler_reply_wait)
-                            continue
+                        _scroll_incremental(tab)
+                        interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
+                        continue
                     logger.info(f"  评论区无更多数据（tweet_id={tweet_id}）")
                     break
 
-                # ── 翻页操作：按钮点击 + 滚动 ──────────────────────
+                # ── 翻页操作：渐进式滚动触发懒加载 ──────────────────────
 
                 # 先等待确保本页评论 DOM 渲染完毕
-                logger.info(f"  评论加载等待 {settings.crawler_reply_wait}s...")
-                time.sleep(settings.crawler_reply_wait)
+                logger.debug(f"  评论加载等待 {settings.crawler_reply_wait}s...")
+                interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
 
                 # 随机扰动间隔
-                jittered_sleep(settings.crawler_page_interval)
+                jittered_sleep(settings.crawler_page_interval, task_id=task_id)
 
-                # 方案1：优先尝试点击 "Show more replies" 按钮
-                clicked = _click_show_more(tab)
-                if clicked:
-                    # 点击成功后等待数据加载
-                    time.sleep(settings.crawler_reply_wait)
-                else:
-                    # 方案2：按钮不存在，使用渐进式滚动触发懒加载
-                    logger.info(f"  未找到加载更多按钮，使用渐进式滚动...")
-                    _scroll_incremental(tab)
-                    time.sleep(settings.crawler_reply_wait)
+                # 渐进式滚动到底部，触发 TweetDetail API 加载更多评论
+                logger.debug(f"  执行渐进式滚动加载下一页评论...")
+                _scroll_incremental(tab)
+                interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
 
             except ChallengeSignal:
                 raise
@@ -467,6 +393,7 @@ def fetch_replies_batch(
     timeout: Optional[float] = None,
     progress_callback=None,
     strategy: str = "bfs",
+    reply_depth: int = 2,
 ) -> tuple[list[dict], list[dict]]:
     """
     批量抓取多条推文的回复（BFS 广度优先模式下使用）。
@@ -565,6 +492,28 @@ def fetch_replies_batch(
             if failure_info:
                 failure_info["task_id"] = task_id or ""
                 failed_records.append(failure_info)
+
+            # ── 二级评论递归抓取 ───────────────────────────────
+            if replies and reply_depth > 1:
+                from crawler.nested_reply_fetcher import fetch_nested_replies
+                try:
+                    tweet["replies"], nested_failed = fetch_nested_replies(
+                        replies,
+                        current_depth=1,
+                        max_depth=reply_depth,
+                        max_replies_per_tweet=max_replies_per_tweet,
+                        task_id=task_id,
+                        timeout=timeout,
+                    )
+                    failed_records.extend(nested_failed)
+                except StopSignal as e:
+                    updated_tweets.append(tweet)
+                    merge_remaining(updated_tweets, tweets, i + 1)
+                    raise StopSignal(str(e), partial_tweets=updated_tweets)
+                except ChallengeSignal:
+                    raise
+                except Exception as e:
+                    logger.error(f"拓展抓取 tweet_id={tweet_id} 的子评论失败: {e}", exc_info=True)
         except StopSignal as e:
             # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
             tweet = dict(tweet)
@@ -596,6 +545,6 @@ def fetch_replies_batch(
                 pass
 
         # 礼貌性间隔（带随机扰动），避免被封
-        jittered_sleep(settings.crawler_page_interval)
+        jittered_sleep(settings.crawler_page_interval, task_id=task_id)
 
     return updated_tweets, failed_records

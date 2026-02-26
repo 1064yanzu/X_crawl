@@ -1,0 +1,93 @@
+2026-02-26 17:41:17 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:41:17 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:41:17 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:41:17 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:41:17 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:41:17 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:41:17 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:41:17 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:44:49 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:44:49 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:44:50 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:44:50 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:44:50 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:44:50 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:44:50 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:44:50 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:44:50 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:44:50 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:47:48 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:47:49 [INFO] crawler.x_searcher:_wait_search_packet_with_recovery:112 - 第 1 页软恢复重试 1/2
+2026-02-26 17:47:57 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:54:29 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:54:29 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:54:30 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:54:30 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:54:30 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:54:30 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:54:30 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:54:30 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:54:30 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:54:30 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:54:31 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:54:31 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:54:32 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:54:32 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:54:32 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:54:32 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:54:32 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:54:32 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:54:32 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:54:32 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:54:54 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:54:54 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:54:55 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:54:55 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:54:55 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:54:55 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:54:55 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:54:55 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:54:55 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:54:55 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:55:00 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:55:00 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:55:00 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:55:00 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:55:00 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:55:00 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:55:00 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:55:00 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:55:00 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:55:00 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:55:02 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:55:02 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:55:02 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:55:02 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:55:02 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:55:02 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:55:02 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:55:02 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:55:02 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:55:02 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:56:19 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:56:19 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:56:19 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:56:19 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:56:19 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:56:19 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:56:19 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:56:19 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:56:19 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:56:19 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:56:21 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-26 17:56:21 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-26 17:56:21 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:56:21 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-26 17:56:21 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:56:21 [INFO] crawler.browser_detector:detect_browser_path:341 - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-02-26 17:56:21 [INFO] crawler.browser_detector:detect_all_browsers:325 - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-02-26 17:56:21 [INFO] crawler.browser_detector:detect_user_data_path:361 - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-02-26 17:56:21 [INFO] crawler.browser_detector:detect_all:380 - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-02-26 17:56:21 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+2026-02-26 17:57:52 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: DEBUG
+2026-02-26 17:57:53 [INFO] crawler.x_searcher:_wait_search_packet_with_recovery:112 - 第 1 页软恢复重试 1/2
