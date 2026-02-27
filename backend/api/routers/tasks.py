@@ -5,12 +5,35 @@ DELETE /api/v1/tasks/{task_id} 删除任务记录
 POST   /api/v1/tasks/{task_id}/pause  暂停任务
 POST   /api/v1/tasks/{task_id}/resume 继续任务
 POST   /api/v1/tasks/{task_id}/stop   主动终止任务
+GET    /api/v1/tasks/{task_id}/stream SSE 实时事件流
 """
-from fastapi import APIRouter, HTTPException
+import asyncio
+import json
+import time
+
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from api.schemas.task import TaskOut
 from api.services import task_manager, crawl_service
+from config import settings
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
+
+
+def _stream_snapshot(task: dict) -> dict:
+    """
+    SSE 仅推送轻量快照，避免长连接下反复传输全量 tweets。
+    preview_tweets 保留（条数受 crawler_preview_count 限制）。
+    """
+    payload = dict(task)
+    payload["tweets"] = []
+    preview = payload.get("preview_tweets") or []
+    if isinstance(preview, list):
+        limit = max(1, int(getattr(settings, "crawler_preview_count", 10)))
+        payload["preview_tweets"] = preview[-limit:]
+    else:
+        payload["preview_tweets"] = []
+    return payload
 
 
 @router.get(
@@ -19,10 +42,76 @@ router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
     summary="获取所有任务列表",
     description="返回所有历史任务，按创建时间倒序排列。",
 )
-async def list_tasks() -> list[TaskOut]:
-    """获取全部任务列表"""
+async def list_tasks(
+    include_payload: bool = Query(
+        default=False,
+        description="是否返回 tweets/preview_tweets。默认 false 仅返回摘要，减少轮询开销。",
+    ),
+) -> list[TaskOut]:
+    """获取全部任务列表（支持摘要模式）"""
     tasks = task_manager.list_tasks()
+    if not include_payload:
+        for task in tasks:
+            task["tweets"] = []
+            task["preview_tweets"] = []
     return [TaskOut(**t) for t in tasks]
+
+
+@router.get(
+    "/{task_id}/stream",
+    summary="任务实时事件流（SSE）",
+    description="通过 Server-Sent Events 持续推送任务实时快照与动作事件。",
+)
+async def stream_task(task_id: str, request: Request):
+    existing = task_manager.get_task(task_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+    interval_ms = max(200, min(5000, int(settings.crawler_live_push_interval_ms)))
+
+    async def event_generator():
+        last_event_id = 0
+        last_snapshot_sent = 0.0
+        last_heartbeat = time.monotonic()
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            task = task_manager.get_task(task_id)
+            if not task:
+                payload = json.dumps({"task_id": task_id, "type": "closed"}, ensure_ascii=False)
+                yield f"event: closed\ndata: {payload}\n\n"
+                break
+
+            events = task_manager.get_task_events(task_id, after_id=last_event_id, limit=120)
+            for event in events:
+                last_event_id = max(last_event_id, int(event.get("id", 0)))
+                payload = json.dumps(event, ensure_ascii=False)
+                yield f"event: action\ndata: {payload}\n\n"
+
+            now = time.monotonic()
+            if now - last_snapshot_sent >= interval_ms / 1000.0:
+                payload = json.dumps(_stream_snapshot(task), ensure_ascii=False)
+                yield f"event: snapshot\ndata: {payload}\n\n"
+                last_snapshot_sent = now
+
+            if now - last_heartbeat >= 15.0:
+                hb = json.dumps({"ts": int(now), "task_id": task_id}, ensure_ascii=False)
+                yield f"event: heartbeat\ndata: {hb}\n\n"
+                last_heartbeat = now
+
+            await asyncio.sleep(interval_ms / 1000.0)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.delete(

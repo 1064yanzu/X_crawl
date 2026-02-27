@@ -1,7 +1,7 @@
 """
 搜索路由（v5 - 调度器队列化执行）
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from api.schemas.task import SearchRequest, TaskOut
 from api.services import task_manager, crawl_service
 
@@ -54,8 +54,16 @@ async def create_search_task(
     response_model=TaskOut,
     summary="查询搜索任务状态与结果",
 )
-async def get_search_task(task_id: str) -> TaskOut:
+async def get_search_task(
+    task_id: str,
+    include_tweets: bool = Query(
+        default=True,
+        description="是否返回完整 tweets 列表。轮询建议 false，减少传输开销。",
+    ),
+) -> TaskOut:
     task_data = task_manager.get_task(task_id)
     if not task_data:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    if not include_tweets:
+        task_data["tweets"] = []
     return TaskOut(**task_data)

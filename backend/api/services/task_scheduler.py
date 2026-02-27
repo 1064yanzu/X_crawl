@@ -65,6 +65,7 @@ class TaskScheduler:
         self._lock = threading.RLock()
         self._running: dict[str, threading.Thread] = {}
         self._queued_ids: set[str] = set()
+        self._queued_order: list[str] = []
         self._executor: Optional[Callable[[str, dict], threading.Thread]] = None
         self._backend: SchedulerBackend = self._make_backend()
         self._dispatch_thread = threading.Thread(
@@ -97,6 +98,7 @@ class TaskScheduler:
             if task_id in self._running or task_id in self._queued_ids:
                 return False
             self._queued_ids.add(task_id)
+            self._queued_order.append(task_id)
             self._backend.put(ScheduledTask(task_id=task_id, payload=payload))
             return True
 
@@ -104,6 +106,8 @@ class TaskScheduler:
         with self._lock:
             self._running.pop(task_id, None)
             self._queued_ids.discard(task_id)
+            if task_id in self._queued_order:
+                self._queued_order = [tid for tid in self._queued_order if tid != task_id]
 
     def is_running(self, task_id: str) -> bool:
         with self._lock:
@@ -113,8 +117,24 @@ class TaskScheduler:
     def queue_size(self) -> int:
         return self._backend.size()
 
+    def running_count(self) -> int:
+        return self._running_count()
+
+    def queued_task_ids(self) -> list[str]:
+        with self._lock:
+            return [tid for tid in self._queued_order if tid in self._queued_ids]
+
     def _max_workers(self) -> int:
-        return max(1, int(settings.crawler_max_concurrent_tasks))
+        configured = max(1, int(settings.crawler_max_concurrent_tasks))
+        try:
+            from crawler.resource_guard import effective_worker_limit
+
+            return effective_worker_limit(configured)
+        except Exception:
+            return configured
+
+    def effective_worker_limit(self) -> int:
+        return self._max_workers()
 
     def _dispatch_loop(self) -> None:
         while True:
@@ -133,6 +153,8 @@ class TaskScheduler:
 
                 with self._lock:
                     self._queued_ids.discard(item.task_id)
+                    if item.task_id in self._queued_order:
+                        self._queued_order = [tid for tid in self._queued_order if tid != item.task_id]
                     if item.task_id in self._running:
                         continue
                     thread = self._executor(item.task_id, item.payload)

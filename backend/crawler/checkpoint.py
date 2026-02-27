@@ -5,7 +5,6 @@
 """
 import json
 import logging
-import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
@@ -52,8 +51,10 @@ def save_checkpoint(
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        tmp_path = path.with_suffix(".tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        tmp_path.replace(path)
         logger.debug(f"检查点已保存: {path}（{len(tweets_so_far)} 条推文，cursor={'有' if next_cursor else '无'}）")
     except Exception as e:
         logger.error(f"保存检查点失败: {e}")

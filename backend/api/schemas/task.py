@@ -60,6 +60,10 @@ class TaskOut(BaseModel):
     risk_state: RiskState = Field(default="none", description="风险状态：none/challenge/rate_limited/login_required")
     quality_state: QualityState = Field(default="complete", description="任务质量：complete/partial/interrupted")
     runtime_metrics: dict = Field(default_factory=dict, description="任务运行期指标汇总")
+    live_metrics: dict = Field(default_factory=dict, description="实时遥测指标（SSE/摘要模式可用）")
+    time_coverage: dict = Field(default_factory=dict, description="推文/评论时间覆盖范围统计")
+    latest_action: Optional[dict] = Field(default=None, description="最近一次结构化动作事件")
+    queue_position: Optional[int] = Field(default=None, description="队列位置（pending 时有效）")
     last_event_at: Optional[str] = Field(default=None, description="最近状态事件时间（ISO）")
     resumed: bool = Field(default=False, description="是否从断点恢复")
     # ── 回复相关字段 ──

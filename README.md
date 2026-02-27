@@ -43,7 +43,7 @@ pip install -r requirements.txt
 
 ```bash
 # 确保在已激活的 .venv 环境下，在 backend 目录运行：
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8080
 ```
 启动后可以在 `http://localhost:8000/docs` 查看由 FastAPI 自动生成的 Swagger API 文档。
 
@@ -126,3 +126,54 @@ npm run start
   如果您所在系统的目录名称带有空格（如 `external disk`），很多命令需要将整个路径加上双引号，或者尽量相对路径进入文件夹后，再执行 `source .venv/bin/activate`。
 - **采集失败并提示配置异常？**
   本引擎利用 DrissionPage 操控真实浏览器。请确保您本机拥有一款主流基于 Chromium 内核的浏览器（例如 Google Chrome，Microsoft Edge，Brave 等）。后台启动已加入了自动查找检测探针。
+
+---
+
+## 跨平台一键启动脚本（macOS / Linux / Windows）
+
+本仓库新增了原生启动脚本，优先作为部署与联调入口：
+
+- macOS / Linux
+  - 后端：`./scripts/start-backend.sh`
+  - 前端：`./scripts/start-frontend.sh`
+- Windows PowerShell
+  - 后端：`./scripts/start-backend.ps1`
+  - 前端：`./scripts/start-frontend.ps1`
+
+支持参数：
+
+- `--prod`：生产模式启动（后端禁用 reload；前端先 build 再 start）
+
+示例：
+
+```bash
+./scripts/start-backend.sh --prod
+./scripts/start-frontend.sh
+```
+
+## Linux 无头服务器注意事项
+
+1. 若 Linux 环境没有 `DISPLAY`，脚本会默认开启 `BROWSER_HEADLESS=true`（可手动覆盖）。
+2. 后端可开启 Linux 无头加固参数（设置页可配置）：
+   - `--no-sandbox`
+   - `--disable-dev-shm-usage`
+   - `--disable-gpu`
+   - `--disable-setuid-sandbox`
+3. 推荐保留真实浏览器会话与自然请求头，不手工伪造核心鉴权头。
+
+## 实时可观测与资源保护
+
+新增能力：
+
+1. 任务详情实时展示动作流、速率、风控/重试健康、主机与进程资源占用、推文/评论覆盖时间范围。
+2. 在资源紧张时自动放慢抓取节奏，并在高压下动态收敛并发，降低服务卡死风险。
+3. SSE 通道采用轻量快照（不推全量 tweets）+ 轮询兜底，兼顾实时性与性能。
+
+对应可配置项（设置页可见）：
+
+- `crawler_auto_throttle_enabled`
+- `crawler_dynamic_concurrency_enabled`
+- `crawler_memory_pressure_warn_pct`
+- `crawler_memory_pressure_critical_pct`
+- `crawler_resource_throttle_max_factor`
+- 以及 `crawler_live_push_interval_ms`

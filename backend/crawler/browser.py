@@ -22,6 +22,11 @@ from DrissionPage import Chromium, ChromiumOptions
 
 from config import settings
 from crawler.browser_detector import detect_browser_path, get_browser_by_id
+from crawler.platform_runtime import (
+    should_force_headless_on_linux,
+    linux_headless_args_enabled,
+)
+from crawler.stealth import apply_stealth_to_tab
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +145,12 @@ def _create_browser() -> Chromium:
         logger.info(f"使用代理: {settings.browser_proxy}")
 
     # 无头模式
-    if settings.browser_headless:
+    effective_headless = bool(settings.browser_headless)
+    if should_force_headless_on_linux(browser_headless=effective_headless):
+        effective_headless = True
+        logger.warning("检测到 Linux 无显示服务，自动启用 headless 模式（可在设置中关闭自动加固）")
+
+    if effective_headless:
         co.headless(True)
         logger.info("浏览器运行于无头模式")
 
@@ -153,6 +163,15 @@ def _create_browser() -> Chromium:
     co.set_argument("--disable-infobars")
     co.set_argument("--no-first-run")
     co.set_argument("--no-default-browser-check")
+    if linux_headless_args_enabled(
+        browser_linux_hardening=bool(settings.browser_linux_hardening),
+        browser_headless=effective_headless,
+    ):
+        co.set_argument("--no-sandbox")
+        co.set_argument("--disable-dev-shm-usage")
+        co.set_argument("--disable-gpu")
+        co.set_argument("--disable-setuid-sandbox")
+        logger.info("Linux 无头稳定性参数已启用（no-sandbox/dev-shm/gpu/setuid）")
 
     # 图片加载策略
     co.no_imgs(settings.browser_block_images)
@@ -174,7 +193,9 @@ def _create_browser() -> Chromium:
 
 def get_new_tab():
     """获取一个新标签页（用于单次爬虫任务）"""
-    return get_browser().new_tab()
+    tab = get_browser().new_tab()
+    apply_stealth_to_tab(tab, enabled=bool(settings.browser_stealth_enabled))
+    return tab
 
 
 def ensure_browser_alive() -> None:

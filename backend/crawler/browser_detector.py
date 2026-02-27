@@ -55,6 +55,7 @@ BROWSER_DEFINITIONS: list[BrowserDef] = [
                 "/usr/bin/google-chrome",
                 "/usr/bin/google-chrome-stable",
                 "/usr/local/bin/google-chrome",
+                "/snap/bin/chromium",
             ],
         },
         user_data={
@@ -62,7 +63,7 @@ BROWSER_DEFINITIONS: list[BrowserDef] = [
             "win32": [os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")],
             "linux": [f"{_home}/.config/google-chrome"],
         },
-        path_commands=["google-chrome", "google-chrome-stable"],
+        path_commands=["google-chrome", "google-chrome-stable", "chrome"],
     ),
     BrowserDef(
         browser_id="chrome_canary",
@@ -90,14 +91,14 @@ BROWSER_DEFINITIONS: list[BrowserDef] = [
                 r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
                 os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
             ],
-            "linux": ["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable"],
+            "linux": ["/usr/bin/microsoft-edge", "/usr/bin/microsoft-edge-stable", "/usr/bin/microsoft-edge-dev"],
         },
         user_data={
             "darwin": [f"{_home}/Library/Application Support/Microsoft Edge"],
             "win32": [os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\User Data")],
             "linux": [f"{_home}/.config/microsoft-edge"],
         },
-        path_commands=["microsoft-edge"],
+        path_commands=["microsoft-edge", "microsoft-edge-stable", "microsoft-edge-dev"],
     ),
     BrowserDef(
         browser_id="brave",

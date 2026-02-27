@@ -1,19 +1,26 @@
 """
-X 搜索爬虫核心模块（v3 - 支持可暂停/可中止的回复抓取与 BFS/DFS 策略）
+X 搜索爬虫核心模块（v4 - 人性化渐进滚动 + 统一 DFS 策略）
 
-变更：
+变更（v4）：
+- 移除 BFS/DFS 策略区分，统一为 DFS 模式（搜到一批立即抓评论）
+- 搜索翻页改为人性化渐进式滚动（模拟人类浏览行为）
 - 每页检查任务控制信号（pause/stop），可随时暂停或终止
-- 页面首次加载后等待 crawler_initial_wait 秒，确保内容渲染完毕
-- 翻页间隔引入 ±20% 随机扰动，模拟人工操作降低被反爬概率
+- Referer 头由浏览器自动管理（根据抓包分析无需手动设置）
 """
 import logging
 from typing import Literal, Optional
 from urllib.parse import quote
 
 from crawler.browser import get_new_tab
+from crawler.human_scroll import human_like_scroll, simulate_reading, idle_scroll
 from crawler.auth import ensure_login
 from crawler.parser import parse_search_response
 from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
+from crawler.checkpoint_buffer import (
+    stage_reply_checkpoint,
+    flush_reply_checkpoint,
+    clear_reply_checkpoint,
+)
 from crawler.response_saver import save_raw_response
 from crawler.page_health import navigate_with_retry
 from crawler.page_state import detect_page_state, PageState
@@ -22,6 +29,7 @@ from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, bac
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining
 from crawler.runtime_metrics import bump_metric
+from crawler import telemetry
 import api.services.task_manager as _task_mgr
 from config import settings
 
@@ -31,7 +39,7 @@ SEARCH_TIMELINE_PATTERN = "SearchTimeline"
 SEARCH_URL_TEMPLATE = "https://x.com/search?q={query}&src=typed_query"
 
 ProductType = Literal["Top", "Latest", "Photos", "Videos"]
-CrawlStrategy = Literal["bfs", "dfs"]
+CrawlStrategy = Literal["bfs", "dfs"]  # 保留类型定义兼容旧调用，实际统一走 DFS
 
 _TAB_MAP: dict[str, str] = {
     "Top": "",
@@ -159,7 +167,7 @@ def search(
     fetch_replies: bool = False,
     max_replies_per_tweet: int = 20,
     reply_depth: int = 2,
-    crawl_strategy: CrawlStrategy = "bfs",
+    crawl_strategy: CrawlStrategy = "dfs",  # 保留参数兼容旧调用，统一走 DFS
 ) -> SearchResult:
     """
     搜索 X 推文（含断点续爬 + 可选回复抓取 + 可暂停/可终止）
@@ -173,7 +181,7 @@ def search(
         resume:                是否尝试从已有检查点继续（True = 断点续爬）
         fetch_replies:         是否抓取每条推文的回复
         max_replies_per_tweet: 每条推文最多抓取的回复数量
-        crawl_strategy:        "bfs"（广度优先）或 "dfs"（深度优先）
+        crawl_strategy:        已弃用，统一使用 DFS 策略（保留参数兼容旧调用）
 
     Returns:
         SearchResult 对象
@@ -193,6 +201,7 @@ def search(
     page_fetched: int = 0
     resumed = False
     _all_failed_records: list[dict] = []  # 收集所有失败的回复记录
+    _last_bottom_cursor: Optional[str] = None  # 追踪最后有效 cursor，用于兜底保存
 
     if resume and task_id:
         ckpt = load_checkpoint(task_id)
@@ -206,7 +215,17 @@ def search(
                 f"从断点恢复：task_id={task_id}，"
                 f"已有 {len(all_tweets)} 条，cursor={'有' if start_cursor else '无'}"
             )
-            if (max_count and len(all_tweets) >= max_count) or not start_cursor:
+
+            # ── 无 cursor 但无限模式：保留旧推文去重，从头搜索拾取新推文 ──
+            if not start_cursor and not max_count:
+                logger.info(
+                    f"断点恢复（无cursor/无限模式）：保留 {len(all_tweets)} 条旧推文用于去重，"
+                    f"开始新搜索以拾取新推文"
+                )
+                page_fetched = 0  # 重置页码
+                # 不 return，继续走搜索流程
+
+            elif (max_count and len(all_tweets) >= max_count) or not start_cursor:
                 # 断点恢复时若搜索已完成，直接进入回复抓取阶段
                 _resume_failed: list[dict] = []
                 if fetch_replies:
@@ -245,8 +264,15 @@ def search(
         search_url = _build_search_url(keyword, product)
         logger.info(
             f"开始搜索: keyword='{keyword}', product={product}, "
-            f"max_count={max_count}, strategy={crawl_strategy}, "
+            f"max_count={max_count}, strategy=unified_dfs, "
             f"fetch_replies={fetch_replies}, 从断点={resumed}"
+        )
+        telemetry.record_event(
+            task_id,
+            "search_started",
+            status="running",
+            phase="搜索任务已开始",
+            meta={"keyword": keyword, "product": product, "resumed": resumed},
         )
 
         # ── 3. 开启监听 ─────────────────────────────────────────────
@@ -277,6 +303,13 @@ def search(
             logger.info(f"等待第 {page_num} 页数据包（timeout={timeout}s）...")
             if task_id:
                 _task_mgr.update_task_phase(task_id, f"等待第 {page_num} 页数据包...")
+                telemetry.record_event(
+                    task_id,
+                    "search_wait_packet",
+                    status="running",
+                    phase=f"等待第 {page_num} 页数据包...",
+                    page=page_num,
+                )
             packet = _wait_search_packet_with_recovery(
                 tab=tab,
                 timeout=timeout,
@@ -286,6 +319,13 @@ def search(
             )
             if not packet:
                 logger.warning(f"第 {page_num} 页连续恢复后仍超时，停止爬取")
+                telemetry.record_event(
+                    task_id,
+                    "search_packet_timeout_stop",
+                    status="running",
+                    phase=f"第 {page_num} 页连续恢复后仍超时，停止爬取",
+                    page=page_num,
+                )
                 break
 
             try:
@@ -299,15 +339,21 @@ def search(
                     save_raw_response(task_id, page_num, body)
 
                 tweets_page, bottom_cursor, _ = parse_search_response(body)
+                if bottom_cursor:
+                    _last_bottom_cursor = bottom_cursor  # 追踪最后有效 cursor
 
                 # 去重
                 new_tweets = [t for t in tweets_page if t.get("id") not in seen_ids]
                 for t in new_tweets:
                     seen_ids.add(t.get("id", ""))
 
-                # ── DFS：每批新推文立即抓取回复 ────────────────────
-                if fetch_replies and crawl_strategy == "dfs" and new_tweets:
-                    logger.info(f"[DFS] 立即抓取 {len(new_tweets)} 条新推文的回复...")
+                # ── 模拟人类阅读：慢慢浏览本页推文 ────────────────────
+                if new_tweets:
+                    simulate_reading(tab, task_id=task_id, tweet_count=len(new_tweets))
+
+                # ── 每批新推文立即抓取回复（统一 DFS 策略） ───────────
+                if fetch_replies and new_tweets:
+                    logger.info(f"立即抓取 {len(new_tweets)} 条新推文的回复...")
 
                     # 进入回复抓取前，先把已搜到的推文推入预览（仅更新预览，不覆盖 tweets）
                     # ★ 关键修复：不使用 update_task_progress 保存无回复的 tweets，
@@ -344,7 +390,7 @@ def search(
                     _dfs_tweet_index = {t.get("id", ""): t for t in new_tweets}
 
                     def _on_reply_progress(tweet_id: str, replies: list[dict]):
-                        """每条推文回复抓取完成后更新整体进度 + 增量保存 checkpoint"""
+                        """每条推文回复抓取完成后更新进度，并按批次/时间窗刷新 checkpoint。"""
                         # 从原始推文中找到对应记录，合并 replies 后追加到已处理列表
                         orig = _dfs_tweet_index.get(tweet_id)
                         if orig is not None:
@@ -354,10 +400,8 @@ def search(
 
                         if task_id:
                             _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
-                            # 增量保存 checkpoint：合并已有推文 + 当前页已处理推文
-                            # 这样即使线程死亡，恢复时也能跳过已抓回复的推文
                             interim_tweets = list(_dfs_all_tweets_ref) + list(_dfs_processed)
-                            save_checkpoint(
+                            flushed = stage_reply_checkpoint(
                                 task_id=task_id,
                                 keyword=_search_keyword,
                                 product=_search_product,
@@ -365,19 +409,32 @@ def search(
                                 next_cursor=bottom_cursor,
                                 page_fetched=page_num,
                             )
-                            _task_mgr.update_task_progress(task_id, page_num, interim_tweets)
+                            if flushed:
+                                _task_mgr.update_task_progress(task_id, page_num, interim_tweets)
+
+                        # DFS 期间让搜索页保持微滚动（模拟人类偶尔回来看看）
+                        try:
+                            idle_scroll(tab, task_id=task_id)
+                        except Exception:
+                            pass
 
                     try:
                         new_tweets, _dfs_failed = _fetch_replies_for_tweets(
                             new_tweets, max_replies_per_tweet, task_id, timeout,
-                            strategy=crawl_strategy,
+                            strategy="dfs",
                             progress_callback=_on_reply_progress,
                             reply_depth=reply_depth,
                         )
+                        if task_id:
+                            flush_reply_checkpoint(task_id)
                         _all_failed_records.extend(_dfs_failed)
                     except ChallengeSignal:
+                        if task_id:
+                            flush_reply_checkpoint(task_id)
                         raise
                     except StopSignal as e:
+                        if task_id:
+                            flush_reply_checkpoint(task_id)
                         # 即使被中断，也要合并已处理的部分结果（含已抓取的回复）
                         if e.partial_tweets:
                             all_tweets.extend(e.partial_tweets)
@@ -394,12 +451,23 @@ def search(
                         raise
                     finally:
                         tab.listen.start(SEARCH_TIMELINE_PATTERN)
+                        if task_id:
+                            clear_reply_checkpoint(task_id)
 
                 all_tweets.extend(new_tweets)
 
                 logger.info(
                     f"第 {page_num} 页：{len(tweets_page)} 条（新增 {len(new_tweets)} 条），"
                     f"累计 {len(all_tweets)} 条"
+                )
+                telemetry.record_event(
+                    task_id,
+                    "search_page_parsed",
+                    status="running",
+                    phase=f"第 {page_num} 页解析完成",
+                    page=page_num,
+                    delta_tweets=len(new_tweets),
+                    meta={"page_total": len(tweets_page), "all_total": len(all_tweets)},
                 )
 
                 # 写检查点（每页立即保存）
@@ -430,12 +498,22 @@ def search(
                 logger.error(f"第 {page_num} 页解析失败: {e}", exc_info=True)
                 break
 
-            # 滚动翻页（带随机扰动的间隔）
+            # 人性化渐进滚动翻页（模拟人类浏览行为）
             page_num += 1
             jittered_sleep(settings.crawler_page_interval, task_id=task_id)
-            tab.scroll.to_bottom()
+            telemetry.record_event(
+                task_id,
+                "search_scroll_next_page",
+                status="running",
+                phase=f"准备进入第 {page_num} 页，执行滚动翻页",
+                page=page_num,
+            )
+            human_like_scroll(tab, task_id=task_id)
 
     finally:
+        if task_id:
+            flush_reply_checkpoint(task_id)
+            clear_reply_checkpoint(task_id)
         # ── 安全兜底：无论何种原因退出，都尝试保存已采集数据 ──
         if task_id and all_tweets:
             try:
@@ -444,11 +522,14 @@ def search(
                     keyword=keyword,
                     product=product,
                     tweets_so_far=all_tweets,
-                    next_cursor=None,
+                    next_cursor=_last_bottom_cursor,  # 使用最后有效 cursor，而非 None
                     page_fetched=page_num,
                 )
                 _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
-                logger.info(f"安全兜底保存: {len(all_tweets)} 条推文已持久化")
+                logger.info(
+                    f"安全兜底保存: {len(all_tweets)} 条推文已持久化"
+                    f"（cursor={'有' if _last_bottom_cursor else '无'}）"
+                )
             except Exception as e:
                 logger.error(f"安全兜底保存失败: {e}")
         try:
@@ -460,30 +541,11 @@ def search(
     if max_count:
         all_tweets = all_tweets[:max_count]
 
-    # ── BFS：搜索完成后统一抓取所有推文的回复 ──────────────────────
-    if fetch_replies and crawl_strategy == "bfs":
-        logger.info(f"[BFS] 搜索完成，开始统一抓取 {len(all_tweets)} 条推文的回复...")
-        try:
-            all_tweets, _bfs_failed = _fetch_replies_for_tweets(
-                all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy,
-                reply_depth=reply_depth,
-            )
-            _all_failed_records.extend(_bfs_failed)
-        except ChallengeSignal:
-            raise
-        except StopSignal as e:
-            # 即使被中断，也要保存已处理的部分结果（含已抓取的回复）
-            if e.partial_tweets:
-                all_tweets = e.partial_tweets
-            if task_id:
-                _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
-            raise
-        # 更新最终进度
-        if task_id:
-            _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
+    # ── BFS 分支已移除：统一使用 DFS，每批搜索结果中已即时处理评论 ──
 
-    # 爬取完成，删除检查点
-    if task_id and (not max_count or len(all_tweets) >= max_count):
+    # 爬取完成，删除检查点（仅在有限模式且达到目标数量时删除）
+    # 无限模式(max_count=0)保留 checkpoint，便于后续恢复继续爬取新推文
+    if task_id and max_count and len(all_tweets) >= max_count:
         delete_checkpoint(task_id)
 
     result = SearchResult(
@@ -499,6 +561,15 @@ def search(
         f"回复 {result.replies_fetched} 条，"
         f"失败 {len(result.failed_replies)} 条，"
         f"resumed={resumed}"
+    )
+    telemetry.record_event(
+        task_id,
+        "search_finished",
+        status="done",
+        phase="搜索流程完成",
+        delta_tweets=result.total_fetched,
+        delta_replies=result.replies_fetched,
+        meta={"failed_replies": len(result.failed_replies), "resumed": resumed},
     )
     return result
 

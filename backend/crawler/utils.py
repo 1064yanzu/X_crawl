@@ -6,11 +6,17 @@
 import time
 import random
 import logging
+import threading
 from typing import Optional
 from crawler.crawl_signals import StopSignal
+from crawler.resource_guard import get_throttle_multiplier
+from crawler.runtime_metrics import bump_metric
 from config import settings
 
 logger = logging.getLogger(__name__)
+_PAUSE_LOG_LOCK = threading.Lock()
+_PAUSE_LOG_TS: dict[str, float] = {}
+_PAUSE_LOG_INTERVAL_SEC = 15.0
 
 
 def interruptible_sleep(seconds: float, task_id: Optional[str] = None) -> None:
@@ -37,6 +43,13 @@ def jittered_sleep(base_seconds: float, task_id: Optional[str] = None) -> None:
         lower = max(0.2, float(getattr(settings, "crawler_page_interval_min", base or 0.2)))
         upper = max(lower, float(getattr(settings, "crawler_page_interval_max", max(base, lower))))
         base = min(max(base, lower), upper)
+    throttle_factor, pressure_state = get_throttle_multiplier()
+    if throttle_factor > 1.0:
+        base *= throttle_factor
+        if task_id:
+            bump_metric(task_id, "resource_throttle_hits")
+            if pressure_state == "critical":
+                bump_metric(task_id, "resource_critical_hits")
     jitter = base * 0.2
     actual = max(0.5, base + random.uniform(-jitter, jitter))
     interruptible_sleep(actual, task_id=task_id)
@@ -57,11 +70,23 @@ def check_signal(task_id: Optional[str]) -> None:
     while True:
         signal = _task_mgr.get_signal(task_id)
         if signal == "stop":
+            with _PAUSE_LOG_LOCK:
+                _PAUSE_LOG_TS.pop(task_id, None)
             raise StopSignal(f"任务 {task_id} 收到终止信号")
         elif signal == "pause":
-            logger.info(f"任务 {task_id} 已暂停，等待继续信号...")
+            now = time.monotonic()
+            should_log = False
+            with _PAUSE_LOG_LOCK:
+                last = _PAUSE_LOG_TS.get(task_id, 0.0)
+                if now - last >= _PAUSE_LOG_INTERVAL_SEC:
+                    _PAUSE_LOG_TS[task_id] = now
+                    should_log = True
+            if should_log:
+                logger.info(f"任务 {task_id} 已暂停，等待继续信号...")
             interruptible_sleep(1.0)
         else:
+            with _PAUSE_LOG_LOCK:
+                _PAUSE_LOG_TS.pop(task_id, None)
             break
 
 

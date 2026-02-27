@@ -60,6 +60,7 @@ def init_db(db_path: str | Path) -> None:
                 risk_state            TEXT DEFAULT 'none',
                 quality_state         TEXT DEFAULT 'complete',
                 runtime_metrics_json  TEXT DEFAULT '{}',
+                time_coverage_json    TEXT DEFAULT '{}',
                 last_event_at         TEXT,
                 resumed               INTEGER DEFAULT 0,
                 fetch_replies         INTEGER DEFAULT 0,
@@ -101,9 +102,21 @@ def init_db(db_path: str | Path) -> None:
             )
         """)
 
+        # 推文指纹表（跨任务去重用）
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS tweet_fingerprints (
+                tweet_id       TEXT PRIMARY KEY,
+                fingerprint    TEXT NOT NULL,
+                last_task_id   TEXT NOT NULL,
+                replies_json   TEXT DEFAULT '[]',
+                updated_at     TEXT NOT NULL
+            )
+        """)
+
         _ensure_column(conn, "tasks", "risk_state", "TEXT DEFAULT 'none'")
         _ensure_column(conn, "tasks", "quality_state", "TEXT DEFAULT 'complete'")
         _ensure_column(conn, "tasks", "runtime_metrics_json", "TEXT DEFAULT '{}'")
+        _ensure_column(conn, "tasks", "time_coverage_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "last_event_at", "TEXT")
 
         conn.commit()
@@ -129,19 +142,20 @@ def save_task(task: dict) -> None:
         tweets_json = json.dumps(task.get("tweets", []), ensure_ascii=False)
         preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
         runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
+        time_coverage_json = json.dumps(task.get("time_coverage", {}), ensure_ascii=False)
         with _get_conn() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO tasks (
                     task_id, status, keyword, product, max_count,
                     result_count, current_page, created_at, finished_at,
-                    error, risk_state, quality_state, runtime_metrics_json, last_event_at,
+                    error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
                     resumed, fetch_replies, max_replies_per_tweet,
                     crawl_strategy, replies_fetched, crawl_phase,
                     tweets_json, preview_json
                 ) VALUES (
                     :task_id, :status, :keyword, :product, :max_count,
                     :result_count, :current_page, :created_at, :finished_at,
-                    :error, :risk_state, :quality_state, :runtime_metrics_json, :last_event_at,
+                    :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
                     :resumed, :fetch_replies, :max_replies_per_tweet,
                     :crawl_strategy, :replies_fetched, :crawl_phase,
                     :tweets_json, :preview_json
@@ -160,6 +174,7 @@ def save_task(task: dict) -> None:
                 "risk_state":            task.get("risk_state", "none"),
                 "quality_state":         task.get("quality_state", "complete"),
                 "runtime_metrics_json":  runtime_metrics_json,
+                "time_coverage_json":    time_coverage_json,
                 "last_event_at":         task.get("last_event_at"),
                 "resumed":               int(task.get("resumed", False)),
                 "fetch_replies":         int(task.get("fetch_replies", False)),
@@ -173,6 +188,71 @@ def save_task(task: dict) -> None:
             conn.commit()
     except Exception as e:
         logger.error(f"持久化任务失败 task_id={task.get('task_id')}: {e}", exc_info=True)
+
+
+def save_task_summary(task: dict) -> None:
+    """
+    仅更新高频摘要字段，不覆盖 tweets_json。
+
+    用于运行期高频持久化，避免每次都序列化全量 tweets。
+    """
+    if _DB_PATH is None:
+        return
+    try:
+        preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
+        runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
+        time_coverage_json = json.dumps(task.get("time_coverage", {}), ensure_ascii=False)
+        with _get_conn() as conn:
+            cur = conn.execute(
+                """
+                UPDATE tasks
+                   SET status = :status,
+                       result_count = :result_count,
+                       current_page = :current_page,
+                       finished_at = :finished_at,
+                       error = :error,
+                       risk_state = :risk_state,
+                       quality_state = :quality_state,
+                       runtime_metrics_json = :runtime_metrics_json,
+                       time_coverage_json = :time_coverage_json,
+                       last_event_at = :last_event_at,
+                       resumed = :resumed,
+                       fetch_replies = :fetch_replies,
+                       max_replies_per_tweet = :max_replies_per_tweet,
+                       crawl_strategy = :crawl_strategy,
+                       replies_fetched = :replies_fetched,
+                       crawl_phase = :crawl_phase,
+                       preview_json = :preview_json
+                 WHERE task_id = :task_id
+                """,
+                {
+                    "task_id": task["task_id"],
+                    "status": task["status"],
+                    "result_count": task.get("result_count", 0),
+                    "current_page": task.get("current_page", 0),
+                    "finished_at": task.get("finished_at"),
+                    "error": task.get("error"),
+                    "risk_state": task.get("risk_state", "none"),
+                    "quality_state": task.get("quality_state", "complete"),
+                    "runtime_metrics_json": runtime_metrics_json,
+                    "time_coverage_json": time_coverage_json,
+                    "last_event_at": task.get("last_event_at"),
+                    "resumed": int(task.get("resumed", False)),
+                    "fetch_replies": int(task.get("fetch_replies", False)),
+                    "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
+                    "crawl_strategy": task.get("crawl_strategy", "dfs"),
+                    "replies_fetched": task.get("replies_fetched", 0),
+                    "crawl_phase": task.get("crawl_phase", ""),
+                    "preview_json": preview_json,
+                },
+            )
+            if cur.rowcount == 0:
+                # 历史极端场景回退到全量写入，确保不丢任务
+                save_task(task)
+                return
+            conn.commit()
+    except Exception as e:
+        logger.error(f"摘要持久化失败 task_id={task.get('task_id')}: {e}", exc_info=True)
 
 
 def load_all_tasks() -> list[dict]:
@@ -195,6 +275,7 @@ def load_all_tasks() -> list[dict]:
             d["risk_state"]     = d.get("risk_state") or "none"
             d["quality_state"]  = d.get("quality_state") or "complete"
             d["runtime_metrics"] = json.loads(d.pop("runtime_metrics_json", "{}") or "{}")
+            d["time_coverage"] = json.loads(d.pop("time_coverage_json", "{}") or "{}")
             d["resumed"]        = bool(d["resumed"])
             d["fetch_replies"]  = bool(d["fetch_replies"])
             tasks.append(d)

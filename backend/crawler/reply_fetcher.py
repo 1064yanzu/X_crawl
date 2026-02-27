@@ -7,9 +7,8 @@
 - 保留渐进式多步滚动确保懒加载内容完全触发
 - 保留快速退出、连续空页计数器、随机扰动等策略
 """
-import time
-import random
 import logging
+import random
 from typing import Optional
 
 from crawler.browser import get_new_tab
@@ -20,8 +19,16 @@ from crawler.page_state import detect_page_state, PageState
 from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
-from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
+from crawler.utils import jittered_sleep, check_signal, merge_remaining
 from crawler.runtime_metrics import bump_metric
+from crawler import telemetry
+from crawler.wait_policy import (
+    quick_probe_timeout,
+    compensation_probe_timeout,
+    before_scroll_wait,
+    scroll_steps,
+    scroll_step_pause,
+)
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -43,22 +50,30 @@ def _to_risk_state(state: PageState) -> RiskState:
 # ═══════════════════════════════════════════════════════════════════
 
 
-def _scroll_incremental(tab, steps: int = 5, pause: float = 0.8) -> None:
+def _scroll_incremental(tab, *, task_id: Optional[str] = None, steps: Optional[int] = None) -> None:
     """
-    渐进式多步滚动，模拟人工操作并确保触发所有懒加载。
+    评论区渐进式滚动：模拟人类慢慢浏览评论列表。
 
-    单次 scroll.to_bottom() 可能不足以触发 X 的懒加载评论，
-    多次小步滚动可以更好地触发内容加载。
-
-    Args:
-        tab:    DrissionPage 标签页
-        steps:  滚动步数
-        pause:  每步之间的暂停时间（秒）
+    比搜索页滚动稍慢——阅读评论需要更多时间。
     """
-    for i in range(steps):
-        tab.scroll.down(500)  # 每次向下滚动 500px
-        time.sleep(pause + random.uniform(-0.2, 0.3))
-    # 最后滚到底部确保到达最底端
+    move_steps = steps if steps is not None else scroll_steps()
+    for i in range(move_steps):
+        # 小幅随机滚动（一条评论约 150~300px 高）
+        px = random.randint(150, 350)
+        tab.scroll.down(px)
+
+        # 阅读评论的停顿：偶尔长停顿看完整评论
+        if random.random() < 0.20:
+            interruptible_sleep(random.uniform(1.2, 2.5), task_id=task_id)
+        else:
+            scroll_step_pause(task_id=task_id)
+
+        # 偶尔回滚看上面的评论（非最后一步）
+        if i < move_steps - 1 and random.random() < 0.12:
+            tab.scroll.up(random.randint(60, 150))
+            interruptible_sleep(random.uniform(0.3, 0.6), task_id=task_id)
+
+    # 最后滚到底部确保触发评论懒加载
     tab.scroll.to_bottom()
 
 
@@ -73,11 +88,21 @@ def _wait_reply_packet_with_recovery(
 ):
     """等待 TweetDetail 数据包，超时时执行软恢复与硬刷新。"""
     risk_hits = 0
+    probe_timeout = quick_probe_timeout(timeout)
+    packet, ignored = wait_for_target_packet(
+        tab,
+        timeout=probe_timeout,
+        accept_body=is_tweet_detail_body,
+    )
+    if packet:
+        if ignored:
+            logger.debug(f"  回复第 {page_num} 页快速探测过滤无关包 {ignored} 个")
+        return packet
 
     for soft_attempt in range(policy.packet_soft_retries + 1):
         packet, ignored = wait_for_target_packet(
             tab,
-            timeout=timeout,
+            timeout=compensation_probe_timeout(timeout),
             accept_body=is_tweet_detail_body,
         )
         if packet:
@@ -90,6 +115,15 @@ def _wait_reply_packet_with_recovery(
         if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
             risk_hits += 1
             bump_metric(task_id, "risk_hits")
+            telemetry.record_event(
+                task_id,
+                "reply_risk_detected",
+                status="running",
+                phase=f"回复页检测到风险状态 {state.value}",
+                page=page_num,
+                risk_state=_to_risk_state(state),
+                meta={"tweet_url": tweet_url, "hit": risk_hits},
+            )
             if risk_hits > policy.challenge_retry_times:
                 raise ChallengeSignal(
                     f"回复页检测到 {state.value} 且重试耗尽：{reason}",
@@ -120,7 +154,7 @@ def _wait_reply_packet_with_recovery(
             tweet_url,
             max_retries=1,
             base_wait=2.5,
-            post_load_wait=settings.crawler_reply_wait,
+            post_load_wait=min(3.0, settings.crawler_reply_wait),
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -132,7 +166,7 @@ def _wait_reply_packet_with_recovery(
 
         packet, _ = wait_for_target_packet(
             tab,
-            timeout=timeout,
+            timeout=compensation_probe_timeout(timeout),
             accept_body=is_tweet_detail_body,
         )
         if packet:
@@ -187,6 +221,13 @@ def fetch_replies(
     try:
         tab.listen.start(TWEET_DETAIL_PATTERN)
         logger.info(f"开始抓取回复: tweet_id={tweet_id}, url={tweet_url}{expected_info}")
+        telemetry.record_event(
+            task_id,
+            "reply_fetch_started",
+            status="running",
+            phase=f"开始抓取回复 tweet_id={tweet_id}",
+            meta={"tweet_id": tweet_id, "screen_name": screen_name, "expected_count": expected_count},
+        )
 
         # 导航到推文详情页（含错误页自动刷新）
         ok = navigate_with_retry(
@@ -195,7 +236,7 @@ def fetch_replies(
             max_retries=policy.refresh_max_retries,
             base_wait=3.0,
             load_timeout=30.0,
-            post_load_wait=settings.crawler_reply_wait,
+            post_load_wait=min(3.0, settings.crawler_reply_wait),
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -218,6 +259,14 @@ def fetch_replies(
 
             page_num += 1
             logger.info(f"  等待回复第 {page_num} 页数据包（tweet_id={tweet_id}）...")
+            telemetry.record_event(
+                task_id,
+                "reply_wait_packet",
+                status="running",
+                phase=f"等待回复第 {page_num} 页数据包",
+                page=page_num,
+                meta={"tweet_id": tweet_id},
+            )
             packet = _wait_reply_packet_with_recovery(
                 tab=tab,
                 timeout=timeout,
@@ -234,18 +283,33 @@ def fetch_replies(
                         f"  恢复后仍未抓到数据（{len(all_replies)}/{expected_count}），"
                         f"尝试额外滚动触发加载..."
                     )
-                    _scroll_incremental(tab)
-                    interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
+                    _scroll_incremental(tab, task_id=task_id)
                     packet, _ = wait_for_target_packet(
                         tab,
-                        timeout=max(5.0, timeout / 2),
+                        timeout=compensation_probe_timeout(timeout),
                         accept_body=is_tweet_detail_body,
                     )
                     if not packet:
                         logger.warning(f"  回复第 {page_num} 页连续超时（tweet_id={tweet_id}）")
+                        telemetry.record_event(
+                            task_id,
+                            "reply_packet_timeout_stop",
+                            status="running",
+                            phase=f"回复第 {page_num} 页连续超时，停止当前推文回复抓取",
+                            page=page_num,
+                            meta={"tweet_id": tweet_id},
+                        )
                         break
                 else:
                     logger.warning(f"  回复第 {page_num} 页连续超时（tweet_id={tweet_id}）")
+                    telemetry.record_event(
+                        task_id,
+                        "reply_packet_timeout_stop",
+                        status="running",
+                        phase=f"回复第 {page_num} 页连续超时，停止当前推文回复抓取",
+                        page=page_num,
+                        meta={"tweet_id": tweet_id},
+                    )
                     break
 
             try:
@@ -275,6 +339,15 @@ def fetch_replies(
                     f"{'/' + str(expected_count) if expected_count else ''}"
                     f"（tweet_id={tweet_id}）"
                 )
+                telemetry.record_event(
+                    task_id,
+                    "reply_page_parsed",
+                    status="running",
+                    phase=f"回复第 {page_num} 页解析完成",
+                    page=page_num,
+                    delta_replies=len(new_replies),
+                    meta={"tweet_id": tweet_id, "total_replies": len(all_replies)},
+                )
 
                 # 更新连续空页计数
                 if len(new_replies) == 0:
@@ -296,6 +369,14 @@ def fetch_replies(
                             f"  ✅ 快速完成：第一页已获取 {len(all_replies)} 条评论"
                             f"（预期 {expected_count} 条），无需翻页"
                         )
+                        telemetry.record_event(
+                            task_id,
+                            "reply_quick_complete",
+                            status="running",
+                            phase="回复第一页已达到预期，快速完成",
+                            page=page_num,
+                            meta={"tweet_id": tweet_id, "fetched": len(all_replies), "expected": expected_count},
+                        )
                         break
                     # 条件2：API 无分页游标 + 覆盖率 ≥ 80%（reply_count 可能不完全准确）
                     if not bottom_cursor and len(all_replies) >= expected_count * 0.8:
@@ -303,6 +384,14 @@ def fetch_replies(
                         logger.info(
                             f"  ✅ 快速完成：无更多分页且已达 {len(all_replies)}/{expected_count} "
                             f"条（覆盖率 {pct:.0f}%），跳过翻页"
+                        )
+                        telemetry.record_event(
+                            task_id,
+                            "reply_quick_complete",
+                            status="running",
+                            phase="回复覆盖率达标且无更多分页，快速完成",
+                            page=page_num,
+                            meta={"tweet_id": tweet_id, "fetched": len(all_replies), "expected": expected_count},
                         )
                         break
 
@@ -320,25 +409,17 @@ def fetch_replies(
                             f"  API 无 cursor 但仅抓到 {len(all_replies)}/{expected_count} 条，"
                             f"尝试额外滚动触发加载..."
                         )
-                        _scroll_incremental(tab)
-                        interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
+                        _scroll_incremental(tab, task_id=task_id)
                         continue
                     logger.info(f"  评论区无更多数据（tweet_id={tweet_id}）")
                     break
 
                 # ── 翻页操作：渐进式滚动触发懒加载 ──────────────────────
-
-                # 先等待确保本页评论 DOM 渲染完毕
-                logger.debug(f"  评论加载等待 {settings.crawler_reply_wait}s...")
-                interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
-
-                # 随机扰动间隔
-                jittered_sleep(settings.crawler_page_interval, task_id=task_id)
+                before_scroll_wait(task_id=task_id)
 
                 # 渐进式滚动到底部，触发 TweetDetail API 加载更多评论
                 logger.debug(f"  执行渐进式滚动加载下一页评论...")
-                _scroll_incremental(tab)
-                interruptible_sleep(settings.crawler_reply_wait, task_id=task_id)
+                _scroll_incremental(tab, task_id=task_id)
 
             except ChallengeSignal:
                 raise
@@ -360,6 +441,14 @@ def fetch_replies(
         pct = round(len(all_replies) / expected_count * 100) if expected_count else 0
         coverage = f"（覆盖率 {pct}%，预期 {expected_count} 条）"
     logger.info(f"回复抓取完成: tweet_id={tweet_id}，共 {len(all_replies)} 条{coverage}")
+    telemetry.record_event(
+        task_id,
+        "reply_fetch_finished",
+        status="running",
+        phase=f"回复抓取完成 tweet_id={tweet_id}",
+        delta_replies=len(all_replies),
+        meta={"tweet_id": tweet_id, "coverage": coverage},
+    )
 
     # 判定是否需要记录为失败/不全
     failure_info = None
@@ -392,12 +481,13 @@ def fetch_replies_batch(
     task_id: Optional[str] = None,
     timeout: Optional[float] = None,
     progress_callback=None,
-    strategy: str = "bfs",
+    strategy: str = "dfs",
     reply_depth: int = 2,
 ) -> tuple[list[dict], list[dict]]:
     """
-    批量抓取多条推文的回复（BFS 广度优先模式下使用）。
+    批量抓取多条推文的回复（统一 DFS 模式，搜到即抓）。
     每条推文开独立标签页抓取，顺序执行。
+    支持跨任务去重：互动指标未变化的推文直接复用缓存评论。
 
     当收到 StopSignal 时，会将已抓取回复的推文 + 剩余未处理推文合并后
     通过 StopSignal.partial_tweets 携带，确保已抓取的回复数据不丢失。
@@ -413,8 +503,12 @@ def fetch_replies_batch(
         (updated_tweets, failed_records) 元组
     """
     import api.services.task_manager as _task_mgr
+    from config import settings as _settings
+    from crawler.tweet_dedup import check_dedup, register_tweets
 
-    tag = strategy.upper()  # "BFS" 或 "DFS"，用于日志
+    tag = strategy.upper()
+    dedup_enabled = _settings.crawler_dedup_enabled
+    dedup_hit_count = 0
     updated_tweets = []
     failed_records: list[dict] = []
 
@@ -466,6 +560,33 @@ def fetch_replies_batch(
                     pass
             continue
 
+        # ── 跨任务去重检查（缓存命中跳过评论抓取） ─────────────
+        if dedup_enabled:
+            hit, cached_replies = check_dedup(tweet)
+            if hit and cached_replies is not None:
+                dedup_hit_count += 1
+                tweet = dict(tweet)
+                tweet["replies"] = cached_replies
+                updated_tweets.append(tweet)
+                logger.info(
+                    f"[{tag}] 去重命中 tweet_id={tweet_id}，"
+                    f"复用 {len(cached_replies)} 条缓存评论"
+                )
+                telemetry.record_event(
+                    task_id,
+                    "reply_dedup_hit",
+                    status="running",
+                    phase=f"[{tag}] 推文命中去重缓存",
+                    delta_replies=len(cached_replies),
+                    meta={"tweet_id": tweet_id},
+                )
+                if progress_callback:
+                    try:
+                        progress_callback(tweet_id, cached_replies)
+                    except Exception:
+                        pass
+                continue
+
         # 更新阶段提示（告知用户正在抓第几条推文的回复）
         if task_id:
             _task_mgr.update_task_phase(
@@ -478,63 +599,77 @@ def fetch_replies_batch(
             f"[{tag}] 抓取回复进度 {i+1}/{len(tweets)}: "
             f"tweet_id={tweet_id}，预期评论 {expected_count} 条"
         )
-        try:
-            replies, failure_info = fetch_replies(
-                tweet_id=tweet_id,
-                screen_name=screen_name,
-                max_count=max_replies_per_tweet,
-                task_id=task_id,
-                timeout=timeout,
-                expected_count=expected_count,
-            )
-            tweet = dict(tweet)  # 浅拷贝，防止污染原对象
-            tweet["replies"] = replies
-            if failure_info:
-                failure_info["task_id"] = task_id or ""
-                failed_records.append(failure_info)
+        # 当需要抓二级评论时，手动开标签页让一级评论页面保持打开
+        # 模拟人类行为：打开推文→看评论→点击评论看子评论→全看完再关闭
+        need_nested = (reply_depth > 1)
+        reply_tab = get_new_tab() if need_nested else None
 
-            # ── 二级评论递归抓取 ───────────────────────────────
-            if replies and reply_depth > 1:
-                from crawler.nested_reply_fetcher import fetch_nested_replies
+        try:
+            try:
+                replies, failure_info = fetch_replies(
+                    tweet_id=tweet_id,
+                    screen_name=screen_name,
+                    max_count=max_replies_per_tweet,
+                    task_id=task_id,
+                    timeout=timeout,
+                    expected_count=expected_count,
+                    existing_tab=reply_tab,  # 传入外部 tab，fetch_replies 不会关闭它
+                )
+                tweet = dict(tweet)  # 浅拷贝，防止污染原对象
+                tweet["replies"] = replies
+                if failure_info:
+                    failure_info["task_id"] = task_id or ""
+                    failed_records.append(failure_info)
+
+                # ── 二级评论递归抓取（一级评论标签页保持打开） ─────────
+                if replies and need_nested:
+                    from crawler.nested_reply_fetcher import fetch_nested_replies
+                    try:
+                        tweet["replies"], nested_failed = fetch_nested_replies(
+                            replies,
+                            current_depth=1,
+                            max_depth=reply_depth,
+                            max_replies_per_tweet=max_replies_per_tweet,
+                            task_id=task_id,
+                            timeout=timeout,
+                        )
+                        failed_records.extend(nested_failed)
+                    except StopSignal as e:
+                        updated_tweets.append(tweet)
+                        merge_remaining(updated_tweets, tweets, i + 1)
+                        raise StopSignal(str(e), partial_tweets=updated_tweets)
+                    except ChallengeSignal:
+                        raise
+                    except Exception as e:
+                        logger.error(f"拓展抓取 tweet_id={tweet_id} 的子评论失败: {e}", exc_info=True)
+            except StopSignal as e:
+                # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
+                tweet = dict(tweet)
+                tweet["replies"] = []
+                updated_tweets.append(tweet)
+                merge_remaining(updated_tweets, tweets, i + 1)
+                raise StopSignal(str(e), partial_tweets=updated_tweets)
+            except ChallengeSignal:
+                raise
+            except Exception as e:
+                logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
+                tweet = dict(tweet)
+                tweet["replies"] = []
+                failed_records.append({
+                    "task_id": task_id or "",
+                    "tweet_id": tweet_id,
+                    "screen_name": screen_name,
+                    "expected_count": expected_count,
+                    "fetched_count": 0,
+                    "error_reason": f"异常: {str(e)[:200]}",
+                })
+        finally:
+            # 二级评论全部抓完后，关闭一级评论标签页
+            if reply_tab:
                 try:
-                    tweet["replies"], nested_failed = fetch_nested_replies(
-                        replies,
-                        current_depth=1,
-                        max_depth=reply_depth,
-                        max_replies_per_tweet=max_replies_per_tweet,
-                        task_id=task_id,
-                        timeout=timeout,
-                    )
-                    failed_records.extend(nested_failed)
-                except StopSignal as e:
-                    updated_tweets.append(tweet)
-                    merge_remaining(updated_tweets, tweets, i + 1)
-                    raise StopSignal(str(e), partial_tweets=updated_tweets)
-                except ChallengeSignal:
-                    raise
-                except Exception as e:
-                    logger.error(f"拓展抓取 tweet_id={tweet_id} 的子评论失败: {e}", exc_info=True)
-        except StopSignal as e:
-            # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
-            tweet = dict(tweet)
-            tweet["replies"] = []
-            updated_tweets.append(tweet)
-            merge_remaining(updated_tweets, tweets, i + 1)
-            raise StopSignal(str(e), partial_tweets=updated_tweets)
-        except ChallengeSignal:
-            raise
-        except Exception as e:
-            logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
-            tweet = dict(tweet)
-            tweet["replies"] = []
-            failed_records.append({
-                "task_id": task_id or "",
-                "tweet_id": tweet_id,
-                "screen_name": screen_name,
-                "expected_count": expected_count,
-                "fetched_count": 0,
-                "error_reason": f"异常: {str(e)[:200]}",
-            })
+                    reply_tab.close()
+                except Exception:
+                    pass
 
         updated_tweets.append(tweet)
 
@@ -546,5 +681,13 @@ def fetch_replies_batch(
 
         # 礼貌性间隔（带随机扰动），避免被封
         jittered_sleep(settings.crawler_page_interval, task_id=task_id)
+
+    # ── 批次完成后注册指纹（供后续任务去重复用） ──────────────────
+    if dedup_enabled and task_id:
+        register_tweets(updated_tweets, task_id)
+        if dedup_hit_count:
+            logger.info(
+                f"[{tag}] 本批去重统计: {dedup_hit_count}/{len(tweets)} 条推文命中缓存"
+            )
 
     return updated_tweets, failed_records

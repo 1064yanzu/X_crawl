@@ -11,6 +11,7 @@ from crawler.crawl_signals import ChallengeSignal, RiskState
 from crawler.page_state import PageState, detect_page_state, is_error_like_state
 from crawler.recovery_policy import sleep_with_jitter, backoff_seconds
 from crawler.runtime_metrics import bump_metric
+from crawler import telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,14 @@ def navigate_with_retry(
             if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
                 challenge_hits += 1
                 bump_metric(task_id, "risk_hits")
+                telemetry.record_event(
+                    task_id,
+                    "risk_detected",
+                    status="running",
+                    phase=f"检测到风险页 {state.value}",
+                    risk_state=_to_risk_state(state),
+                    meta={"reason": reason, "hit": challenge_hits},
+                )
                 logger.warning(
                     f"{log_prefix}检测到风险页 state={state.value}, reason={reason}, "
                     f"hit={challenge_hits}/{challenge_retry_times}"

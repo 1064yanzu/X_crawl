@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     browser_block_images: bool = Field(
         default=False, description="是否禁用图片加载（稳健模式建议关闭）"
     )
+    browser_stealth_enabled: bool = Field(
+        default=True, description="是否启用平衡档指纹伪装注入"
+    )
+    browser_linux_hardening: bool = Field(
+        default=True, description="Linux 无头模式下是否启用稳定性启动参数"
+    )
 
     # API 配置
     api_host: str = Field(default="0.0.0.0")
@@ -91,13 +97,49 @@ class Settings(BaseSettings):
     crawler_interrupt_poll_ms: int = Field(
         default=300, description="中断可响应睡眠的轮询粒度（毫秒）"
     )
+    crawler_checkpoint_flush_interval_sec: float = Field(
+        default=4.0, description="DFS 回复阶段检查点最久刷新间隔（秒）"
+    )
+    crawler_checkpoint_reply_batch: int = Field(
+        default=3, description="DFS 回复阶段每累计多少条回复结果触发一次检查点刷新"
+    )
+    crawler_dedup_enabled: bool = Field(
+        default=True, description="是否启用跨任务推文去重（评论缓存命中后跳过重复抓取）"
+    )
+    crawler_live_push_interval_ms: int = Field(
+        default=800, description="SSE 实时推送间隔（毫秒）"
+    )
+    crawler_auto_throttle_enabled: bool = Field(
+        default=True, description="是否根据系统资源压力自动放慢抓取节奏"
+    )
+    crawler_dynamic_concurrency_enabled: bool = Field(
+        default=True, description="是否根据资源压力动态收敛并发任务上限"
+    )
+    crawler_resource_sample_interval_sec: float = Field(
+        default=2.0, description="系统资源采样间隔（秒）"
+    )
+    crawler_memory_pressure_warn_pct: float = Field(
+        default=80.0, description="内存压力告警阈值（%）"
+    )
+    crawler_memory_pressure_critical_pct: float = Field(
+        default=90.0, description="内存压力临界阈值（%）"
+    )
+    crawler_cpu_pressure_warn_pct: float = Field(
+        default=85.0, description="CPU 压力告警阈值（%）"
+    )
+    crawler_cpu_pressure_critical_pct: float = Field(
+        default=95.0, description="CPU 压力临界阈值（%）"
+    )
+    crawler_resource_throttle_max_factor: float = Field(
+        default=3.0, description="资源压力下最大节流倍数"
+    )
 
     # 日志配置
     log_dir: str = Field(
         default="", description="日志文件目录（留空使用 backend/logs/）"
     )
     log_level: str = Field(
-        default="DEBUG", description="文件日志级别: DEBUG/INFO/WARNING/ERROR"
+        default="INFO", description="文件日志级别: DEBUG/INFO/WARNING/ERROR"
     )
     log_max_bytes: int = Field(
         default=10485760, description="单个日志文件最大字节数，默认 10MB"

@@ -16,6 +16,8 @@ _DEFAULT_METRICS = {
     "hard_refreshes": 0,
     "risk_hits": 0,
     "empty_pages": 0,
+    "resource_throttle_hits": 0,
+    "resource_critical_hits": 0,
 }
 
 _lock = threading.RLock()
@@ -48,4 +50,3 @@ def clear_metrics(task_id: str | None) -> None:
         return
     with _lock:
         _store.pop(task_id, None)
-

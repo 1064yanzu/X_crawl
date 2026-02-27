@@ -57,7 +57,7 @@ def save_raw_response(task_id: str, page_num: int, body: dict) -> Optional[str]:
         file_path = task_dir / filename
 
         with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(body, f, ensure_ascii=False, indent=2)
+            json.dump(body, f, ensure_ascii=False, separators=(",", ":"))
 
         size_kb = file_path.stat().st_size / 1024
         logger.info(
@@ -186,7 +186,7 @@ def save_reply_response(task_id: str, tweet_id: str, page_num: int, body: dict) 
         file_path = reply_dir / filename
 
         with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(body, f, ensure_ascii=False, indent=2)
+            json.dump(body, f, ensure_ascii=False, separators=(",", ":"))
 
         size_kb = file_path.stat().st_size / 1024
         logger.info(f"回复原始响应已保存: replies/{tweet_id}/{file_path.name} ({size_kb:.1f} KB)")

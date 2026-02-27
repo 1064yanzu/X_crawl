@@ -32,11 +32,47 @@ class CrawlerConfig(BaseModel):
     crawler_page_interval_min: float = Field(default=2.5, ge=0.5, le=120.0, description="翻页间隔下限（秒）")
     crawler_page_interval_max: float = Field(default=8.0, ge=0.5, le=180.0, description="翻页间隔上限（秒）")
     crawler_interrupt_poll_ms: int = Field(default=300, ge=50, le=3000, description="中断轮询粒度（毫秒）")
+    crawler_checkpoint_flush_interval_sec: float = Field(
+        default=4.0, ge=0.2, le=60.0, description="DFS 回复阶段检查点刷新间隔（秒）"
+    )
+    crawler_checkpoint_reply_batch: int = Field(
+        default=3, ge=1, le=200, description="DFS 回复阶段每累计多少条触发一次检查点刷新"
+    )
+    crawler_live_push_interval_ms: int = Field(
+        default=800, ge=200, le=5000, description="SSE 实时推送间隔（毫秒）"
+    )
+    crawler_auto_throttle_enabled: bool = Field(default=True, description="是否启用资源压力自动节流")
+    crawler_dynamic_concurrency_enabled: bool = Field(default=True, description="是否启用动态并发收敛")
+    crawler_resource_sample_interval_sec: float = Field(
+        default=2.0, ge=0.5, le=10.0, description="资源采样间隔（秒）"
+    )
+    crawler_memory_pressure_warn_pct: float = Field(
+        default=80.0, ge=50.0, le=99.0, description="内存压力告警阈值（%）"
+    )
+    crawler_memory_pressure_critical_pct: float = Field(
+        default=90.0, ge=55.0, le=99.5, description="内存压力临界阈值（%）"
+    )
+    crawler_cpu_pressure_warn_pct: float = Field(
+        default=85.0, ge=50.0, le=99.0, description="CPU 压力告警阈值（%）"
+    )
+    crawler_cpu_pressure_critical_pct: float = Field(
+        default=95.0, ge=55.0, le=99.5, description="CPU 压力临界阈值（%）"
+    )
+    crawler_resource_throttle_max_factor: float = Field(
+        default=3.0, ge=1.1, le=6.0, description="资源压力最大节流倍数"
+    )
     # 浏览器配置
     browser_headless: Optional[bool] = Field(default=None, description="是否无头模式")
     browser_proxy: Optional[str] = Field(default=None, description="代理配置，格式：http://ip:port")
     browser_load_mode: Optional[str] = Field(default=None, description="页面加载模式：normal 或 eager")
     browser_block_images: Optional[bool] = Field(default=None, description="是否禁用图片加载")
+    browser_stealth_enabled: Optional[bool] = Field(default=None, description="是否启用平衡档伪装脚本")
+    browser_linux_hardening: Optional[bool] = Field(default=None, description="Linux 无头环境是否启用稳定性参数")
+    # 原始响应配置
+    save_raw_responses: bool = Field(default=True, description="是否保存原始响应")
+    raw_responses_max_pages: int = Field(default=0, ge=0, le=20000, description="每任务最多保存页数（0=不限制）")
+    # 去重配置
+    crawler_dedup_enabled: bool = Field(default=True, description="是否启用跨任务推文去重（缓存命中后跳过重复抓取）")
 
 
 @router.get(
@@ -63,10 +99,26 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_page_interval_min=settings.crawler_page_interval_min,
         crawler_page_interval_max=settings.crawler_page_interval_max,
         crawler_interrupt_poll_ms=settings.crawler_interrupt_poll_ms,
+        crawler_checkpoint_flush_interval_sec=settings.crawler_checkpoint_flush_interval_sec,
+        crawler_checkpoint_reply_batch=settings.crawler_checkpoint_reply_batch,
+        crawler_live_push_interval_ms=settings.crawler_live_push_interval_ms,
+        crawler_auto_throttle_enabled=settings.crawler_auto_throttle_enabled,
+        crawler_dynamic_concurrency_enabled=settings.crawler_dynamic_concurrency_enabled,
+        crawler_resource_sample_interval_sec=settings.crawler_resource_sample_interval_sec,
+        crawler_memory_pressure_warn_pct=settings.crawler_memory_pressure_warn_pct,
+        crawler_memory_pressure_critical_pct=settings.crawler_memory_pressure_critical_pct,
+        crawler_cpu_pressure_warn_pct=settings.crawler_cpu_pressure_warn_pct,
+        crawler_cpu_pressure_critical_pct=settings.crawler_cpu_pressure_critical_pct,
+        crawler_resource_throttle_max_factor=settings.crawler_resource_throttle_max_factor,
         browser_headless=settings.browser_headless,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
+        browser_stealth_enabled=settings.browser_stealth_enabled,
+        browser_linux_hardening=settings.browser_linux_hardening,
+        save_raw_responses=settings.save_raw_responses,
+        raw_responses_max_pages=settings.raw_responses_max_pages,
+        crawler_dedup_enabled=settings.crawler_dedup_enabled,
     )
 
 
@@ -99,6 +151,26 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.crawler_page_interval_min = config.crawler_page_interval_min
     settings.crawler_page_interval_max = max(config.crawler_page_interval_max, config.crawler_page_interval_min)
     settings.crawler_interrupt_poll_ms = config.crawler_interrupt_poll_ms
+    settings.crawler_checkpoint_flush_interval_sec = config.crawler_checkpoint_flush_interval_sec
+    settings.crawler_checkpoint_reply_batch = config.crawler_checkpoint_reply_batch
+    settings.crawler_live_push_interval_ms = config.crawler_live_push_interval_ms
+    settings.crawler_auto_throttle_enabled = config.crawler_auto_throttle_enabled
+    settings.crawler_dynamic_concurrency_enabled = config.crawler_dynamic_concurrency_enabled
+    settings.crawler_resource_sample_interval_sec = config.crawler_resource_sample_interval_sec
+    settings.crawler_memory_pressure_warn_pct = config.crawler_memory_pressure_warn_pct
+    settings.crawler_memory_pressure_critical_pct = max(
+        config.crawler_memory_pressure_critical_pct,
+        config.crawler_memory_pressure_warn_pct + 1.0,
+    )
+    settings.crawler_cpu_pressure_warn_pct = config.crawler_cpu_pressure_warn_pct
+    settings.crawler_cpu_pressure_critical_pct = max(
+        config.crawler_cpu_pressure_critical_pct,
+        config.crawler_cpu_pressure_warn_pct + 1.0,
+    )
+    settings.crawler_resource_throttle_max_factor = config.crawler_resource_throttle_max_factor
+    settings.save_raw_responses = config.save_raw_responses
+    settings.raw_responses_max_pages = config.raw_responses_max_pages
+    settings.crawler_dedup_enabled = config.crawler_dedup_enabled
 
     # 构建要持久化的设置 dict
     persist = {
@@ -117,6 +189,20 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "crawler_page_interval_min": settings.crawler_page_interval_min,
         "crawler_page_interval_max": settings.crawler_page_interval_max,
         "crawler_interrupt_poll_ms": settings.crawler_interrupt_poll_ms,
+        "crawler_checkpoint_flush_interval_sec": settings.crawler_checkpoint_flush_interval_sec,
+        "crawler_checkpoint_reply_batch": settings.crawler_checkpoint_reply_batch,
+        "crawler_live_push_interval_ms": settings.crawler_live_push_interval_ms,
+        "crawler_auto_throttle_enabled": settings.crawler_auto_throttle_enabled,
+        "crawler_dynamic_concurrency_enabled": settings.crawler_dynamic_concurrency_enabled,
+        "crawler_resource_sample_interval_sec": settings.crawler_resource_sample_interval_sec,
+        "crawler_memory_pressure_warn_pct": settings.crawler_memory_pressure_warn_pct,
+        "crawler_memory_pressure_critical_pct": settings.crawler_memory_pressure_critical_pct,
+        "crawler_cpu_pressure_warn_pct": settings.crawler_cpu_pressure_warn_pct,
+        "crawler_cpu_pressure_critical_pct": settings.crawler_cpu_pressure_critical_pct,
+        "crawler_resource_throttle_max_factor": settings.crawler_resource_throttle_max_factor,
+        "save_raw_responses": settings.save_raw_responses,
+        "raw_responses_max_pages": settings.raw_responses_max_pages,
+        "crawler_dedup_enabled": settings.crawler_dedup_enabled,
     }
 
     # 可选字段：只在显式传入时持久化
@@ -136,6 +222,12 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     if config.browser_block_images is not None:
         settings.browser_block_images = config.browser_block_images
         persist["browser_block_images"] = config.browser_block_images
+    if config.browser_stealth_enabled is not None:
+        settings.browser_stealth_enabled = config.browser_stealth_enabled
+        persist["browser_stealth_enabled"] = config.browser_stealth_enabled
+    if config.browser_linux_hardening is not None:
+        settings.browser_linux_hardening = config.browser_linux_hardening
+        persist["browser_linux_hardening"] = config.browser_linux_hardening
 
     # 写入数据库
     set_settings_batch(persist)
@@ -157,8 +249,24 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         crawler_page_interval_min=settings.crawler_page_interval_min,
         crawler_page_interval_max=settings.crawler_page_interval_max,
         crawler_interrupt_poll_ms=settings.crawler_interrupt_poll_ms,
+        crawler_checkpoint_flush_interval_sec=settings.crawler_checkpoint_flush_interval_sec,
+        crawler_checkpoint_reply_batch=settings.crawler_checkpoint_reply_batch,
+        crawler_live_push_interval_ms=settings.crawler_live_push_interval_ms,
+        crawler_auto_throttle_enabled=settings.crawler_auto_throttle_enabled,
+        crawler_dynamic_concurrency_enabled=settings.crawler_dynamic_concurrency_enabled,
+        crawler_resource_sample_interval_sec=settings.crawler_resource_sample_interval_sec,
+        crawler_memory_pressure_warn_pct=settings.crawler_memory_pressure_warn_pct,
+        crawler_memory_pressure_critical_pct=settings.crawler_memory_pressure_critical_pct,
+        crawler_cpu_pressure_warn_pct=settings.crawler_cpu_pressure_warn_pct,
+        crawler_cpu_pressure_critical_pct=settings.crawler_cpu_pressure_critical_pct,
+        crawler_resource_throttle_max_factor=settings.crawler_resource_throttle_max_factor,
         browser_headless=settings.browser_headless,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
+        browser_stealth_enabled=settings.browser_stealth_enabled,
+        browser_linux_hardening=settings.browser_linux_hardening,
+        save_raw_responses=settings.save_raw_responses,
+        raw_responses_max_pages=settings.raw_responses_max_pages,
+        crawler_dedup_enabled=settings.crawler_dedup_enabled,
     )

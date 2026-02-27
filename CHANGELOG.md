@@ -1,5 +1,66 @@
 # Changelog
 
+## 2026-02-27
+
+### 🐛 修复：恢复爬取后贴文变少（Checkpoint 恢复失败）
+
+**问题**：无限模式（`max_count=0`）任务完成后点击「继续爬取」，搜索从头开始而非断点续爬，导致贴文数量远少于此前累积的数量。
+
+**根本原因**（三重致命链路）：
+1. `x_searcher.py` 的 `finally` 安全兜底保存以 `next_cursor=None` 覆盖了有效 checkpoint，丢失了翻页位置
+2. `max_count=0` 时 `not max_count` 为 True，搜索完成后无条件删除 checkpoint 文件
+3. 恢复搜索时 checkpoint 不存在，`从断点=False`，全部从头开始
+
+**修复**：`crawler/x_searcher.py`
+- 新增 `_last_bottom_cursor` 变量，追踪最后有效翻页 cursor，兜底保存时使用此值而非 None
+- 无限模式（`max_count=0`）搜索完成后**不再删除** checkpoint，保留推文历史供恢复使用
+- 无 cursor 的无限模式恢复：保留旧推文用于去重，开始新搜索拾取新内容（而非直接返回旧数据）
+
+### 🐛 修复：前端 React key 重复警告
+
+**问题**：控制台报错 `Encountered two children with the same key`，重复 key 来自嵌套评论抓取时返回的相同 reply ID。
+
+**修复**：
+- `TweetCard.tsx`：reply 列表 key 改为 `${reply.id}-${idx}`（始终包含索引）
+- `tasks/[id]/page.tsx`：推文列表 key 改为 `${tweet.id}-${index}`（始终包含索引）
+
+## 2026-02-26
+
+### ⚡ 性能优化：极速档吞吐提升（数据完整优先）
+
+- 新增 `backend/api/services/performance_tuner.py`，服务启动自动收敛过慢参数并持久化（不改爬虫特征面）。
+- `backend/config.py` 新增：
+  - `crawler_checkpoint_flush_interval_sec`
+  - `crawler_checkpoint_reply_batch`
+  - `log_level` 默认调为 `INFO`
+- `backend/crawler/reply_fetcher.py` 接入 `backend/crawler/wait_policy.py`，实现“快速抢包 + 补偿等待”，移除冗余长等待链路。
+- 新增 `backend/crawler/checkpoint_buffer.py`，DFS 回复阶段检查点改为批次/时间窗刷新；`backend/crawler/checkpoint.py` 改为紧凑 JSON + 原子写入。
+- `backend/api/services/task_db.py` 新增 `save_task_summary()`；`backend/api/services/task_manager.py` 高频持久化改为摘要写入，终态/强制点仍全量写入。
+- API 轮询减载：
+  - `GET /api/v1/search/{task_id}` 新增 `include_tweets`
+  - `GET /api/v1/tasks` 新增 `include_payload`
+- `backend/api/routers/crawler_config.py` 扩展配置字段：
+  - `save_raw_responses`
+  - `raw_responses_max_pages`
+  - `crawler_checkpoint_flush_interval_sec`
+  - `crawler_checkpoint_reply_batch`
+- `backend/crawler/response_saver.py` raw JSON 写入改紧凑格式。
+- `backend/api/routers/raw_responses.py` 新增 `DELETE /api/v1/raw-responses/all`（一键清理归档）。
+- 前端设置与轮询闭环：
+  - `frontend/src/hooks/useTask.ts` 运行中轮询轻量模式，终态补拉完整 tweets
+  - `frontend/src/hooks/useTasks.ts` 任务列表默认摘要轮询
+  - `frontend/src/components/features/settings/RawResponseStorageCard.tsx` 增加归档开关、页数上限、按任务清理、全部清理
+  - `frontend/src/components/features/settings/CrawlerConfigCard.tsx` 增加 checkpoint 刷新参数
+- 新增测试：
+  - `backend/tests/test_api_payload_optimization.py`
+  - `backend/tests/test_checkpoint_buffer.py`
+  - `backend/tests/test_task_db_summary.py`
+  - `backend/tests/test_reply_recovery.py` 增补快速抢包场景
+- 验证通过：
+  - `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests`（19 passed）
+  - `cd frontend && npm run lint`
+  - `cd frontend && npm run build`
+
 ## 2026-02-26
 
 ### 📦 新增：结构化日志系统
@@ -243,3 +304,19 @@
 - 前端更新：设置页高级反风控参数、任务详情风控暂停提示、创建任务 409 友好提示
 - 文档更新：`docs/api.md`、`docs/施工文档.md`、`docs/changelog.md`
 - 测试新增：`backend/tests/*`（5 组），验证通过 `11 passed`
+
+## 2026-02-26
+
+### 实时可观测与资源保护升级
+- 新增任务实时信息：`live_metrics` 扩展硬件占用（主机/进程内存、CPU）、压力状态、节流倍数、调度摘要。
+- 新增 `time_coverage`：推文/评论覆盖时间起止与跨度（后端实时计算并持久化）。
+- SSE 优化：`/api/v1/tasks/{task_id}/stream` 增加断连退出，快照改为轻量 payload（不推全量 `tweets`）。
+- 资源保护：新增 `resource_guard`，按内存/CPU压力自动放慢抓取节奏，并在高压下动态收敛并发。
+- 设置闭环：`CrawlerConfig` 新增资源保护参数（自动节流、动态并发、采样间隔、内存/CPU阈值、最大节流倍数）。
+- 前端增强：任务详情页新增覆盖时间卡片与硬件指标展示；首页和任务列表补充覆盖时间/内存摘要。
+- 跨平台脚本：新增 `scripts/start-backend.sh/.ps1` 与 `scripts/start-frontend.sh/.ps1`。
+
+### 测试
+- 后端：`PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests` → `28 passed`。
+- 前端：`npm --prefix frontend run build` 通过。
+- 前端：`npm --prefix frontend run lint` 0 error（保留历史 warning 4 条）。

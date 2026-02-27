@@ -3,7 +3,6 @@
 
 提供查询和下载已保存的原始 SearchTimeline 响应文件的接口。
 """
-import os
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -31,9 +30,27 @@ async def get_all_tasks():
     tasks = list_all_tasks()
     return {
         "save_enabled": settings.save_raw_responses,
+        "max_pages_per_task": settings.raw_responses_max_pages,
         "storage_dir": str(Path(settings.raw_responses_dir).resolve()),
         "tasks": tasks,
     }
+
+
+@router.delete("/all", summary="删除全部任务的原始响应文件")
+async def delete_all_task_files():
+    """删除全部任务原始响应目录。"""
+    tasks = list_all_tasks()
+    deleted_files = 0
+    deleted_tasks = 0
+    for task in tasks:
+        task_id = task.get("task_id", "")
+        if not task_id:
+            continue
+        count = delete_task_responses(task_id)
+        if count > 0:
+            deleted_tasks += 1
+            deleted_files += count
+    return {"deleted_tasks": deleted_tasks, "deleted_files": deleted_files}
 
 
 @router.get("/{task_id}", summary="列出某任务的所有原始响应文件")
