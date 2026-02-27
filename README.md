@@ -85,7 +85,7 @@ npm install
 npm run dev
 ```
 
-启动之后，访问 [http://localhost:3000](http://localhost:3000) 即可看到高级现代化的采集工作台。
+启动之后，访问 [http://localhost:3721](http://localhost:3721) 即可看到高级现代化的采集工作台。
 
 ### 3. 构建与生产环境启动
 

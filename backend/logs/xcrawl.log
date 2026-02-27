@@ -4236,3 +4236,88 @@ NameError: name 'interruptible_sleep' is not defined
 2026-02-27 15:46:42 [INFO] crawler.utils:check_signal:85 - 任务 1d5b7ae3-4901-431d-8e6b-ef4abf22a5ca 已暂停，等待继续信号...
 2026-02-27 15:46:57 [INFO] crawler.utils:check_signal:85 - 任务 1d5b7ae3-4901-431d-8e6b-ef4abf22a5ca 已暂停，等待继续信号...
 2026-02-27 15:47:12 [INFO] crawler.utils:check_signal:85 - 任务 1d5b7ae3-4901-431d-8e6b-ef4abf22a5ca 已暂停，等待继续信号...
+2026-02-27 16:33:21 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /develop/X_crawl/backend/logs/xcrawl.log | 级别: INFO
+2026-02-27 16:33:21 [INFO] api.main:lifespan:31 - X_crawl API 服务启动...
+2026-02-27 16:33:21 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:33:21 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:33:21 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:33:21 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:33:21 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:33:21 [INFO] api.main:lifespan:34 - 浏览器检测: path=✅ | user_data=⚠️ | platform=linux
+2026-02-27 16:38:04 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:38:04 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:38:04 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:38:04 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:38:04 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:38:47 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:38:47 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:38:47 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:38:47 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:38:47 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:39:19 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:39:19 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:39:19 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:39:19 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:39:19 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:39:53 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:39:53 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:39:53 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:39:53 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:39:53 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:41:04 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:41:04 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:41:04 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:41:04 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:41:04 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:41:36 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:41:36 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:41:36 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:41:36 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:41:36 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:42:11 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:42:11 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:42:11 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:42:11 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:42:11 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:42:50 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:42:50 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:42:50 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:42:50 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:42:50 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:43:24 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:43:24 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:43:24 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:43:24 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:43:24 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:43:55 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:43:55 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:43:55 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:43:55 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:43:55 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:44:51 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:44:51 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:44:51 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:44:51 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:44:51 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:45:26 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:45:26 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:45:26 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:45:26 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:45:26 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:46:02 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:46:02 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:46:02 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:46:02 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:46:02 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:46:36 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:46:36 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:46:36 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:46:36 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:46:36 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:55:18 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:55:18 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 16:55:18 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:55:18 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 16:55:18 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 16:55:32 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 16:55:33 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']

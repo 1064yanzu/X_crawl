@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRONTEND_DIR="$ROOT_DIR/frontend"
-PORT="${FRONTEND_PORT:-3000}"
+PORT="${FRONTEND_PORT:-3721}"
 
 if ! command -v npm >/dev/null 2>&1; then
   echo "[error] 未找到 npm，请先安装 Node.js 18+"

@@ -6,7 +6,7 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 
 $root = Split-Path -Parent $PSScriptRoot
 $frontend = Join-Path $root "frontend"
-$port = if ($env:FRONTEND_PORT) { $env:FRONTEND_PORT } else { "3000" }
+$port = if ($env:FRONTEND_PORT) { $env:FRONTEND_PORT } else { "3721" }
 
 Push-Location $frontend
 try {
