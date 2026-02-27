@@ -4321,3 +4321,89 @@ NameError: name 'interruptible_sleep' is not defined
 2026-02-27 16:55:18 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
 2026-02-27 16:55:32 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
 2026-02-27 16:55:33 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:21:35 [INFO] crawler.cookie_manager:save_cookies:65 - 已保存 17 条 Cookie 到 /root/.xcrawl-cookies.json
+2026-02-27 17:21:44 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:21:44 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 17:21:44 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:21:44 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 17:21:44 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 17:21:55 [INFO] api.services.task_manager:send_signal:208 - 信号已发送: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, signal=run
+2026-02-27 17:21:55 [INFO] api.services.task_manager:create_task:379 - 任务已创建/重置: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, strategy=dfs, fetch_replies=True
+2026-02-27 17:21:55 [INFO] api.services.crawl_service:run_search_task:95 - 任务开始: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, keyword='ChatGPT', strategy=dfs, fetch_replies=True, resume=True
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:119 - 未检测到可接管的浏览器，使用独立 Profile 启动...
+2026-02-27 17:21:55 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:21:55 [WARNING] crawler.browser:_resolve_browser_paths:96 - 用户选择的浏览器 'edge' 不可用或不兼容，回退到自动检测
+2026-02-27 17:21:55 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:21:55 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:126 - 使用浏览器: /usr/bin/google-chrome
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:140 - 使用用户数据目录: /root/.xcrawl-browser-profile
+2026-02-27 17:21:55 [WARNING] crawler.browser:_create_browser:151 - 检测到 Linux 无显示服务，自动启用 headless 模式（可在设置中关闭自动加固）
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:155 - 浏览器运行于无头模式
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:174 - Linux 无头稳定性参数已启用（no-sandbox/dev-shm/gpu/setuid）
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:184 - 页面加载模式: normal
+2026-02-27 17:21:55 [INFO] crawler.browser:_create_browser:188 - 正在初始化浏览器...
+2026-02-27 17:21:58 [INFO] crawler.browser:_create_browser:190 - 浏览器初始化成功
+2026-02-27 17:21:58 [INFO] crawler.cookie_manager:inject_cookies_to_tab:137 - 已注入 17 条持久化 Cookie
+2026-02-27 17:21:58 [INFO] crawler.auth:ensure_login:89 - 已注入 17 条持久化 Cookie，即将刷新页面...
+2026-02-27 17:22:02 [INFO] crawler.auth:check_login:61 - X 登录状态验证通过
+2026-02-27 17:22:02 [INFO] crawler.cookie_manager:save_cookies:65 - 已保存 16 条 Cookie 到 /root/.xcrawl-cookies.json
+2026-02-27 17:22:02 [INFO] crawler.cookie_manager:capture_cookies_from_tab:169 - 已从浏览器采集并保存 16 条 Cookie
+2026-02-27 17:22:02 [INFO] crawler.x_searcher:search:265 - 开始搜索: keyword='ChatGPT', product=Top, max_count=0, strategy=unified_dfs, fetch_replies=True, 从断点=False
+2026-02-27 17:22:08 [WARNING] crawler.page_health:navigate_with_retry:72 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 检测到错误页面，3.0s 后第 1 次刷新重试... (url=https://x.com/search?q=ChatGPT&src=typed_query)
+2026-02-27 17:22:15 [WARNING] crawler.page_health:navigate_with_retry:72 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 检测到错误页面，6.0s 后第 2 次刷新重试... (url=https://x.com/search?q=ChatGPT&src=typed_query)
+2026-02-27 17:22:24 [WARNING] crawler.page_health:navigate_with_retry:72 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 检测到错误页面，12.0s 后第 3 次刷新重试... (url=https://x.com/search?q=ChatGPT&src=typed_query)
+2026-02-27 17:22:39 [ERROR] crawler.page_health:navigate_with_retry:118 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 已达最大重试次数 3，放弃 (url=https://x.com/search?q=ChatGPT&src=typed_query)
+2026-02-27 17:22:40 [ERROR] api.services.crawl_service:run_search_task:194 - 任务失败: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, error=搜索页面反复出现错误，无法加载: https://x.com/search?q=ChatGPT&src=typed_query
+Traceback (most recent call last):
+  File "/develop/X_crawl/backend/api/services/crawl_service.py", line 105, in run_search_task
+    result = search(
+             ^^^^^^^
+  File "/develop/X_crawl/backend/crawler/x_searcher.py", line 295, in search
+    raise RuntimeError(f"搜索页面反复出现错误，无法加载: {search_url}")
+RuntimeError: 搜索页面反复出现错误，无法加载: https://x.com/search?q=ChatGPT&src=typed_query
+2026-02-27 17:50:38 [INFO] api.main:lifespan:40 - 正在关闭浏览器并释放资源...
+2026-02-27 17:50:38 [INFO] crawler.browser:close_browser:234 - 浏览器已关闭
+2026-02-27 17:50:38 [INFO] api.main:lifespan:42 - X_crawl API 服务已关闭
+2026-02-27 17:50:40 [INFO] crawler.log_config:setup_logging:80 - 日志系统已初始化 | 文件: /develop/X_crawl/backend/logs/xcrawl.log | 级别: INFO
+2026-02-27 17:50:40 [INFO] api.main:lifespan:33 - X_crawl API 服务启动...
+2026-02-27 17:50:40 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:50:40 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 17:50:40 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:50:40 [WARNING] crawler.browser_detector:detect_user_data_path:365 - 未自动检测到用户数据目录
+2026-02-27 17:50:40 [INFO] crawler.browser_detector:detect_all:381 - 浏览器检测结果: {'browser_path': '/usr/bin/google-chrome', 'user_data_path': None, 'platform': 'linux'}
+2026-02-27 17:50:40 [INFO] api.main:lifespan:36 - 浏览器检测: path=✅ | user_data=⚠️ | platform=linux
+2026-02-27 17:50:51 [INFO] api.services.task_manager:send_signal:208 - 信号已发送: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, signal=run
+2026-02-27 17:50:51 [INFO] api.services.crawl_service:run_search_task:95 - 任务开始: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, keyword='ChatGPT', strategy=dfs, fetch_replies=True, resume=True
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:119 - 未检测到可接管的浏览器，使用独立 Profile 启动...
+2026-02-27 17:50:51 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:50:51 [WARNING] crawler.browser:_resolve_browser_paths:96 - 用户选择的浏览器 'edge' 不可用或不兼容，回退到自动检测
+2026-02-27 17:50:51 [INFO] crawler.browser_detector:detect_all_browsers:326 - 检测到 1 个已安装浏览器: ['Google Chrome']
+2026-02-27 17:50:51 [INFO] crawler.browser_detector:detect_browser_path:342 - 自动选择兼容浏览器: Google Chrome → /usr/bin/google-chrome
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:126 - 使用浏览器: /usr/bin/google-chrome
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:140 - 使用用户数据目录: /root/.xcrawl-browser-profile
+2026-02-27 17:50:51 [WARNING] crawler.browser:_create_browser:151 - 检测到 Linux 无显示服务，自动启用 headless 模式（可在设置中关闭自动加固）
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:155 - 浏览器运行于无头模式
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:174 - Linux 无头稳定性参数已启用（no-sandbox/dev-shm/gpu/setuid）
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:184 - 页面加载模式: normal
+2026-02-27 17:50:51 [INFO] crawler.browser:_create_browser:188 - 正在初始化浏览器...
+2026-02-27 17:50:52 [INFO] crawler.browser:_create_browser:190 - 浏览器初始化成功
+2026-02-27 17:50:53 [INFO] crawler.cookie_manager:inject_cookies_to_tab:137 - 已注入 16 条持久化 Cookie
+2026-02-27 17:50:53 [INFO] crawler.auth:ensure_login:89 - 已注入 16 条持久化 Cookie，即将刷新页面...
+2026-02-27 17:51:23 [INFO] crawler.auth:check_login:61 - X 登录状态验证通过
+2026-02-27 17:51:24 [INFO] crawler.cookie_manager:save_cookies:65 - 已保存 16 条 Cookie 到 /root/.xcrawl-cookies.json
+2026-02-27 17:51:24 [INFO] crawler.cookie_manager:capture_cookies_from_tab:169 - 已从浏览器采集并保存 16 条 Cookie
+2026-02-27 17:51:24 [INFO] crawler.x_searcher:search:265 - 开始搜索: keyword='ChatGPT', product=Top, max_count=0, strategy=unified_dfs, fetch_replies=True, 从断点=False
+2026-02-27 17:52:05 [INFO] crawler.page_health:_save_debug_snapshot:40 - 已保存调试截图: /develop/X_crawl/backend/logs/debug/20260227_175202_6e39d9b8_attempt0_transient_error.png
+2026-02-27 17:52:05 [INFO] api.services.task_manager:send_signal:208 - 信号已发送: task_id=6e39d9b8-2540-448f-a140-e664a992f51b, signal=changed
+2026-02-27 17:52:35 [WARNING] crawler.page_health:_save_debug_snapshot:65 - 保存 HTML 失败: 
+Time out. Maybe the browser is stuck.
+Information: timeout
+Method: DOM.getOuterHTML
+Arguments: {'objectId': '7394419044121376078.1.1', '_timeout': 30}
+Version: 4.1.1.2
+2026-02-27 17:52:35 [WARNING] crawler.page_health:navigate_with_retry:139 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 检测到错误页面，3.0s 后第 1 次刷新重试... (url=https://x.com/search?q=ChatGPT&src=typed_query)
+2026-02-27 17:52:43 [WARNING] crawler.page_health:navigate_with_retry:139 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 检测到错误页面，6.0s 后第 2 次刷新重试... (url=https://x.com/search?q=ChatGPT&src=typed_query)
+2026-02-27 17:53:35 [INFO] crawler.page_health:navigate_with_retry:157 - [task=6e39d9b8-2540-448f-a140-e664a992f51b] 第 2 次刷新后页面恢复正常
+2026-02-27 17:53:35 [INFO] crawler.x_searcher:search:303 - 等待第 1 页数据包（timeout=45.0s）...
+2026-02-27 17:54:50 [INFO] crawler.x_searcher:_wait_search_packet_with_recovery:120 - 第 1 页软恢复重试 1/2
+2026-02-27 17:56:36 [INFO] crawler.x_searcher:_wait_search_packet_with_recovery:120 - 第 1 页软恢复重试 2/2

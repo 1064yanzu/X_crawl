@@ -246,7 +246,7 @@ export default function TaskResultPage() {
                 <TaskRuntimeMetrics qualityState={task.quality_state} runtimeMetrics={task.runtime_metrics} />
             </div>
 
-            <TaskAlerts error={task.error} isRiskPaused={isRiskPaused} />
+            <TaskAlerts error={task.error} isRiskPaused={isRiskPaused} debugScreenshot={task.debug_screenshot} />
 
             {isActive && (
                 <div className="space-y-3">

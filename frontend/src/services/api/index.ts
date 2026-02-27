@@ -34,6 +34,7 @@ export interface TaskOut {
     tweets: Record<string, unknown>[];
     preview_tweets: Record<string, unknown>[];  // 实时预览（最多 N 条）
     crawl_phase: string;  // 爬虫实时阶段描述，如 "等待第 1 页数据包..."
+    debug_screenshot?: string | null;
 }
 
 export interface CheckpointInfo {

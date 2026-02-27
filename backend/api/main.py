@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from api.routers import search, tasks, checkpoints
 from api.routers import raw_responses as raw_responses_router
@@ -69,6 +71,11 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+# 挂载调试截图静态目录
+debug_dir = Path(__file__).parent.parent / "logs" / "debug"
+debug_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/api/v1/debug", StaticFiles(directory=str(debug_dir)), name="debug")
 
 app.include_router(search.router)
 app.include_router(tasks.router)

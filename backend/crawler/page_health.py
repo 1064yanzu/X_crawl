@@ -3,8 +3,11 @@
 
 检测 X/Twitter 页面状态并执行恢复策略。
 """
+import os
 import time
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from crawler.crawl_signals import ChallengeSignal, RiskState
@@ -14,6 +17,70 @@ from crawler.runtime_metrics import bump_metric
 from crawler import telemetry
 
 logger = logging.getLogger(__name__)
+
+# 调试快照保存目录
+_DEBUG_DIR = Path(__file__).resolve().parent.parent / "logs" / "debug"
+
+
+def _save_debug_snapshot(tab, state: PageState, reason: str, attempt: int, task_id: Optional[str] = None) -> None:
+    """
+    保存当前页面的截图和 HTML，方便在无显示器的 Linux 服务器上诊断页面问题。
+    文件保存到 backend/logs/debug/ 目录。
+    """
+    try:
+        _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        tag = task_id[:8] if task_id else "notask"
+        prefix = f"{ts}_{tag}_attempt{attempt}_{state.value}"
+
+        # 保存截图
+        try:
+            screenshot_name = f"{prefix}.png"
+            saved_path = tab.get_screenshot(path=str(_DEBUG_DIR), name=screenshot_name, full_page=True)
+            logger.info(f"已保存调试截图: {saved_path}")
+
+            # 把截图 URL 同步到任务状态里，让前端可见
+            if task_id:
+                try:
+                    from api.services import task_manager
+                    task = task_manager.get_task(task_id)
+                    if task is not None:
+                        task["debug_screenshot"] = f"/api/v1/debug/{screenshot_name}"
+                        task_manager._touch(task)
+                        task_manager._persist_force(task_id)
+                        task_manager.send_signal(task_id, "changed")
+                except Exception as e:
+                    logger.warning(f"无法将截图 URL 同步至任务状态: {e}")
+
+        except Exception as e:
+            logger.warning(f"保存截图失败: {e}")
+
+        # 保存 HTML
+        try:
+            html_path = _DEBUG_DIR / f"{prefix}.html"
+            html_content = tab.html or "(empty)"
+            html_path.write_text(html_content, encoding="utf-8")
+            logger.info(f"已保存页面 HTML: {html_path}")
+        except Exception as e:
+            logger.warning(f"保存 HTML 失败: {e}")
+
+        # 保存 URL 和状态信息
+        try:
+            info_path = _DEBUG_DIR / f"{prefix}_info.txt"
+            info = (
+                f"时间: {datetime.now().isoformat()}\n"
+                f"URL: {tab.url}\n"
+                f"页面状态: {state.value}\n"
+                f"原因: {reason}\n"
+                f"重试次数: {attempt}\n"
+                f"Task ID: {task_id}\n"
+            )
+            info_path.write_text(info, encoding="utf-8")
+        except Exception:
+            pass
+
+    except Exception as e:
+        logger.warning(f"保存调试快照失败（不影响正常流程）: {e}")
 
 
 def _to_risk_state(state: PageState) -> RiskState:
@@ -78,6 +145,11 @@ def navigate_with_retry(
                 time.sleep(1.6)
 
             state, reason = detect_page_state(tab)
+
+            # 非 OK 状态时保存调试快照（仅首次和末次尝试，避免过多文件）
+            if state != PageState.OK and (attempt == 0 or attempt == max_retries):
+                _save_debug_snapshot(tab, state, reason, attempt, task_id)
+
             if state == PageState.OK:
                 if post_load_wait > 0:
                     time.sleep(post_load_wait)

@@ -78,3 +78,4 @@ class TaskOut(BaseModel):
     preview_tweets: list[dict] = Field(default_factory=list)
     # ── 爬虫实时阶段状态（空字符串代表尚未开始）──
     crawl_phase: str = Field(default="", description="爬虫当前阶段描述，如 '等待第 1 页数据'")
+    debug_screenshot: Optional[str] = Field(default=None, description="错误诊断截图 URL")
