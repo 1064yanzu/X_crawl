@@ -5,10 +5,12 @@ POST   /api/v1/cookies          - 手动保存 Cookie（JSON 数组或 document.
 DELETE /api/v1/cookies          - 清空持久化 Cookie
 POST   /api/v1/cookies/capture  - 从当前已启动的浏览器 tab 自动采集 Cookie
 """
+import json
 import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from crawler.cookie_manager import (
@@ -156,3 +158,53 @@ async def capture_from_browser():
     except Exception as e:
         logger.error(f"从浏览器采集 Cookie 失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"采集失败: {str(e)}")
+
+
+# ─── 导出 ──────────────────────────────────────────────────────────────────
+
+class ExportCookiesResponse(BaseModel):
+    count: int
+    cookies: list[dict]
+    format: str
+
+
+@router.get("/export", summary="导出 Cookie（完整值, JSON 格式）")
+async def export_cookies_json():
+    """
+    导出完整 Cookie 列表（不脱敏），以 JSON 文件形式下载。
+    可用于备份或迁移到其他环境。
+    """
+    cookies = load_cookies()
+    if not cookies:
+        raise HTTPException(status_code=404, detail="没有可导出的 Cookie")
+
+    content = json.dumps(cookies, ensure_ascii=False, indent=2)
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="xcrawl-cookies.json"',
+        },
+    )
+
+
+@router.get("/export/string", summary="导出 Cookie（document.cookie 字符串格式）")
+async def export_cookies_string():
+    """
+    导出为 document.cookie 格式字符串（name=value; name=value）。
+    方便直接粘贴到浏览器控制台或其他工具中使用。
+    """
+    cookies = load_cookies()
+    if not cookies:
+        raise HTTPException(status_code=404, detail="没有可导出的 Cookie")
+
+    cookie_str = "; ".join(
+        f"{c.get('name', '')}={c.get('value', '')}" for c in cookies if c.get("name")
+    )
+    return Response(
+        content=cookie_str,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="xcrawl-cookies.txt"',
+        },
+    )

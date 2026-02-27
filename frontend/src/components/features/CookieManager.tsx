@@ -6,6 +6,7 @@ import {
     ChevronDown,
     ChevronUp,
     Cookie,
+    Download,
     Globe,
     Loader2,
     RefreshCw,
@@ -24,6 +25,7 @@ export function CookieManager() {
     const [loading, setLoading] = React.useState(true);
     const [saving, setSaving] = React.useState(false);
     const [capturing, setCapturing] = React.useState(false);
+    const [exporting, setExporting] = React.useState(false);
     const [toast, setToast] = React.useState<Toast | null>(null);
     const [expanded, setExpanded] = React.useState(false);
     const [confirmClear, setConfirmClear] = React.useState(false);
@@ -98,6 +100,22 @@ export function CookieManager() {
         }
     };
 
+    const handleExport = async (format: "json" | "string") => {
+        setExporting(true);
+        try {
+            if (format === "json") {
+                await api.cookies.exportJson();
+            } else {
+                await api.cookies.exportString();
+            }
+            showToast("success", `Cookie 已导出为 ${format === "json" ? "JSON" : "字符串"} 格式`);
+        } catch (e: unknown) {
+            showToast("error", e instanceof Error ? e.message : "导出失败");
+        } finally {
+            setExporting(false);
+        }
+    };
+
     const isLoggedIn = cookies.some((c) => c.name === "auth_token") && cookies.some((c) => c.name === "twid");
     const hasAnyCookie = count > 0;
     const statusColor = isLoggedIn ? "text-green-600" : hasAnyCookie ? "text-amber-600" : "text-muted-foreground";
@@ -111,13 +129,12 @@ export function CookieManager() {
         <div className="space-y-4">
             {toast && (
                 <div
-                    className={`animate-in slide-in-from-top-2 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm duration-300 ${
-                        toast.type === "success"
+                    className={`animate-in slide-in-from-top-2 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm duration-300 ${toast.type === "success"
                             ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800/50 dark:bg-green-950/30 dark:text-green-400"
                             : toast.type === "error"
-                              ? "border-red-200 bg-red-50 text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400"
-                              : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400"
-                    }`}
+                                ? "border-red-200 bg-red-50 text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400"
+                                : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400"
+                        }`}
                 >
                     {toast.type === "success" ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
                     {toast.message}
@@ -214,12 +231,38 @@ export function CookieManager() {
                         {saving ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Cookie className="mr-2 h-3.5 w-3.5" />}
                         {saving ? "保存中..." : "保存 Cookie"}
                     </Button>
-                    {hasAnyCookie && (
-                        <Button variant="ghost" size="sm" className="text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20" onClick={() => setConfirmClear(true)}>
-                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                            清除登录态
-                        </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                        {hasAnyCookie && (
+                            <>
+                                <div className="relative">
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/20"
+                                        onClick={() => handleExport("json")}
+                                        disabled={exporting}
+                                    >
+                                        {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                                        导出 JSON
+                                    </Button>
+                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/20"
+                                    onClick={() => handleExport("string")}
+                                    disabled={exporting}
+                                >
+                                    {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                                    导出文本
+                                </Button>
+                                <Button variant="ghost" size="sm" className="text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20" onClick={() => setConfirmClear(true)}>
+                                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                    清除登录态
+                                </Button>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
 

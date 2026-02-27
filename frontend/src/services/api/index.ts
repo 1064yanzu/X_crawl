@@ -307,6 +307,14 @@ export const api = {
             fetchApi<{ message: string }>("/api/v1/cookies", { method: "DELETE" }),
         capture: () =>
             fetchApi<CaptureResponse>("/api/v1/cookies/capture", { method: "POST" }),
+        exportJson: async () => {
+            const url = `${API_BASE_URL}/api/v1/cookies/export`;
+            await downloadBlob(url, "xcrawl-cookies.json");
+        },
+        exportString: async () => {
+            const url = `${API_BASE_URL}/api/v1/cookies/export/string`;
+            await downloadBlob(url, "xcrawl-cookies.txt");
+        },
     },
     export: {
         downloadCsv: async (taskId: string) => {

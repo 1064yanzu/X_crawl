@@ -47,3 +47,5 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+backend/logs
+backend/api/routers/__pycache__
