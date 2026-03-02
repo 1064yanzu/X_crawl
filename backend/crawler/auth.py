@@ -6,9 +6,17 @@
 - 修复 tab.cookies(as_dict=True) 不支持关键字参数的问题（DrissionPage ≥ 4.x 已移除该参数）
 - 新增 inject_cookies()：在访问 X 前先注入持久化 Cookie
 - ensure_login() 成功后自动回写最新 Cookie 以刷新过期时间
+
+改动（v3）：
+- 新增 inject_account_cookies()：将 AccountEntry 的 cookies 注入 tab
+- 新增 ensure_login_with_pool()：注入指定账号 cookies 并验证登录状态
 """
 import logging
 from DrissionPage._pages.chromium_tab import ChromiumTab
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from crawler.account_pool import AccountEntry
 
 from crawler.cookie_manager import (
     inject_cookies_to_tab,
@@ -104,5 +112,75 @@ def ensure_login(tab: ChromiumTab) -> bool:
             capture_cookies_from_tab(tab)
         except Exception as e:
             logger.warning(f"回写 Cookie 失败（不影响爬取）: {e}")
+
+    return logged_in
+
+
+# ─── 账号池辅助函数 ────────────────────────────────────────────────────────
+
+def inject_account_cookies(tab: ChromiumTab, account: "AccountEntry") -> int:
+    """
+    将 AccountEntry 的 cookies 注入 tab，返回注入数量。
+    复用 cookie_manager 的底层注入逻辑，但 cookies 来源是 account.cookies。
+    """
+    if not account.cookies:
+        logger.debug(f"账号 {account.alias!r} 无 Cookie，跳过注入")
+        return 0
+
+    injected = 0
+    for c in account.cookies:
+        name = c.get("name")
+        value = c.get("value", "")
+        domain = c.get("domain", ".x.com")
+        if not name:
+            continue
+        try:
+            tab.set.cookies({"name": name, "value": value, "domain": domain})
+            injected += 1
+        except Exception as e:
+            logger.warning(f"注入账号 {account.alias!r} Cookie {name} 失败: {e}")
+
+    logger.info(f"账号 {account.alias!r}：已注入 {injected} 条 Cookie")
+    return injected
+
+
+def ensure_login_with_pool(tab: ChromiumTab, account: "AccountEntry") -> bool:
+    """
+    注入指定账号 cookies 并验证登录状态。
+
+    流程：
+      1. inject_account_cookies(tab, account)
+      2. 导航到 x.com（如当前不在 x.com）
+      3. check_login(tab) → 验证 auth_token + twid
+      4. 成功则 mark_account_used；失败则 mark_account_invalid
+
+    Returns:
+        True 表示登录成功
+    """
+    from crawler.account_pool import get_pool
+
+    # Step 1: 注入账号 Cookie
+    injected = inject_account_cookies(tab, account)
+    if injected > 0:
+        logger.info(f"账号 {account.alias!r}：注入 {injected} 条 Cookie，即将刷新页面...")
+
+    # Step 2: 访问/刷新 x.com
+    if "x.com" not in tab.url:
+        tab.get(X_BASE_URL + "/", timeout=20)
+    elif injected > 0:
+        tab.get(tab.url, timeout=20)
+
+    # Step 3: 检测登录状态
+    logged_in = check_login(tab)
+
+    # Step 4: 更新账号状态
+    pool = get_pool()
+    if logged_in:
+        pool.mark_account_used(account.account_id)
+        pool.mark_account_validated(account.account_id)
+        logger.info(f"账号 {account.alias!r} 登录验证通过")
+    else:
+        pool.mark_account_invalid(account.account_id)
+        logger.warning(f"账号 {account.alias!r} 登录验证失败，已标记无效")
 
     return logged_in

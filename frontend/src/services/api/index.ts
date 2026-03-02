@@ -131,8 +131,45 @@ export interface FailedRepliesResponse {
     };
 }
 
-// Cookie 相关类型
-export interface CookieItem {
+// 账号池相关类型
+export interface AccountOut {
+    account_id: string;
+    alias: string;
+    enabled: boolean;
+    is_valid: boolean;
+    is_rate_limited: boolean;
+    cookie_count: number;
+    cookie_domains: string[];
+    use_count: number;
+    fail_count: number;
+    added_at: number;
+    last_used_at: number;
+    last_validated_at: number;
+    rate_reset_at: number;
+}
+
+export interface AddAccountRequest {
+    alias: string;
+    cookies: Array<{ name: string; value: string; domain?: string }>;
+    raw_cookie_string?: string;
+}
+
+export interface UpdateAccountRequest {
+    alias?: string;
+    enabled?: boolean;
+}
+
+export interface IntervalSuggestion {
+    active_account_count: number;
+    total_account_count: number;
+    search_interval_min: number;
+    search_interval_max: number;
+    search_safe_interval: number;
+    tweet_detail_interval_min: number;
+    tweet_detail_interval_max: number;
+    tweet_detail_safe_interval: number;
+    note: string;
+}
     name: string;
     value_masked: string;
     domain: string;
@@ -357,5 +394,25 @@ export const api = {
             fetchApi<{ task_id: string; deleted_files: number }>(`/api/v1/raw-responses/${taskId}`, { method: "DELETE" }),
         deleteAll: () =>
             fetchApi<{ deleted_tasks: number; deleted_files: number }>("/api/v1/raw-responses/all", { method: "DELETE" }),
+    },
+    accounts: {
+        list: () =>
+            fetchApi<AccountOut[]>("/api/v1/accounts"),
+        add: (req: AddAccountRequest) =>
+            fetchApi<AccountOut>("/api/v1/accounts", {
+                method: "POST",
+                body: JSON.stringify(req),
+            }),
+        update: (accountId: string, req: UpdateAccountRequest) =>
+            fetchApi<AccountOut>(`/api/v1/accounts/${accountId}`, {
+                method: "PUT",
+                body: JSON.stringify(req),
+            }),
+        delete: (accountId: string) =>
+            fetchApi<{ message: string }>(`/api/v1/accounts/${accountId}`, { method: "DELETE" }),
+        validate: (accountId: string) =>
+            fetchApi<AccountOut>(`/api/v1/accounts/${accountId}/validate`, { method: "POST" }),
+        intervalSuggestion: () =>
+            fetchApi<IntervalSuggestion>("/api/v1/accounts/interval-suggestion"),
     },
 };

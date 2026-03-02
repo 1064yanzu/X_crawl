@@ -184,6 +184,17 @@ class Settings(BaseSettings):
         default="tasks.db", description="任务历史 SQLite 数据库路径（相对于 backend/ 或绝对路径）"
     )
 
+    # 多账号池配置
+    account_pool_enabled: bool = Field(
+        default=True, description="多账号池总开关（False 时退化为单账号 ensure_login 模式）"
+    )
+    account_rotation_every_n_pages: int = Field(
+        default=5, description="每隔 N 页主动轮换账号（0 = 禁用主动轮换）"
+    )
+    account_rotation_multiplier_threshold: float = Field(
+        default=2.0, description="rate_multiplier 超过此值时立即触发账号轮换"
+    )
+
 
 settings = Settings()
 

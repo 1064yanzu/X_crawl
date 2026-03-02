@@ -22,6 +22,7 @@ from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
 from crawler.scroll_safe import safe_scroll_down, safe_scroll_up, safe_scroll_to_bottom
 from crawler.runtime_metrics import bump_metric
+from crawler.rate_tracker import get_tracker, extract_rate_headers
 from crawler import telemetry
 from crawler.wait_policy import (
     quick_probe_timeout,
@@ -98,6 +99,7 @@ def _wait_reply_packet_with_recovery(
     if packet:
         if ignored:
             logger.debug(f"  回复第 {page_num} 页快速探测过滤无关包 {ignored} 个")
+        _update_reply_rate_tracker(packet)
         return packet
 
     for soft_attempt in range(policy.packet_soft_retries + 1):
@@ -109,6 +111,7 @@ def _wait_reply_packet_with_recovery(
         if packet:
             if ignored:
                 logger.debug(f"  回复第 {page_num} 页过滤无关包 {ignored} 个")
+            _update_reply_rate_tracker(packet)
             return packet
         bump_metric(task_id, "reply_packet_timeouts")
 
@@ -171,9 +174,18 @@ def _wait_reply_packet_with_recovery(
             accept_body=is_tweet_detail_body,
         )
         if packet:
+            _update_reply_rate_tracker(packet)
             return packet
 
     return None
+
+
+def _update_reply_rate_tracker(packet) -> None:
+    """从 TweetDetail 数据包提取速率限制头并更新 tracker。"""
+    result = extract_rate_headers(packet)
+    if result:
+        ep, remaining, limit, reset_ts = result
+        get_tracker().update(ep, remaining, limit, reset_ts)
 
 
 def fetch_replies(

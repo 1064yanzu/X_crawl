@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { ArrowLeft, Cookie, Monitor, Settings, Shield } from "lucide-react";
+import { ArrowLeft, Cookie, Monitor, Settings, Shield, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { CookieManager } from "@/components/features/CookieManager";
@@ -9,6 +9,7 @@ import { CrawlerConfigCard } from "@/components/features/settings/CrawlerConfigC
 import { EngineConfigCard } from "@/components/features/settings/EngineConfigCard";
 import { ProxyConfigCard } from "@/components/features/settings/ProxyConfigCard";
 import { RawResponseStorageCard } from "@/components/features/settings/RawResponseStorageCard";
+import { AccountPoolCard } from "@/components/features/AccountPoolCard";
 
 export default function SettingsPage() {
     return (
@@ -51,6 +52,21 @@ export default function SettingsPage() {
                     </CardContent>
                 </Card>
 
+                <Card>
+                    <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                            <Users className="h-5 w-5 text-violet-500" /> 多账号池
+                        </CardTitle>
+                        <CardDescription>
+                            管理多个 X/Twitter 账号 Cookie 以实现协作爬取。N 个账号可将速率限制分摊，
+                            将搜索间隔从 ~18s 缩短至 ~18s/N，大幅提升爬取效率。
+                        </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                        <AccountPoolCard />
+                    </CardContent>
+                </Card>
+
                 <ProxyConfigCard />
                 <RawResponseStorageCard />
 
@@ -76,4 +92,3 @@ export default function SettingsPage() {
         </div>
     );
 }
-

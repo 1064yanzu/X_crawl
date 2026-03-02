@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from crawler.browser import get_new_tab
 from crawler.human_scroll import human_like_scroll, simulate_reading, idle_scroll
-from crawler.auth import ensure_login
+from crawler.auth import ensure_login, ensure_login_with_pool
 from crawler.parser import parse_search_response
 from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
 from crawler.checkpoint_buffer import (
@@ -31,6 +31,8 @@ from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, bac
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
 from crawler.runtime_metrics import bump_metric
+from crawler.rate_tracker import get_tracker, extract_rate_headers
+from crawler.account_pool import get_pool, compute_dynamic_interval
 from crawler import telemetry
 import api.services.task_manager as _task_mgr
 from config import settings
@@ -100,6 +102,8 @@ def _wait_search_packet_with_recovery(
         if packet:
             if ignored:
                 logger.debug(f"第 {page_num} 页过滤无关包 {ignored} 个")
+            # ── 更新速率限制状态 ────────────────────────────────────
+            _update_rate_tracker(packet, endpoint="search", task_id=task_id)
             return packet
         bump_metric(task_id, "search_packet_timeouts")
 
@@ -152,8 +156,50 @@ def _wait_search_packet_with_recovery(
             accept_body=is_search_timeline_body,
         )
         if packet:
+            _update_rate_tracker(packet, endpoint="search", task_id=task_id)
             return packet
 
+    return None
+
+
+
+def _update_rate_tracker(packet, endpoint: str, task_id: Optional[str] = None) -> None:
+    """从数据包提取速率限制头并更新 tracker，触发 maybe_wait_for_reset。"""
+    result = extract_rate_headers(packet)
+    if result:
+        ep, remaining, limit, reset_ts = result
+        get_tracker().update(ep, remaining, limit, reset_ts)
+        get_tracker().maybe_wait_for_reset(ep, task_id=task_id)
+
+
+def _try_rotate_account(
+    tab,
+    current_account,
+    pool,
+    reason: str,
+) -> "AccountEntry | None":
+    """
+    尝试轮换到下一个账号。
+    若无可用账号或只有一个账号则跳过。
+    返回新账号（或 None 表示未轮换）。
+    """
+    if not pool or pool.total_count() <= 1:
+        return None
+    current_id = current_account.account_id if current_account else None
+    next_acc = pool.pick_next_account(current_id)
+    if not next_acc or next_acc.account_id == current_id:
+        return None
+    logger.info(
+        f"账号轮换（{reason}）: "
+        f"{current_account.alias if current_account else '无'} → {next_acc.alias}"
+    )
+    try:
+        ok = ensure_login_with_pool(tab, next_acc)
+        if ok:
+            return next_acc
+        logger.warning(f"轮换账号 {next_acc.alias!r} 登录失败，继续使用当前账号")
+    except Exception as e:
+        logger.warning(f"账号轮换异常: {e}")
     return None
 
 
@@ -258,18 +304,40 @@ def search(
     # ── 2. 启动浏览器标签页 ─────────────────────────────────────────
     tab = get_new_tab()
     try:
-        if not ensure_login(tab):
-            raise RuntimeError(
-                "未检测到 X 登录状态。"
-                "请先在浏览器中登录 X 账号，"
-                "程序会自动检测已登录的 Chrome 用户数据目录。"
-            )
+        # ── 账号池初始化：若启用账号池且有账号，优先使用账号池登录 ──
+        pool = get_pool()
+        account_pool_enabled = getattr(settings, "account_pool_enabled", True)
+        current_account = None
+
+        if account_pool_enabled and pool.get_active_account_count() > 0:
+            current_account = pool.pick_next_account()
+            if current_account:
+                if not ensure_login_with_pool(tab, current_account):
+                    logger.warning(
+                        f"账号池首账号 {current_account.alias!r} 登录失败，回退至默认登录"
+                    )
+                    current_account = None
+                else:
+                    logger.info(
+                        f"使用账号池登录: {current_account.alias!r}，"
+                        f"活跃账号数: {pool.get_active_account_count()}"
+                    )
+
+        # 账号池未启用或账号池为空，走原有 ensure_login
+        if current_account is None:
+            if not ensure_login(tab):
+                raise RuntimeError(
+                    "未检测到 X 登录状态。"
+                    "请先在浏览器中登录 X 账号，"
+                    "程序会自动检测已登录的 Chrome 用户数据目录。"
+                )
 
         search_url = _build_search_url(keyword, product)
         logger.info(
             f"开始搜索: keyword='{keyword}', product={product}, "
             f"max_count={max_count}, strategy=unified_dfs, "
-            f"fetch_replies={fetch_replies}, 从断点={resumed}"
+            f"fetch_replies={fetch_replies}, 从断点={resumed}, "
+            f"账号={'池(' + str(pool.get_active_account_count()) + '个)' if current_account else '默认'}"
         )
         telemetry.record_event(
             task_id,
@@ -570,7 +638,37 @@ def search(
 
             # 人性化渐进滚动翻页（模拟人类浏览行为）
             page_num += 1
-            jittered_sleep(settings.crawler_page_interval, task_id=task_id)
+
+            # ── 账号轮换：主动轮换（每 N 页）或 rate_multiplier 过高 ──
+            _rotation_n = getattr(settings, "account_rotation_every_n_pages", 5)
+            _rotation_threshold = getattr(settings, "account_rotation_multiplier_threshold", 2.0)
+            _pool_enabled = getattr(settings, "account_pool_enabled", True)
+            if _pool_enabled and pool.total_count() > 1:
+                _rate_mult = get_tracker().get_sleep_multiplier("search")
+                _should_rotate = (
+                    (_rotation_n > 0 and (page_num - 1) % _rotation_n == 0) or
+                    _rate_mult >= _rotation_threshold
+                )
+                if _should_rotate:
+                    reason = (
+                        f"每{_rotation_n}页主动轮换"
+                        if _rotation_n > 0 and (page_num - 1) % _rotation_n == 0
+                        else f"速率倍数{_rate_mult:.1f}>=阈值{_rotation_threshold}"
+                    )
+                    rotated = _try_rotate_account(tab, current_account, pool, reason)
+                    if rotated:
+                        current_account = rotated
+
+            # ── 动态间隔：根据账号数 + rate_multiplier 计算等待时间 ──
+            _rate_mult = get_tracker().get_sleep_multiplier("search")
+            min_s, max_s, _ = compute_dynamic_interval("search")
+            _sleep_time = random.uniform(min_s, max_s) * _rate_mult
+            logger.debug(
+                f"翻页间隔: {_sleep_time:.1f}s "
+                f"(动态区间 {min_s:.1f}~{max_s:.1f}s × rate_mult {_rate_mult:.1f})"
+            )
+            interruptible_sleep(_sleep_time, task_id=task_id)
+
             telemetry.record_event(
                 task_id,
                 "search_scroll_next_page",
