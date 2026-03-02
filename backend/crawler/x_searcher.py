@@ -8,6 +8,8 @@ X 搜索爬虫核心模块（v4 - 人性化渐进滚动 + 统一 DFS 策略）
 - Referer 头由浏览器自动管理（根据抓包分析无需手动设置）
 """
 import logging
+import time
+import random
 from typing import Literal, Optional
 from urllib.parse import quote
 
@@ -27,7 +29,7 @@ from crawler.page_state import detect_page_state, PageState
 from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
-from crawler.utils import jittered_sleep, check_signal, merge_remaining
+from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
 from crawler.runtime_metrics import bump_metric
 from crawler import telemetry
 import api.services.task_manager as _task_mgr
@@ -202,6 +204,8 @@ def search(
     resumed = False
     _all_failed_records: list[dict] = []  # 收集所有失败的回复记录
     _last_bottom_cursor: Optional[str] = None  # 追踪最后有效 cursor，用于兜底保存
+    _crawl_start_time = time.monotonic()
+    _long_rest_done_at = 0.0  # 上次长休息时间戳
 
     if resume and task_id:
         ckpt = load_checkpoint(task_id)
@@ -512,6 +516,49 @@ def search(
                 if max_count and len(all_tweets) >= max_count:
                     logger.info(f"已达目标 {max_count} 条，停止")
                     break
+
+                # ── 休息节律（长时间爬虫专项，防连续爬取被识别） ──────────
+                if getattr(settings, "crawler_enable_break_rhythm", True) and new_tweets:
+                    _total_fetched_now = len(all_tweets)
+                    # 微休息（15% 概率，30-90 秒）
+                    if random.random() < getattr(settings, "crawler_micro_break_chance", 0.15):
+                        _micro_wait = random.uniform(30, 90)
+                        logger.info(f"微休息 {_micro_wait:.0f}s（模拟阅读有趣内容暂停）...")
+                        if task_id:
+                            _task_mgr.update_task_phase(
+                                task_id, f"微休息中 ({_micro_wait:.0f}s)，稍后继续..."
+                            )
+                        interruptible_sleep(_micro_wait, task_id=task_id)
+                    # 小憩（每 short_break_every_n 条推文，3-8 分钟）
+                    _short_n = getattr(settings, "crawler_short_break_every_n", 250)
+                    if _short_n > 0 and _total_fetched_now > 0:
+                        prev_count = _total_fetched_now - len(new_tweets)
+                        if prev_count // _short_n < _total_fetched_now // _short_n:
+                            _short_wait = random.uniform(180, 480)
+                            logger.info(
+                                f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条，模拟起身休息）..."
+                            )
+                            if task_id:
+                                _task_mgr.update_task_phase(
+                                    task_id, f"小憩中 ({_short_wait:.0f}s)，稍后继续..."
+                                )
+                            interruptible_sleep(_short_wait, task_id=task_id)
+                    # 长休息（每 long_rest_interval_hours 小时，15-25 分钟）
+                    _rest_h = getattr(settings, "crawler_long_rest_interval_hours", 2.0)
+                    _rest_interval = _rest_h * 3600 * random.uniform(0.75, 1.25)
+                    _now_mono = time.monotonic()
+                    _last_rest = max(_crawl_start_time, _long_rest_done_at)
+                    if _now_mono - _last_rest >= _rest_interval:
+                        _long_wait = random.uniform(900, 1500)
+                        logger.info(
+                            f"长休息 {_long_wait/60:.0f}min（运行 {(_now_mono - _crawl_start_time)/3600:.1f}h，模拟离开电脑）..."
+                        )
+                        if task_id:
+                            _task_mgr.update_task_phase(
+                                task_id, f"长休息中 ({_long_wait/60:.0f}min)，稍后继续..."
+                            )
+                        interruptible_sleep(_long_wait, task_id=task_id)
+                        _long_rest_done_at = time.monotonic()
 
             except StopSignal:
                 raise

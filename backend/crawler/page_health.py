@@ -14,12 +14,52 @@ from crawler.crawl_signals import ChallengeSignal, RiskState
 from crawler.page_state import PageState, detect_page_state, is_error_like_state
 from crawler.recovery_policy import sleep_with_jitter, backoff_seconds
 from crawler.runtime_metrics import bump_metric
+from crawler.utils import interruptible_sleep
 from crawler import telemetry
 
 logger = logging.getLogger(__name__)
 
 # 调试快照保存目录
 _DEBUG_DIR = Path(__file__).resolve().parent.parent / "logs" / "debug"
+
+# ── 连续错误自适应冷却 ────────────────────────────────────────────
+# 追踪跨导航的连续 transient_error 次数，当错误密集出现时自动升级等待时间
+import threading
+
+_consecutive_errors = 0
+_error_lock = threading.Lock()
+
+# 连续错误次数 → 额外冷却秒数（递增缓冲，给 X 服务端恢复时间）
+_COOLDOWN_TIERS = [
+    (3, 8.0),    # 连续 3 次错误后额外等 8 秒
+    (5, 15.0),   # 连续 5 次后等 15 秒
+    (8, 30.0),   # 连续 8 次后等 30 秒
+    (12, 60.0),  # 连续 12 次后等 60 秒
+]
+
+
+def _record_error() -> float:
+    """记录一次错误，返回当前应追加的冷却时间（秒）。"""
+    global _consecutive_errors
+    with _error_lock:
+        _consecutive_errors += 1
+        count = _consecutive_errors
+    extra = 0.0
+    for threshold, cooldown in _COOLDOWN_TIERS:
+        if count >= threshold:
+            extra = cooldown
+    if extra > 0:
+        logger.info(f"连续错误页累计 {count} 次，追加冷却 {extra:.0f}s")
+    return extra
+
+
+def _record_success() -> None:
+    """页面加载成功，重置连续错误计数。"""
+    global _consecutive_errors
+    with _error_lock:
+        if _consecutive_errors > 0:
+            logger.debug(f"页面恢复正常，重置连续错误计数（之前 {_consecutive_errors} 次）")
+            _consecutive_errors = 0
 
 
 def _save_debug_snapshot(tab, state: PageState, reason: str, attempt: int, task_id: Optional[str] = None) -> None:
@@ -142,7 +182,7 @@ def navigate_with_retry(
                 sleep_with_jitter(wait)
                 tab.refresh()
                 # 等待刷新后页面加载
-                time.sleep(1.6)
+                interruptible_sleep(1.6, task_id=task_id)
 
             state, reason = detect_page_state(tab)
 
@@ -151,8 +191,9 @@ def navigate_with_retry(
                 _save_debug_snapshot(tab, state, reason, attempt, task_id)
 
             if state == PageState.OK:
+                _record_success()
                 if post_load_wait > 0:
-                    time.sleep(post_load_wait)
+                    interruptible_sleep(post_load_wait, task_id=task_id)
                 if attempt > 0:
                     logger.info(f"{log_prefix}第 {attempt} 次刷新后页面恢复正常")
                 return True
@@ -186,14 +227,18 @@ def navigate_with_retry(
                 continue
 
             if is_error_like_state(state):
+                extra_cooldown = _record_error()
+                if extra_cooldown > 0:
+                    sleep_with_jitter(extra_cooldown, jitter_ratio=0.15, minimum=2.0)
                 if attempt == max_retries:
                     logger.error(f"{log_prefix}已达最大重试次数 {max_retries}，放弃 (url={url[:80]})")
                     return False
                 continue  # 继续重试
 
             # 兜底：未知状态视为可继续
+            _record_success()
             if post_load_wait > 0:
-                time.sleep(post_load_wait)
+                interruptible_sleep(post_load_wait, task_id=task_id)
             return True
 
         except ChallengeSignal:

@@ -203,12 +203,21 @@ def _create_browser() -> Chromium:
 
     if effective_headless:
         co.headless(True)
-        logger.info("浏览器运行于无头模式")
+        # 显式设置真实 User-Agent，覆盖 HeadlessChrome 默认标识
+        # 使用 macOS + Edge 145 UA，与 JS 层 stealth_navigator 档案保持一致
+        _REAL_UA = (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0"
+        )
+        co.set_argument("--user-agent", _REAL_UA)
+        logger.info("浏览器运行于无头模式（已覆盖 User-Agent 为 Edge 145 macOS）")
 
     # 反识别与运行稳定策略
     # 1) 显式窗口尺寸与语言，减少自动化默认指纹
     co.set_argument("--window-size", "1366,860")
-    co.set_argument("--lang", "en-US,en")
+    co.set_argument("--lang", "zh-CN,zh,en,en-GB,en-US")
+    co.set_argument("--accept-lang", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
     # 2) 尽量降低 webdriver 痕迹（对不同版本 Chromium 生效程度不同）
     co.set_argument("--disable-blink-features", "AutomationControlled")
     co.set_argument("--disable-infobars")
@@ -249,7 +258,8 @@ def _create_browser() -> Chromium:
 def get_new_tab():
     """获取一个新标签页（用于单次爬虫任务）"""
     tab = get_browser().new_tab()
-    apply_stealth_to_tab(tab, enabled=bool(settings.browser_stealth_enabled))
+    # 始终注入 stealth 脚本（反检测是基本需求，不应默认关闭）
+    apply_stealth_to_tab(tab, enabled=True)
     return tab
 
 

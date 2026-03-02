@@ -159,6 +159,26 @@ class Settings(BaseSettings):
         default=0, description="每任务最多保存页数，0 = 不限制"
     )
 
+    # 浏览器健康与长时间运行配置
+    browser_restart_every_n_pages: int = Field(
+        default=500,
+        description="每完成 N 次页面导航后触发浏览器重启（防内存泄漏，0=禁用）"
+    )
+
+    # 休息节律配置（百万级数据爬取专项）
+    crawler_enable_break_rhythm: bool = Field(
+        default=True, description="是否启用休息节律（防长时间爬取被识别）"
+    )
+    crawler_micro_break_chance: float = Field(
+        default=0.15, description="微休息触发概率（每批新推文后）"
+    )
+    crawler_short_break_every_n: int = Field(
+        default=250, description="小憩触发阈值（累计推文数）"
+    )
+    crawler_long_rest_interval_hours: float = Field(
+        default=2.0, description="长休息间隔（小时），运行满此时间后强制休息 15-25 分钟"
+    )
+
     # 任务历史数据库
     tasks_db_path: str = Field(
         default="tasks.db", description="任务历史 SQLite 数据库路径（相对于 backend/ 或绝对路径）"

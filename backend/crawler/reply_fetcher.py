@@ -19,7 +19,8 @@ from crawler.page_state import detect_page_state, PageState
 from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
-from crawler.utils import jittered_sleep, check_signal, merge_remaining
+from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
+from crawler.scroll_safe import safe_scroll_down, safe_scroll_up, safe_scroll_to_bottom
 from crawler.runtime_metrics import bump_metric
 from crawler import telemetry
 from crawler.wait_policy import (
@@ -60,7 +61,7 @@ def _scroll_incremental(tab, *, task_id: Optional[str] = None, steps: Optional[i
     for i in range(move_steps):
         # 小幅随机滚动（一条评论约 150~300px 高）
         px = random.randint(150, 350)
-        tab.scroll.down(px)
+        safe_scroll_down(tab, px, task_id=task_id)
 
         # 阅读评论的停顿：偶尔长停顿看完整评论
         if random.random() < 0.20:
@@ -70,11 +71,11 @@ def _scroll_incremental(tab, *, task_id: Optional[str] = None, steps: Optional[i
 
         # 偶尔回滚看上面的评论（非最后一步）
         if i < move_steps - 1 and random.random() < 0.12:
-            tab.scroll.up(random.randint(60, 150))
+            safe_scroll_up(tab, random.randint(60, 150), task_id=task_id)
             interruptible_sleep(random.uniform(0.3, 0.6), task_id=task_id)
 
     # 最后滚到底部确保触发评论懒加载
-    tab.scroll.to_bottom()
+    safe_scroll_to_bottom(tab, task_id=task_id)
 
 
 def _wait_reply_packet_with_recovery(

@@ -4,6 +4,7 @@
 提取 x_searcher / reply_fetcher 中重复的工具函数，统一维护。
 """
 import time
+import math
 import random
 import logging
 import threading
@@ -96,3 +97,21 @@ def merge_remaining(updated: list[dict], tweets: list[dict], start_idx: int) -> 
         t_copy = dict(t)
         t_copy.setdefault("replies", [])
         updated.append(t_copy)
+
+
+def lognormal_sleep(
+    mean_seconds: float,
+    sigma: float = 0.4,
+    *,
+    floor: float = 0.1,
+    ceiling: float = 60.0,
+    task_id: Optional[str] = None,
+) -> None:
+    """对数正态分布等待：比 uniform 更贴近真人操作时间分布（多数快，长尾慢）。
+
+    mu = ln(mean) - sigma^2/2，使得期望值 = mean_seconds。
+    """
+    mu = math.log(max(0.01, float(mean_seconds))) - sigma ** 2 / 2
+    sample = math.exp(mu + sigma * random.gauss(0, 1))
+    actual = max(float(floor), min(float(ceiling), sample))
+    interruptible_sleep(actual, task_id=task_id)

@@ -18,7 +18,9 @@ import random
 import logging
 from typing import Optional
 
-from crawler.utils import interruptible_sleep
+from crawler.utils import interruptible_sleep, lognormal_sleep
+from crawler.scroll_safe import safe_scroll_down, safe_scroll_up, safe_scroll_to_bottom
+from crawler.mouse_behavior import random_mouse_wander
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +60,7 @@ def human_like_scroll(
 
     for i in range(steps):
         px = random.randint(min_step_px, max_step_px)
-        tab.scroll.down(px)
+        safe_scroll_down(tab, px, task_id=task_id)
 
         # 大部分时候短停顿，偶尔长停顿（假装在看某条帖子）
         if random.random() < 0.2:
@@ -70,11 +72,11 @@ def human_like_scroll(
         # 偶尔回滚（非最后一步）
         if i < steps - 1 and random.random() < scroll_back_chance:
             back_px = random.randint(*scroll_back_px_range)
-            tab.scroll.up(back_px)
+            safe_scroll_up(tab, back_px, task_id=task_id)
             interruptible_sleep(random.uniform(0.4, 0.8), task_id=task_id)
 
     if finish_at_bottom:
-        tab.scroll.to_bottom()
+        safe_scroll_to_bottom(tab, task_id=task_id)
 
 
 def simulate_reading(
@@ -104,27 +106,25 @@ def simulate_reading(
     for i in range(steps):
         # 小幅滚动（一条推文大约 200~400px 高）
         px = random.randint(120, 350)
-        tab.scroll.down(px)
+        safe_scroll_down(tab, px, task_id=task_id)
 
         # 阅读节奏：大部分时间短暂停留（扫一眼），偶尔驻留更久
         roll = random.random()
         if roll < 0.15:
             # 15% 概率长驻留（仔细看图/视频/长文本）
-            pause = random.uniform(2.0, 4.0)
+            lognormal_sleep(2.5, sigma=0.4, floor=1.0, ceiling=5.0, task_id=task_id)
         elif roll < 0.40:
             # 25% 概率中等停留（读完一条帖子）
-            pause = random.uniform(1.0, 2.0)
+            lognormal_sleep(1.3, sigma=0.4, floor=0.5, ceiling=3.0, task_id=task_id)
         else:
             # 60% 快速扫过
-            pause = random.uniform(0.5, 1.2)
-
-        interruptible_sleep(pause, task_id=task_id)
+            lognormal_sleep(0.7, sigma=0.35, floor=0.2, ceiling=2.0, task_id=task_id)
 
         # 偶尔回滚（回看感兴趣的帖子）
         if random.random() < 0.10:
             back_px = random.randint(80, 200)
-            tab.scroll.up(back_px)
-            interruptible_sleep(random.uniform(0.5, 1.0), task_id=task_id)
+            safe_scroll_up(tab, back_px, task_id=task_id)
+            lognormal_sleep(0.6, sigma=0.3, floor=0.2, ceiling=2.0, task_id=task_id)
 
 
 def idle_scroll(
@@ -146,14 +146,18 @@ def idle_scroll(
     try:
         # 做 1~2 次微幅滚动
         micro_steps = random.randint(1, 2)
+
+        if random.random() < 0.40:
+            random_mouse_wander(tab, moves=1, task_id=task_id)
+
         for _ in range(micro_steps):
             px = random.randint(60, 180)
-            tab.scroll.down(px)
+            safe_scroll_down(tab, px, task_id=task_id)
             interruptible_sleep(random.uniform(0.3, 0.6), task_id=task_id)
 
         # 偶尔回滚一点（20% 概率）
         if random.random() < 0.20:
-            tab.scroll.up(random.randint(40, 100))
+            safe_scroll_up(tab, random.randint(40, 100), task_id=task_id)
             interruptible_sleep(random.uniform(0.2, 0.4), task_id=task_id)
     except Exception:
         # 任何异常都不应影响主流程
