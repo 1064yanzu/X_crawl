@@ -16,7 +16,17 @@ export API_HOST="${API_HOST:-0.0.0.0}"
 export API_PORT="${API_PORT:-8000}"
 
 if [[ "$(uname -s)" == "Linux" && -z "${DISPLAY:-}" ]]; then
-  export BROWSER_HEADLESS="${BROWSER_HEADLESS:-true}"
+  if command -v Xvfb >/dev/null 2>&1; then
+    export DISPLAY="${DISPLAY:-:99}"
+    if ! pgrep -af "Xvfb ${DISPLAY}" >/dev/null 2>&1; then
+      nohup Xvfb "${DISPLAY}" -screen 0 1920x1080x24 >/tmp/xcrawl-xvfb.log 2>&1 &
+      sleep 1
+    fi
+    # 有虚拟显示时默认使用有头模式，降低 X 反爬误伤概率
+    export BROWSER_HEADLESS="${BROWSER_HEADLESS:-false}"
+  else
+    export BROWSER_HEADLESS="${BROWSER_HEADLESS:-true}"
+  fi
 fi
 
 cd "$BACKEND_DIR"

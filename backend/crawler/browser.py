@@ -16,6 +16,7 @@
 import os
 import logging
 import socket
+import subprocess
 from pathlib import Path
 from typing import Optional
 from DrissionPage import Chromium, ChromiumOptions
@@ -58,6 +59,46 @@ def _is_port_open(host: str, port: int, timeout: float = 1.0) -> bool:
             return True
     except OSError:
         return False
+
+
+def _pick_free_local_port() -> int:
+    """分配一个可用的本地调试端口，避免固定 9222 被占用导致启动失败。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _profile_in_use(user_data_path: str) -> bool:
+    """粗略判断是否有 Chrome/Chromium 进程正在使用该 profile。"""
+    try:
+        escaped = user_data_path.replace("'", "'\''")
+        cmd = (
+            "ps -ef | grep -E 'chrome|chromium' | grep -v grep | "
+            f"grep -F -- '--user-data-dir={escaped}'"
+        )
+        proc = subprocess.run(["bash", "-lc", cmd], capture_output=True, text=True)
+        return proc.returncode == 0 and bool(proc.stdout.strip())
+    except Exception:
+        return False
+
+
+def _cleanup_stale_singleton_locks(user_data_path: str) -> None:
+    """清理孤儿锁文件（仅在确认 profile 未被进程占用时执行）。"""
+    lock_names = ("SingletonLock", "SingletonSocket", "SingletonCookie")
+    if _profile_in_use(user_data_path):
+        logger.info(f"用户数据目录仍被进程占用，跳过锁清理: {user_data_path}")
+        return
+    removed = []
+    for name in lock_names:
+        p = os.path.join(user_data_path, name)
+        try:
+            if os.path.exists(p) or os.path.islink(p):
+                os.remove(p)
+                removed.append(name)
+        except Exception:
+            pass
+    if removed:
+        logger.warning(f"已清理孤儿锁文件 {removed}（profile: {user_data_path}）")
 
 
 def get_browser() -> Chromium:
@@ -119,6 +160,11 @@ def _create_browser() -> Chromium:
     logger.info("未检测到可接管的浏览器，使用独立 Profile 启动...")
     co = ChromiumOptions()
 
+    # 为当前浏览器实例分配独立调试端口，避免固定 9222 被占用时启动失败
+    local_port = _pick_free_local_port()
+    co.set_local_port(local_port)
+    logger.info(f"独立浏览器实例使用调试端口: {local_port}")
+
     # 解析浏览器路径（用户选择 → 自动检测）
     exec_path, detected_user_data = _resolve_browser_paths()
     if exec_path:
@@ -136,6 +182,11 @@ def _create_browser() -> Chromium:
         candidate_user_data = None
     user_data = candidate_user_data or _CRAWLER_PROFILE_DIR
     os.makedirs(user_data, exist_ok=True)
+
+    # 专用目录出现孤儿锁文件时自动清理，避免 BrowserConnectError
+    if user_data == _CRAWLER_PROFILE_DIR and _is_user_data_locked(user_data):
+        _cleanup_stale_singleton_locks(user_data)
+
     co.set_user_data_path(user_data)
     logger.info(f"使用用户数据目录: {user_data}")
 
@@ -163,15 +214,19 @@ def _create_browser() -> Chromium:
     co.set_argument("--disable-infobars")
     co.set_argument("--no-first-run")
     co.set_argument("--no-default-browser-check")
+    need_root_no_sandbox = (os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0)
     if linux_headless_args_enabled(
         browser_linux_hardening=bool(settings.browser_linux_hardening),
         browser_headless=effective_headless,
-    ):
+    ) or need_root_no_sandbox:
         co.set_argument("--no-sandbox")
         co.set_argument("--disable-dev-shm-usage")
         co.set_argument("--disable-gpu")
         co.set_argument("--disable-setuid-sandbox")
-        logger.info("Linux 无头稳定性参数已启用（no-sandbox/dev-shm/gpu/setuid）")
+        if need_root_no_sandbox and not effective_headless:
+            logger.info("检测到 root 身份运行，已启用 no-sandbox 稳定性参数")
+        else:
+            logger.info("Linux 无头稳定性参数已启用（no-sandbox/dev-shm/gpu/setuid）")
 
     # 图片加载策略
     co.no_imgs(settings.browser_block_images)

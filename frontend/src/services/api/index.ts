@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "/xapi").replace(/\/$/, "");
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "paused" | "stopped";
 export type CrawlStrategy = "bfs" | "dfs";

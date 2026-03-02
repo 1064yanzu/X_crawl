@@ -1,45 +1,43 @@
-"""浏览器平衡档伪装注入。"""
+"""浏览器轻量伪装注入（保守模式）。"""
 from __future__ import annotations
 
 import logging
 
 logger = logging.getLogger(__name__)
 
+# 说明：
+# 1) 仅做最小化补丁，避免对页面运行时造成副作用；
+# 2) 不再改写 navigator.plugins / navigator.languages，避免破坏站点脚本分支判断；
+# 3) 若注入失败直接忽略，保证主流程可继续。
 _STEALTH_INIT_SCRIPT = r"""
-// Basic stealth patches: keep behavior realistic, avoid aggressive spoofing.
-Object.defineProperty(navigator, 'webdriver', {
-  get: () => undefined,
-});
+(() => {
+  try {
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => undefined,
+      configurable: true,
+    });
+  } catch (_) {}
 
-Object.defineProperty(navigator, 'languages', {
-  get: () => ['en-US', 'en'],
-});
+  try {
+    if (!window.chrome) {
+      Object.defineProperty(window, 'chrome', {
+        get: () => ({ runtime: {} }),
+        configurable: true,
+      });
+    }
+  } catch (_) {}
 
-if (!window.chrome) {
-  Object.defineProperty(window, 'chrome', {
-    get: () => ({ runtime: {} }),
-  });
-}
-
-if (!navigator.plugins || navigator.plugins.length === 0) {
-  const fakePlugins = [
-    { name: 'Chrome PDF Viewer' },
-    { name: 'Chromium PDF Viewer' },
-    { name: 'Microsoft Edge PDF Viewer' },
-  ];
-  Object.defineProperty(navigator, 'plugins', {
-    get: () => fakePlugins,
-  });
-}
-
-const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
-if (originalQuery) {
-  window.navigator.permissions.query = (parameters) => (
-    parameters && parameters.name === 'notifications'
-      ? Promise.resolve({ state: Notification.permission })
-      : originalQuery(parameters)
-  );
-}
+  try {
+    const originalQuery = window.navigator.permissions && window.navigator.permissions.query;
+    if (typeof originalQuery === 'function') {
+      window.navigator.permissions.query = (parameters) => (
+        parameters && parameters.name === 'notifications'
+          ? Promise.resolve({ state: Notification.permission })
+          : originalQuery(parameters)
+      );
+    }
+  } catch (_) {}
+})();
 """.strip()
 
 

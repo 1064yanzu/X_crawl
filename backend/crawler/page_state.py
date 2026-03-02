@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import re
 
 
 class PageState(str, Enum):
@@ -19,6 +20,7 @@ _TRANSIENT_ERROR_MARKERS = [
     "hmm, this page doesn",
     "发生错误",
     "出错了",
+    "javascript is not available",
 ]
 
 _CHALLENGE_MARKERS = [
@@ -48,10 +50,16 @@ _LOGIN_MARKERS = [
 ]
 
 
-def _normalize_html(tab) -> str:
+def _normalize_visible_text(tab) -> str:
+    """提取可见文本，避免脚本/样式/noscript中的误判。"""
     try:
         html = tab.html or ""
-        return html.lower()[:120_000]
+        # 先去掉 script/style/noscript 块，避免命中 JS bundle 文案
+        html = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html)
+        # 再粗略去标签，保留可见文本
+        text = re.sub(r"(?is)<[^>]+>", " ", html)
+        text = re.sub(r"\s+", " ", text).strip().lower()
+        return text[:120_000]
     except Exception:
         return ""
 
@@ -64,8 +72,8 @@ def _normalize_url(tab) -> str:
 
 
 def detect_page_state(tab) -> tuple[PageState, str]:
-    """基于 URL + 页面文本特征判断当前页面状态。"""
-    text = _normalize_html(tab)
+    """基于 URL + 页面可见文本特征判断当前页面状态。"""
+    text = _normalize_visible_text(tab)
     url = _normalize_url(tab)
 
     if "/i/flow/login" in url or "/login" in url:

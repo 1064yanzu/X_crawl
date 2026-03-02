@@ -292,6 +292,29 @@ def search(
             task_id=task_id,
         )
         if not ok:
+            logger.warning("搜索页首跳失败，执行预热路径后再重试一次（home -> explore -> search）")
+            try:
+                tab.get("https://x.com/home", timeout=25)
+                sleep_with_jitter(1.8, jitter_ratio=0.15, minimum=1.0)
+                tab.get("https://x.com/explore", timeout=25)
+                sleep_with_jitter(2.0, jitter_ratio=0.15, minimum=1.0)
+            except Exception as warmup_err:
+                logger.warning(f"搜索预热路径失败（忽略，继续最终重试）: {warmup_err}")
+
+            ok = navigate_with_retry(
+                tab,
+                search_url,
+                max_retries=max(1, policy.refresh_max_retries // 2),
+                base_wait=4.0,
+                load_timeout=35.0,
+                post_load_wait=max(settings.crawler_initial_wait, 3.0),
+                challenge_retry_times=policy.challenge_retry_times,
+                challenge_cooldown=max(policy.challenge_cooldown, 10.0),
+                raise_on_risk=True,
+                task_id=task_id,
+            )
+
+        if not ok:
             raise RuntimeError(f"搜索页面反复出现错误，无法加载: {search_url}")
 
         page_num = page_fetched + 1

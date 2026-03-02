@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         default=False, description="是否禁用图片加载（稳健模式建议关闭）"
     )
     browser_stealth_enabled: bool = Field(
-        default=True, description="是否启用平衡档指纹伪装注入"
+        default=False, description="是否启用轻量伪装注入（默认关闭，按需开启）"
     )
     browser_linux_hardening: bool = Field(
         default=True, description="Linux 无头模式下是否启用稳定性启动参数"
