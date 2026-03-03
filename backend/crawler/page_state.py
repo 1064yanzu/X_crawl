@@ -20,7 +20,9 @@ _TRANSIENT_ERROR_MARKERS = [
     "hmm, this page doesn",
     "发生错误",
     "出错了",
-    "javascript is not available",
+    # 注意: 不要包含 "javascript is not available"
+    # X 的 HTML 始终包含 <noscript><h1>JavaScript is not available.</h1></noscript>
+    # 这是正常的 noscript 降级标签，不是错误页面标志
 ]
 
 _CHALLENGE_MARKERS = [
@@ -54,11 +56,16 @@ def _normalize_visible_text(tab) -> str:
     """提取可见文本，避免脚本/样式/noscript中的误判。"""
     try:
         html = tab.html or ""
-        # 先去掉 script/style/noscript 块，避免命中 JS bundle 文案
-        html = re.sub(r"(?is)<(script|style|noscript)\b[^>]*>.*?</\1>", " ", html)
+        # 分别去掉 script/style/noscript 块（不使用反向引用，更可靠）
+        html = re.sub(r"(?is)<script\b[^>]*>.*?</script>", " ", html)
+        html = re.sub(r"(?is)<style\b[^>]*>.*?</style>", " ", html)
+        html = re.sub(r"(?is)<noscript\b[^>]*>.*?</noscript>", " ", html)
         # 再粗略去标签，保留可见文本
         text = re.sub(r"(?is)<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip().lower()
+        # 额外移除 X 页面常见的 noscript 残留文案（以防正则未覆盖）
+        text = text.replace("javascript is not available.", "")
+        text = text.replace("javascript is not available", "")
         return text[:120_000]
     except Exception:
         return ""

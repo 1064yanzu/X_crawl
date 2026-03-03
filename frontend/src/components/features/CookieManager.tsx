@@ -11,24 +11,28 @@ import {
     Loader2,
     RefreshCw,
     Trash2,
+    User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import { api, CookieItem } from "@/services/api";
+import { api, CookieAccount, CookiesResponse } from "@/services/api";
 
 type ToastType = "success" | "error" | "info";
 type Toast = { type: ToastType; message: string };
 
 export function CookieManager() {
-    const [cookies, setCookies] = React.useState<CookieItem[]>([]);
+    const [accounts, setAccounts] = React.useState<CookieAccount[]>([]);
     const [count, setCount] = React.useState(0);
+    const [hasLogin, setHasLogin] = React.useState(false);
     const [loading, setLoading] = React.useState(true);
     const [saving, setSaving] = React.useState(false);
     const [capturing, setCapturing] = React.useState(false);
     const [exporting, setExporting] = React.useState(false);
     const [toast, setToast] = React.useState<Toast | null>(null);
-    const [expanded, setExpanded] = React.useState(false);
     const [confirmClear, setConfirmClear] = React.useState(false);
+
+    // 展开的账号 user_id
+    const [expandedAccount, setExpandedAccount] = React.useState<string | null>(null);
 
     const [inputMode, setInputMode] = React.useState<"string" | "json">("string");
     const [rawInput, setRawInput] = React.useState("");
@@ -38,15 +42,21 @@ export function CookieManager() {
         setTimeout(() => setToast(null), 4000);
     };
 
+    const applyResponse = (res: CookiesResponse) => {
+        setAccounts(res.accounts ?? []);
+        setCount(res.count);
+        setHasLogin(res.has_login);
+    };
+
     const fetchCookies = React.useCallback(async () => {
         setLoading(true);
         try {
             const res = await api.cookies.list();
-            setCookies(res.cookies);
-            setCount(res.count);
+            applyResponse(res);
         } catch {
-            setCookies([]);
+            setAccounts([]);
             setCount(0);
+            setHasLogin(false);
         } finally {
             setLoading(false);
         }
@@ -64,11 +74,9 @@ export function CookieManager() {
         setSaving(true);
         try {
             const res = inputMode === "string" ? await api.cookies.saveRaw(rawInput.trim()) : await api.cookies.save(JSON.parse(rawInput.trim()));
-            setCookies(res.cookies);
-            setCount(res.count);
+            applyResponse(res);
             setRawInput("");
-            const loggedIn = res.cookies.some((c) => c.name === "auth_token") && res.cookies.some((c) => c.name === "twid");
-            showToast("success", loggedIn ? "登录态已保存，下次爬取将自动注入" : `已保存 ${res.count} 条 Cookie（未检测到完整登录态）`);
+            showToast("success", res.has_login ? "登录态已保存，下次爬取将自动注入" : `已保存 ${res.count} 条 Cookie（未检测到完整登录态）`);
         } catch (e: unknown) {
             showToast("error", e instanceof Error ? e.message : "保存失败，请检查格式");
         } finally {
@@ -92,8 +100,10 @@ export function CookieManager() {
     const handleClear = async () => {
         try {
             await api.cookies.clear();
-            setCookies([]);
+            setAccounts([]);
             setCount(0);
+            setHasLogin(false);
+            setExpandedAccount(null);
             showToast("info", "已清空所有 Cookie");
         } catch {
             showToast("error", "清除失败");
@@ -116,10 +126,9 @@ export function CookieManager() {
         }
     };
 
-    const isLoggedIn = cookies.some((c) => c.name === "auth_token") && cookies.some((c) => c.name === "twid");
     const hasAnyCookie = count > 0;
-    const statusColor = isLoggedIn ? "text-green-600" : hasAnyCookie ? "text-amber-600" : "text-muted-foreground";
-    const statusIcon = isLoggedIn ? (
+    const statusColor = hasLogin ? "text-green-600" : hasAnyCookie ? "text-amber-600" : "text-muted-foreground";
+    const statusIcon = hasLogin ? (
         <CheckCircle2 className="h-4 w-4 shrink-0 text-green-600" />
     ) : (
         <AlertCircle className={`h-4 w-4 shrink-0 ${hasAnyCookie ? "text-amber-500" : "text-muted-foreground"}`} />
@@ -130,10 +139,10 @@ export function CookieManager() {
             {toast && (
                 <div
                     className={`animate-in slide-in-from-top-2 flex items-center gap-2 rounded-lg border px-4 py-3 text-sm duration-300 ${toast.type === "success"
-                            ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800/50 dark:bg-green-950/30 dark:text-green-400"
-                            : toast.type === "error"
-                                ? "border-red-200 bg-red-50 text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400"
-                                : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400"
+                        ? "border-green-200 bg-green-50 text-green-700 dark:border-green-800/50 dark:bg-green-950/30 dark:text-green-400"
+                        : toast.type === "error"
+                            ? "border-red-200 bg-red-50 text-red-700 dark:border-red-800/50 dark:bg-red-950/30 dark:text-red-400"
+                            : "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/50 dark:bg-blue-950/30 dark:text-blue-400"
                         }`}
                 >
                     {toast.type === "success" ? <CheckCircle2 className="h-4 w-4 shrink-0" /> : <AlertCircle className="h-4 w-4 shrink-0" />}
@@ -141,46 +150,110 @@ export function CookieManager() {
                 </div>
             )}
 
+            {/* 状态概览 */}
             <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
                 <div className="flex items-center gap-3">
                     {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : statusIcon}
                     <div>
                         <p className={`text-sm font-medium ${statusColor}`}>
-                            {loading ? "加载中..." : isLoggedIn ? "X 账号已登录 · 凭证有效" : hasAnyCookie ? "已存储凭证（登录态不完整）" : "未配置登录凭证"}
+                            {loading ? "加载中..." : hasLogin ? "X 账号已登录 · 凭证有效" : hasAnyCookie ? "已存储凭证（登录态不完整）" : "未配置登录凭证"}
                         </p>
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                            {isLoggedIn ? "爬取时将自动注入登录态，无需打开浏览器" : hasAnyCookie ? "缺少 auth_token 或 twid，爬取时可能提示未登录" : "录入 Cookie 后可跳过浏览器手动登录步骤"}
+                            {hasLogin ? "爬取时将自动注入登录态，无需打开浏览器" : hasAnyCookie ? "缺少 auth_token 或 twid，爬取时可能提示未登录" : "录入 Cookie 后可跳过浏览器手动登录步骤"}
                         </p>
                     </div>
                 </div>
-                <div className="flex items-center gap-2">
-                    {hasAnyCookie && (
-                        <button onClick={() => setExpanded(!expanded)} className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                            {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                            {expanded ? "收起" : `查看明细 (${count})`}
-                        </button>
-                    )}
-                    <Button variant="outline" size="sm" onClick={fetchCookies} disabled={loading}>
-                        <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
-                    </Button>
-                </div>
+                <Button variant="outline" size="sm" onClick={fetchCookies} disabled={loading}>
+                    <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+                </Button>
             </div>
 
-            {expanded && cookies.length > 0 && (
-                <div className="animate-in slide-in-from-top-1 divide-y overflow-hidden rounded-lg border duration-200">
-                    {cookies.map((c) => (
-                        <div key={`${c.domain}-${c.name}`} className="flex items-center justify-between bg-muted/10 px-4 py-2.5 text-xs transition-colors hover:bg-muted/20">
-                            <div className="flex items-center gap-2">
-                                <Cookie className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                <span className="font-mono font-semibold text-foreground">{c.name}</span>
-                                <span className="text-muted-foreground">{c.domain}</span>
+            {/* 账号卡片列表 */}
+            {accounts.length > 0 && (
+                <div className="space-y-3">
+                    {accounts.map((acc) => {
+                        const isExpanded = expandedAccount === acc.user_id;
+                        return (
+                            <div key={acc.user_id} className="overflow-hidden rounded-lg border transition-all">
+                                {/* 账号头部 */}
+                                <div className="flex items-center justify-between bg-muted/15 px-4 py-3">
+                                    <button
+                                        className="flex flex-1 items-center gap-3 text-left"
+                                        onClick={() => setExpandedAccount(isExpanded ? null : acc.user_id)}
+                                    >
+                                        <div className={`flex h-8 w-8 items-center justify-center rounded-full ${acc.has_login ? "bg-green-500/10 text-green-600" : "bg-amber-500/10 text-amber-500"}`}>
+                                            <User className="h-4 w-4" />
+                                        </div>
+                                        <div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-sm font-semibold">
+                                                    {acc.user_id !== "unknown" ? `用户 ${acc.user_id}` : "默认账号"}
+                                                </span>
+                                                {acc.has_login ? (
+                                                    <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-medium text-green-600 dark:text-green-400">
+                                                        登录有效
+                                                    </span>
+                                                ) : (
+                                                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                                        登录态不完整
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="mt-0.5 text-xs text-muted-foreground">
+                                                {acc.cookie_count} 条 Cookie
+                                            </p>
+                                        </div>
+                                    </button>
+                                    <div className="flex items-center gap-1.5">
+                                        <button
+                                            onClick={() => setExpandedAccount(isExpanded ? null : acc.user_id)}
+                                            className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+                                        >
+                                            {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                                            {isExpanded ? "收起" : "详情"}
+                                        </button>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            className="h-7 px-2 text-xs text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20"
+                                            onClick={() => setConfirmClear(true)}
+                                            title="删除此账号的所有 Cookie"
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </Button>
+                                    </div>
+                                </div>
+
+                                {/* 展开：Cookie 明细 */}
+                                {isExpanded && (
+                                    <div className="animate-in slide-in-from-top-1 divide-y divide-border/40 border-t duration-200">
+                                        {acc.cookies.map((c) => (
+                                            <div
+                                                key={`${c.domain}-${c.name}`}
+                                                className="flex items-center justify-between px-4 py-2 text-xs transition-colors hover:bg-muted/20"
+                                            >
+                                                <div className="flex items-center gap-2 overflow-hidden">
+                                                    <Cookie className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                                    <span className="font-mono font-semibold text-foreground">{c.name}</span>
+                                                    <span className="truncate text-muted-foreground">{c.domain}</span>
+                                                    {c.is_critical && (
+                                                        <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                                                            必需
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="font-mono text-muted-foreground/70">{c.value_masked}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
-                            <span className="font-mono text-muted-foreground/70">{c.value_masked}</span>
-                        </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
 
+            {/* 从浏览器自动获取 */}
             <div className="space-y-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
                 <div className="flex items-start gap-3">
                     <Globe className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" />
@@ -195,6 +268,7 @@ export function CookieManager() {
                 </Button>
             </div>
 
+            {/* 手动录入 */}
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
                     <p className="text-sm font-medium">手动录入 Cookie</p>
@@ -234,18 +308,16 @@ export function CookieManager() {
                     <div className="flex items-center gap-2">
                         {hasAnyCookie && (
                             <>
-                                <div className="relative">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/20"
-                                        onClick={() => handleExport("json")}
-                                        disabled={exporting}
-                                    >
-                                        {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
-                                        导出 JSON
-                                    </Button>
-                                </div>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-950/20"
+                                    onClick={() => handleExport("json")}
+                                    disabled={exporting}
+                                >
+                                    {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                                    导出 JSON
+                                </Button>
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -256,20 +328,17 @@ export function CookieManager() {
                                     {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
                                     导出文本
                                 </Button>
-                                <Button variant="ghost" size="sm" className="text-red-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20" onClick={() => setConfirmClear(true)}>
-                                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                                    清除登录态
-                                </Button>
                             </>
                         )}
                     </div>
                 </div>
             </div>
 
+            {/* 清空确认 */}
             <ConfirmDialog
                 open={confirmClear}
-                title="确定要清除所有持久化 Cookie 吗？"
-                description="清除后下次爬取需重新录入登录态。"
+                title="确定要清除该账号的所有 Cookie 吗？"
+                description="清除后下次爬取需重新录入登录态，此操作不可撤销。"
                 confirmText="确认清除"
                 cancelText="取消"
                 onCancel={() => setConfirmClear(false)}
@@ -281,4 +350,3 @@ export function CookieManager() {
         </div>
     );
 }
-

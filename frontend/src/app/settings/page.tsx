@@ -58,7 +58,7 @@ export default function SettingsPage() {
                             <Users className="h-5 w-5 text-violet-500" /> 多账号池
                         </CardTitle>
                         <CardDescription>
-                            管理多个 X/Twitter 账号 Cookie 以实现协作爬取。N 个账号可将速率限制分摊，
+                            保存 Cookie 后账号自动同步到此处。N 个账号可将速率限制分摊，
                             将搜索间隔从 ~18s 缩短至 ~18s/N，大幅提升爬取效率。
                         </CardDescription>
                     </CardHeader>

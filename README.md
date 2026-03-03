@@ -4,6 +4,21 @@ X_crawl 是一个全栈架构的高性能自动化采集控制台。系统采用
 
 本项目同时支持实时队列管控与断点续存（Resume），并提供极高拟合度的高级 UI 显示和全面的异常状态恢复机制。
 
+
+你自己启动用这两条就行：
+# 后端（终端1）
+cd /develop/X_crawl
+./scripts/start-backend.sh
+# 前端（终端2）
+cd /develop/X_crawl
+./scripts/start-frontend.sh
+
+如果你要生产模式：
+./scripts/start-backend.sh --prod
+./scripts/start-frontend.sh --prod
+
+
+
 ---
 
 ## 环境准备与前置要求

@@ -89,16 +89,61 @@ class AccountPool:
 
     def _load(self) -> None:
         """从文件加载账号列表（启动时调用）"""
-        if not self._file.exists():
-            return
+        if self._file.exists():
+            try:
+                with self._file.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    self._accounts = [AccountEntry.from_dict(d) for d in data]
+            except Exception as e:
+                logger.error(f"读取账号池文件失败: {e}")
+
+        # 如果账号池为空，尝试从全局 Cookie 文件自动同步
+        if not self._accounts:
+            self._try_sync_from_cookies()
+
+        logger.info(f"已加载账号池：{len(self._accounts)} 个账号")
+
+    def _try_sync_from_cookies(self) -> None:
+        """
+        启动时自动从全局 Cookie 文件同步账号到账号池。
+        确保 Cookie 文件中的有效账号不会因为账号池文件丢失而被遗漏。
+
+        注意：不能调用 sync_cookies_to_pool()，因为它内部通过 get_pool()
+        获取单例，而此时单例尚未完成初始化，_pool_lock 可能正被持有，会导致死锁。
+        因此这里直接内联同步逻辑。
+        """
         try:
-            with self._file.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, list):
-                self._accounts = [AccountEntry.from_dict(d) for d in data]
-                logger.info(f"已加载账号池：{len(self._accounts)} 个账号")
+            from crawler.cookie_manager import load_cookies
+            from crawler.cookie_account_sync import extract_user_id, has_login_cookies
+
+            cookies = load_cookies()
+            if not cookies:
+                return
+
+            user_id = extract_user_id(cookies)
+            if not user_id:
+                logger.debug("Cookie 文件中未找到 twid，无法自动同步账号")
+                return
+
+            if not has_login_cookies(cookies):
+                logger.debug("Cookie 登录态不完整（缺 auth_token/twid），跳过自动同步")
+                return
+
+            alias = f"user_{user_id}"
+            logger.info(f"账号池为空，从 Cookie 文件自动同步账号 {alias!r}（{len(cookies)} 条 Cookie）...")
+
+            # 直接创建 AccountEntry 并写入文件（绕开单例）
+            entry = AccountEntry(
+                account_id=str(uuid.uuid4()),
+                alias=alias,
+                cookies=cookies,
+            )
+            self._accounts.append(entry)
+            self._save()
+
         except Exception as e:
-            logger.error(f"读取账号池文件失败: {e}")
+            logger.warning(f"从 Cookie 文件自动同步账号失败（不影响正常启动）: {e}")
 
     def _save(self) -> None:
         """持久化当前账号列表（必须在锁内调用）"""

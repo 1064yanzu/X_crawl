@@ -52,6 +52,88 @@ _TAB_MAP: dict[str, str] = {
     "Videos": "&f=video",
 }
 
+# 搜索操作符前缀列表（用于判断是否需要预热导航）
+_SEARCH_OPERATOR_PREFIXES = (
+    "from:", "to:", "lang:", "since:", "until:",
+    "min_faves:", "min_retweets:", "min_replies:",
+    "filter:", "-", "@",
+)
+
+
+def _has_search_operators(keyword: str) -> bool:
+    """检测关键词是否包含高级搜索操作符。"""
+    tokens = keyword.split()
+    for token in tokens:
+        # 检查操作符前缀
+        lower = token.lower()
+        for prefix in _SEARCH_OPERATOR_PREFIXES:
+            if lower.startswith(prefix):
+                return True
+        # 检查引号包裹的短语
+        if token.startswith('"'):
+            return True
+        # 检查 OR 操作符
+        if token == "OR":
+            return True
+        # 检查括号
+        if token.startswith("(") or token.endswith(")"):
+            return True
+    return False
+
+
+def _extract_base_keyword(keyword: str) -> str:
+    """
+    从包含搜索操作符的 keyword 中提取基础关键词（不含操作符的普通词）。
+    用于预热导航：先搜索基础关键词，再跳转到完整高级搜索。
+
+    例:
+      'ChatGPT since:2022-01-01 until:2024-12-31' -> 'ChatGPT'
+      'AI "machine learning" from:elonmusk'       -> 'AI'
+      'from:elonmusk since:2024-01-01'              -> 'elonmusk'  (取 from 账号)
+    """
+    import re
+    tokens = keyword.split()
+    base_words: list[str] = []
+    in_quote = False
+
+    for token in tokens:
+        # 跳过操作符 token
+        lower = token.lower()
+        is_operator = False
+        for prefix in _SEARCH_OPERATOR_PREFIXES:
+            if lower.startswith(prefix):
+                is_operator = True
+                break
+        if token == "OR" or token.startswith("(") or token.endswith(")"):
+            is_operator = True
+        if token.startswith('"') or in_quote:
+            # 引号短语也是操作符的一种
+            if token.startswith('"'):
+                in_quote = True
+            if token.endswith('"'):
+                in_quote = False
+            is_operator = True
+
+        if not is_operator:
+            base_words.append(token)
+
+    if base_words:
+        return " ".join(base_words)
+
+    # 如果没有普通词（全是操作符），尝试提取 from: 的账号名作为搜索词
+    for token in tokens:
+        if token.lower().startswith("from:"):
+            return token.split(":", 1)[1].lstrip("@")
+
+    # 兜底：用第一个 token 去掉操作符前缀
+    if tokens:
+        first = tokens[0]
+        for prefix in _SEARCH_OPERATOR_PREFIXES:
+            if first.lower().startswith(prefix):
+                return first.split(":", 1)[1] if ":" in first else first.lstrip("-@#")
+        return first
+    return keyword
+
 class SearchResult:
     """搜索结果容器"""
 
@@ -337,6 +419,7 @@ def search(
             f"开始搜索: keyword='{keyword}', product={product}, "
             f"max_count={max_count}, strategy=unified_dfs, "
             f"fetch_replies={fetch_replies}, 从断点={resumed}, "
+            f"高级搜索={'是' if _has_search_operators(keyword) else '否'}, "
             f"账号={'池(' + str(pool.get_active_account_count()) + '个)' if current_account else '默认'}"
         )
         telemetry.record_event(
@@ -351,43 +434,24 @@ def search(
         tab.listen.start(SEARCH_TIMELINE_PATTERN)
 
         # ── 4. 访问搜索页面（含错误页自动刷新）───────────────────────────
-        ok = navigate_with_retry(
-            tab,
-            search_url,
-            max_retries=policy.refresh_max_retries,
-            base_wait=3.0,
-            load_timeout=30.0,
-            post_load_wait=settings.crawler_initial_wait,
-            challenge_retry_times=policy.challenge_retry_times,
-            challenge_cooldown=policy.challenge_cooldown,
-            raise_on_risk=True,
+        # X 的搜索框原生支持高级语法（如 since:、from:、min_faves: 等）
+        # 直接导航到完整 URL 即可，无需分阶段预热
+        ok = _navigate_direct(
+            tab=tab,
+            search_url=search_url,
+            policy=policy,
             task_id=task_id,
         )
-        if not ok:
-            logger.warning("搜索页首跳失败，执行预热路径后再重试一次（home -> explore -> search）")
-            try:
-                tab.get("https://x.com/home", timeout=25)
-                sleep_with_jitter(1.8, jitter_ratio=0.15, minimum=1.0)
-                tab.get("https://x.com/explore", timeout=25)
-                sleep_with_jitter(2.0, jitter_ratio=0.15, minimum=1.0)
-            except Exception as warmup_err:
-                logger.warning(f"搜索预热路径失败（忽略，继续最终重试）: {warmup_err}")
-
-            ok = navigate_with_retry(
-                tab,
-                search_url,
-                max_retries=max(1, policy.refresh_max_retries // 2),
-                base_wait=4.0,
-                load_timeout=35.0,
-                post_load_wait=max(settings.crawler_initial_wait, 3.0),
-                challenge_retry_times=policy.challenge_retry_times,
-                challenge_cooldown=max(policy.challenge_cooldown, 10.0),
-                raise_on_risk=True,
-                task_id=task_id,
-            )
 
         if not ok:
             raise RuntimeError(f"搜索页面反复出现错误，无法加载: {search_url}")
+
+        # 记录浏览器实际 URL（用于调试 URL 编码问题）
+        try:
+            actual_url = tab.url
+            logger.info(f"浏览器实际 URL: {actual_url}")
+        except Exception:
+            pass
 
         page_num = page_fetched + 1
 
@@ -639,25 +703,20 @@ def search(
             # 人性化渐进滚动翻页（模拟人类浏览行为）
             page_num += 1
 
-            # ── 账号轮换：主动轮换（每 N 页）或 rate_multiplier 过高 ──
-            _rotation_n = getattr(settings, "account_rotation_every_n_pages", 5)
+            # ── 搜索账号切换：仅在速率压力过高时紧急切换（不主动轮换）──
+            # 搜索由单账号贯穿完成；只有 rate_multiplier 超阈值时才紧急换人
             _rotation_threshold = getattr(settings, "account_rotation_multiplier_threshold", 2.0)
             _pool_enabled = getattr(settings, "account_pool_enabled", True)
-            if _pool_enabled and pool.total_count() > 1:
+            if _pool_enabled and pool.total_count() > 1 and current_account:
                 _rate_mult = get_tracker().get_sleep_multiplier("search")
-                _should_rotate = (
-                    (_rotation_n > 0 and (page_num - 1) % _rotation_n == 0) or
-                    _rate_mult >= _rotation_threshold
-                )
-                if _should_rotate:
-                    reason = (
-                        f"每{_rotation_n}页主动轮换"
-                        if _rotation_n > 0 and (page_num - 1) % _rotation_n == 0
-                        else f"速率倍数{_rate_mult:.1f}>=阈值{_rotation_threshold}"
+                if _rate_mult >= _rotation_threshold:
+                    rotated = _try_rotate_account(
+                        tab, current_account, pool,
+                        f"搜索速率倍数 {_rate_mult:.1f} 超阈值 {_rotation_threshold}，紧急切换"
                     )
-                    rotated = _try_rotate_account(tab, current_account, pool, reason)
                     if rotated:
                         current_account = rotated
+                        # 切换后 seen_ids 保持不变，新账号继续去重搜索
 
             # ── 动态间隔：根据账号数 + rate_multiplier 计算等待时间 ──
             _rate_mult = get_tracker().get_sleep_multiplier("search")
@@ -781,9 +840,62 @@ def _count_replies(tweets: list[dict]) -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════
+#  导航策略
+# ═══════════════════════════════════════════════════════════════════
+
+def _navigate_direct(
+    *,
+    tab,
+    search_url: str,
+    policy,
+    task_id: Optional[str],
+) -> bool:
+    """直接导航到搜索 URL（用于无高级操作符的简单搜索）。"""
+    ok = navigate_with_retry(
+        tab,
+        search_url,
+        max_retries=policy.refresh_max_retries,
+        base_wait=3.0,
+        load_timeout=30.0,
+        post_load_wait=settings.crawler_initial_wait,
+        challenge_retry_times=policy.challenge_retry_times,
+        challenge_cooldown=policy.challenge_cooldown,
+        raise_on_risk=True,
+        task_id=task_id,
+    )
+    if not ok:
+        logger.warning("搜索页首跳失败，执行预热路径后再重试一次（home -> explore -> search）")
+        try:
+            tab.get("https://x.com/home", timeout=25)
+            sleep_with_jitter(1.8, jitter_ratio=0.15, minimum=1.0)
+            tab.get("https://x.com/explore", timeout=25)
+            sleep_with_jitter(2.0, jitter_ratio=0.15, minimum=1.0)
+        except Exception as warmup_err:
+            logger.warning(f"搜索预热路径失败（忽略，继续最终重试）: {warmup_err}")
+
+        ok = navigate_with_retry(
+            tab,
+            search_url,
+            max_retries=max(1, policy.refresh_max_retries // 2),
+            base_wait=4.0,
+            load_timeout=35.0,
+            post_load_wait=max(settings.crawler_initial_wait, 3.0),
+            challenge_retry_times=policy.challenge_retry_times,
+            challenge_cooldown=max(policy.challenge_cooldown, 10.0),
+            raise_on_risk=True,
+            task_id=task_id,
+        )
+    return ok
+
+
+
+
+# ═══════════════════════════════════════════════════════════════════
 #  URL 构建
 # ═══════════════════════════════════════════════════════════════════
 
 def _build_search_url(keyword: str, product: ProductType) -> str:
     """构建搜索 URL"""
-    return SEARCH_URL_TEMPLATE.format(query=quote(keyword)) + _TAB_MAP.get(product, "")
+    url = SEARCH_URL_TEMPLATE.format(query=quote(keyword)) + _TAB_MAP.get(product, "")
+    logger.info(f"构建搜索 URL: {url}")
+    return url

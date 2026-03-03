@@ -1,5 +1,93 @@
 # Changelog
 
+## 2026-03-03
+
+### ✨ 新增：高级搜索功能（完整对齐 X 原生高级搜索面板）
+
+### 🐛 修复：搜索页面被误判为错误页（noscript 标签误匹配）
+
+**问题**：所有搜索任务（包括普通搜索和高级搜索）均因页面被反复检测为 `transient_error` 而失败，实际页面已正常加载（侧边栏可见、用户已登录），只是内容区在加载中。
+
+**根本原因**：X 的 HTML 始终包含 `<noscript><h1>JavaScript is not available.</h1></noscript>` 作为无 JS 浏览器的降级提示。`_normalize_visible_text` 的正则表达式（使用 `\1` 反向引用）未能正确移除该 noscript 块，导致 `detect_page_state` 将 `"javascript is not available"` 匹配到 `_TRANSIENT_ERROR_MARKERS`，**所有页面加载都被误判为临时错误**。
+
+**修复**：`crawler/page_state.py`
+- 从 `_TRANSIENT_ERROR_MARKERS` 中移除 `"javascript is not available"` 条目（X 的 noscript 固有内容）
+- 重写 `_normalize_visible_text` 正则：将 `\1` 反向引用拆分为三次独立的 `re.sub`（分别处理 script/style/noscript）
+- 额外兜底：`text.replace("javascript is not available", "")` 确保任何残留都被清除
+
+**背景**：X 平台在搜索结果页提供了一个强大的高级搜索面板，支持 16 种筛选条件。本次将其完整集成到爬虫项目中，让用户能够精确控制爬取范围。
+
+**核心原理**：X 的高级搜索本质是将表单字段转换为搜索操作符（如 `from:user`, `min_faves:100`, `"exact phrase"`, `-excluded`）追加到 query 字符串中。后端的 `_build_search_url` 已正确 URL-encode keyword，因此不需要改后端搜索逻辑。
+
+**前端改动**：
+- **重写 `AdvancedSearchPanel.tsx`**：
+  - Words 区域：全部这些词、精确短语、任意这些词、排除这些词、指定 Hashtag
+  - Language：完整语言列表（34+ 种语言，对齐 X 原始支持）
+  - Accounts 区域：来自账号（from:）、发给账号（to:）、提及账号（@）
+  - Filters 区域：回复筛选（三态：关闭/包含/仅显示）、链接筛选（三态）
+  - Engagement 区域：最低回复数、最低点赞数、最低转发数
+  - Dates 区域：起始日期（since:）、结束日期（until:）
+  - 导出 `buildAdvancedQuery()` 函数：将表单参数转换为搜索操作符字符串
+  - 活跃条件数量徽章，便于用户一眼看出是否有筛选
+- **更新 `CrawlerTaskBuilder.tsx`**：
+  - 移除旧版简单 filter chips（`lang:zh`, `min_faves:500`）
+  - 集成新版 `AdvancedSearchPanel`
+  - `buildFinalKeyword()` 改为组合主关键词 + 高级搜索操作符
+  - 底部预览区实时显示编译后的完整搜索指令
+
+**后端改动**：
+- **新增 `crawler/query_builder.py`**：Python 版搜索操作符构建工具，与前端逻辑一致，支持全部 16 种高级搜索参数
+- **新增 `tests/test_query_builder.py`**：27 组单元测试，覆盖所有搜索操作符和边界情况
+
+## 2026-03-03
+
+### 🐛 修复：服务启动时 Cookie 文件有账号但账号池为空
+
+**问题**：Cookie 文件（`~/.xcrawl-cookies.json`）中已有完整登录凭证（auth_token + twid），但账号池文件（`~/.xcrawl-accounts.json`）为空数组，导致号池显示 0 个账号。
+
+**根本原因**：`AccountPool._load()` 启动时只从 `~/.xcrawl-accounts.json` 文件读取账号，不会检查 Cookie 文件。而 `sync_cookies_to_pool()` 仅在用户通过 API 操作 Cookie 时才触发（POST/DELETE/capture）。如果账号池文件被清空或丢失，重启后两者不一致。
+
+**修复**：`crawler/account_pool.py`
+- 新增 `_try_sync_from_cookies()` 方法：在 `_load()` 加载完成后，若账号池为空，自动从全局 Cookie 文件提取 `twid` 用户 ID，校验 `auth_token` 存在后创建 `AccountEntry` 并持久化
+- 避免调用 `sync_cookies_to_pool()`（会通过 `get_pool()` 单例死锁），改为内联同步逻辑
+
+
+
+### 🐛 修复：Cookie 注入后登录验证失败（缺少 secure/httpOnly 属性）
+
+**问题**：持久化 Cookie 文件中有 `auth_token` 和 `twid`，注入也显示成功（16 条），但刷新页面后检测不到登录状态，报「缺少 auth_token、twid」。
+
+**根本原因**（三重问题）：
+1. **Cookie 属性丢失**：`inject_cookies_to_tab` 只传递了 `name/value/domain`，但 X 的 `auth_token`、`ct0`、`twid` 是 **Secure + HttpOnly** Cookie。缺少 `secure: true` 属性后，浏览器不会在 HTTPS 请求中发送这些 Cookie
+2. **注入时机错误**：注入 Cookie 时浏览器可能不在 `x.com` 域下，导致 Cookie 无法正确绑定到目标域
+3. **缺少等待时间**：注入后立即刷新页面，浏览器未充分处理 Cookie
+
+**修复**：
+- `crawler/cookie_manager.py`：
+  - 新增 `_build_cookie_dict()` 函数，构建包含完整属性（path, secure, httpOnly）的 Cookie 字典
+  - 新增 `_SECURE_COOKIES` 集合：自动为 `auth_token/ct0/twid/kdt/_twitter_sess` 设置 `secure=True`
+  - `inject_cookies_to_tab` 注入前自动导航到 `x.com`，确保 Cookie 绑定到正确域
+- `crawler/auth.py`（v4）：
+  - `ensure_login` / `ensure_login_with_pool`：注入后等待 1s 处理 + 刷新后等待 2s 加载
+  - `inject_account_cookies`：使用 `_build_cookie_dict` 构建完整属性
+  - `check_login` 增加调试日志，输出实际检测到的 Cookie 名称和 URL
+- 一次性修复已保存的 Cookie 文件（`~/.xcrawl-cookies.json`）中 `secure: false` 的记录
+
+### ✨ 优化：Cookie 管理 — 以账号为单位展示 + 支持删除特定 Cookie
+
+**问题**：Cookie 列表以扁平方式展示 16 条独立 Cookie，无法一眼看出归属哪个账号，也无法删除单条过期 Cookie。
+
+**改进**：
+- **后端** (`api/routers/cookies.py`)：
+  - `GET /api/v1/cookies` 返回新增 `accounts` 字段，按账号分组，从 `twid` 提取用户 ID
+  - 新增 `DELETE /api/v1/cookies/{cookie_name}` 接口：按名称删除特定 Cookie（可选 domain 精确匹配）
+  - Cookie 列表每条新增 `category`（auth/session/other）和 `is_critical` 标记
+- **前端** (`CookieManager.tsx`)：
+  - Cookie 以账号卡片形式展示：显示用户 ID、Cookie 数量、登录状态标签
+  - 点击展开查看该账号下的具体 Cookie 明细
+  - 支持一键清除整个账号的 Cookie
+- **接口文档** (`docs/api.md`)：同步更新 Cookie 管理章节
+
 ## 2026-02-27
 
 ### ✨ 新增：Cookie 导出功能

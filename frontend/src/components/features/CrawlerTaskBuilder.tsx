@@ -3,10 +3,17 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, SearchRequest, CrawlStrategy } from "@/services/api";
-import { Search, Sparkles, SlidersHorizontal, Play, Loader2, X, TerminalSquare, TrendingUp, Clock, Image, Film, Settings, MessageSquare, Layers, ArrowDown, Info } from "lucide-react";
+import { Search, Sparkles, Play, Loader2, TerminalSquare, TrendingUp, Clock, Image, Film, Settings, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import {
+    AdvancedSearchPanel,
+    AdvancedSearchParams,
+    DEFAULT_ADVANCED_PARAMS,
+    buildAdvancedQuery,
+    hasActiveFilters,
+} from "@/components/features/AdvancedSearchPanel";
 
 type ProductType = "Top" | "Latest" | "Photos" | "Videos";
 
@@ -29,10 +36,10 @@ export function CrawlerTaskBuilder() {
     const [keyword, setKeyword] = React.useState("");
     const [maxCount, setMaxCount] = React.useState(0);
     const [product, setProduct] = React.useState<ProductType>("Top");
-    const [filters, setFilters] = React.useState({
-        lang: "",
-        minFaves: "",
-    });
+
+    // 高级搜索
+    const [advancedParams, setAdvancedParams] = React.useState<AdvancedSearchParams>(DEFAULT_ADVANCED_PARAMS);
+    const [advancedOpen, setAdvancedOpen] = React.useState(false);
 
     // 回复抓取选项
     const [fetchReplies, setFetchReplies] = React.useState(false);
@@ -41,19 +48,22 @@ export function CrawlerTaskBuilder() {
 
     const buildFinalKeyword = () => {
         let q = keyword.trim();
-        if (filters.lang) q += ` lang:${filters.lang}`;
-        if (filters.minFaves) q += ` min_faves:${filters.minFaves}`;
+        const advancedQuery = buildAdvancedQuery(advancedParams);
+        if (advancedQuery) {
+            q = q ? `${q} ${advancedQuery}` : advancedQuery;
+        }
         return q;
     };
 
     const handleSubmit = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
-        if (!keyword.trim()) return;
+        const finalKeyword = buildFinalKeyword();
+        if (!finalKeyword) return;
 
         setLoading(true);
         try {
             const payload: SearchRequest = {
-                keyword: buildFinalKeyword(),
+                keyword: finalKeyword,
                 max_count: maxCount,
                 product,
                 resume: true,
@@ -82,6 +92,8 @@ export function CrawlerTaskBuilder() {
     };
 
     const selectedTab = PRODUCT_TABS.find(t => t.value === product)!;
+    const finalKeyword = buildFinalKeyword();
+    const canSubmit = !!finalKeyword;
 
     return (
         <div className="w-full bg-card border rounded-2xl shadow-sm overflow-hidden flex flex-col">
@@ -114,7 +126,7 @@ export function CrawlerTaskBuilder() {
                             value={keyword}
                             onChange={(e) => setKeyword(e.target.value)}
                             onKeyDown={handleKeyDown}
-                            placeholder="输入要采集的话题或关键字..."
+                            placeholder="输入要采集的话题或关键字...（可配合下方高级搜索使用）"
                             className="flex-1 bg-background border border-input rounded-md h-10 pl-9 pr-4 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent w-full shadow-sm"
                             autoFocus
                         />
@@ -178,43 +190,13 @@ export function CrawlerTaskBuilder() {
                     </select>
                 </div>
 
-                {/* Filter Chips */}
-                <div className="space-y-2">
-                    <label className="text-sm font-medium flex items-center gap-1.5">
-                        <SlidersHorizontal className="w-4 h-4 text-muted-foreground" />
-                        附加过滤条件
-                    </label>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => setFilters({ ...filters, lang: filters.lang === "zh" ? "" : "zh" })}
-                            className={cn(
-                                "px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 border cursor-pointer flex items-center gap-1.5",
-                                filters.lang === "zh"
-                                    ? "bg-primary/10 border-primary text-primary shadow-sm"
-                                    : "bg-background border-input hover:bg-muted text-muted-foreground"
-                            )}
-                        >
-                            仅匹配中文 (lang:zh)
-                            {filters.lang === "zh" && <X className="w-3 h-3" />}
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => setFilters({ ...filters, minFaves: filters.minFaves === "500" ? "" : "500" })}
-                            className={cn(
-                                "px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200 border cursor-pointer flex items-center gap-1.5",
-                                filters.minFaves === "500"
-                                    ? "bg-primary/10 border-primary text-primary shadow-sm"
-                                    : "bg-background border-input hover:bg-muted text-muted-foreground"
-                            )}
-                        >
-                            低质过滤 (min_faves:500)
-                            {filters.minFaves === "500" && <X className="w-3 h-3" />}
-                        </button>
-                    </div>
-                </div>
+                {/* ── 高级搜索面板（完整版）── */}
+                <AdvancedSearchPanel
+                    params={advancedParams}
+                    onChange={setAdvancedParams}
+                    isOpen={advancedOpen}
+                    onToggle={() => setAdvancedOpen(o => !o)}
+                />
 
                 {/* ── 回复抓取选项 ── */}
                 <div className="space-y-3 pt-3 border-t">
@@ -279,11 +261,11 @@ export function CrawlerTaskBuilder() {
             <div className="px-6 py-4 border-t bg-muted/10 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className={cn(
                     "text-xs flex items-center gap-2 text-muted-foreground transition-all duration-500",
-                    keyword.trim() ? "opacity-100" : "opacity-0 pointer-events-none"
+                    canSubmit ? "opacity-100" : "opacity-0 pointer-events-none"
                 )}>
                     <Sparkles className="w-4 h-4 text-primary shrink-0" />
                     <span className="truncate max-w-[200px] sm:max-w-xs">
-                        编译指令: <code className="font-mono text-foreground font-semibold bg-muted px-1 py-0.5 rounded">{buildFinalKeyword()}</code>
+                        编译指令: <code className="font-mono text-foreground font-semibold bg-muted px-1 py-0.5 rounded">{finalKeyword}</code>
                     </span>
                     <span className="ml-1 px-1.5 py-0.5 rounded bg-muted text-foreground/70 font-mono">
                         [{product}]
@@ -292,7 +274,7 @@ export function CrawlerTaskBuilder() {
 
                 <Button
                     onClick={() => handleSubmit()}
-                    disabled={!keyword.trim() || loading}
+                    disabled={!canSubmit || loading}
                     className="w-full sm:w-auto min-w-[140px]"
                 >
                     {loading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}

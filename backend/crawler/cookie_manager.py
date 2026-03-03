@@ -111,9 +111,45 @@ def normalize_cookies(data: list[dict] | str) -> list[dict]:
 
 # ─── 注入到浏览器 tab ──────────────────────────────────────────────────────
 
+# X 认证相关的关键 Cookie，必须标记 secure
+_SECURE_COOKIES = {"auth_token", "ct0", "twid", "kdt", "_twitter_sess"}
+
+
+def _build_cookie_dict(c: dict) -> dict:
+    """
+    从持久化 Cookie 记录构建完整的 Cookie 字典，
+    确保包含所有必要属性（path, secure, httpOnly）。
+    X 的认证 Cookie 必须标记 secure=True，否则浏览器不会在 HTTPS 请求中发送。
+    """
+    name = c.get("name", "")
+    domain = c.get("domain", ".x.com")
+    path = c.get("path", "/")
+
+    # 如果持久化文件中保存了 secure 属性，使用保存的值；
+    # 否则根据是否为关键认证 Cookie 自动判断
+    secure = c.get("secure")
+    if secure is None or (name in _SECURE_COOKIES and not secure):
+        secure = name in _SECURE_COOKIES
+
+    http_only = c.get("httpOnly", name in _SECURE_COOKIES)
+
+    cookie_dict = {
+        "name": name,
+        "value": c.get("value", ""),
+        "domain": domain,
+        "path": path,
+        "secure": secure,
+    }
+    if http_only:
+        cookie_dict["httpOnly"] = True
+
+    return cookie_dict
+
+
 def inject_cookies_to_tab(tab, path: Optional[str] = None) -> int:
     """
     将持久化 Cookie 注入到 DrissionPage tab。
+    注入前会自动确保浏览器在 x.com 域下（否则 Cookie 无法绑定到该域）。
     返回注入的 Cookie 数量。
     """
     cookies = load_cookies(path)
@@ -121,15 +157,23 @@ def inject_cookies_to_tab(tab, path: Optional[str] = None) -> int:
         logger.debug("无持久化 Cookie，跳过注入")
         return 0
 
+    # 确保在目标域下，否则 set.cookies 可能无法正确绑定到 x.com
+    try:
+        current_url = tab.url or ""
+        if "x.com" not in current_url and "twitter.com" not in current_url:
+            logger.debug("当前页面非 x.com，先导航到 x.com 以便注入 Cookie")
+            tab.get("https://x.com", timeout=15)
+    except Exception as e:
+        logger.warning(f"导航到 x.com 失败（将继续尝试注入）: {e}")
+
     injected = 0
     for c in cookies:
         name = c.get("name")
-        value = c.get("value", "")
-        domain = c.get("domain", ".x.com")
         if not name:
             continue
         try:
-            tab.set.cookies({"name": name, "value": value, "domain": domain})
+            cookie_dict = _build_cookie_dict(c)
+            tab.set.cookies(cookie_dict)
             injected += 1
         except Exception as e:
             logger.warning(f"注入 Cookie {name} 失败: {e}")

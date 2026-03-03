@@ -189,10 +189,17 @@ class Settings(BaseSettings):
         default=True, description="多账号池总开关（False 时退化为单账号 ensure_login 模式）"
     )
     account_rotation_every_n_pages: int = Field(
-        default=5, description="每隔 N 页主动轮换账号（0 = 禁用主动轮换）"
+        default=0, description="搜索时每隔 N 页主动切换账号（0 = 禁用，搜索默认单账号贯穿，仅限速时才切换）"
     )
     account_rotation_multiplier_threshold: float = Field(
-        default=2.0, description="rate_multiplier 超过此值时立即触发账号轮换"
+        default=2.0, description="搜索速率倍数超过此值时紧急切换账号"
+    )
+    account_rate_limit_wait_threshold_sec: float = Field(
+        default=300.0,
+        description=(
+            "账号限速等待阈值（秒）：等待时间 ≤ 此值则等待账号恢复后继续；"
+            "> 此值则冻结账号并将剩余推文转给其他账号"
+        )
     )
 
 

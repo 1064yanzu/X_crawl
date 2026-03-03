@@ -170,13 +170,26 @@ export interface IntervalSuggestion {
     tweet_detail_safe_interval: number;
     note: string;
 }
+
+export interface CookieItem {
     name: string;
     value_masked: string;
     domain: string;
+    category: "auth" | "session" | "other";
+    is_critical: boolean;
+}
+
+export interface CookieAccount {
+    user_id: string;
+    cookie_count: number;
+    has_login: boolean;
+    cookies: CookieItem[];
 }
 
 export interface CookiesResponse {
     count: number;
+    has_login: boolean;
+    accounts: CookieAccount[];
     cookies: CookieItem[];
 }
 
@@ -343,6 +356,12 @@ export const api = {
             }),
         clear: () =>
             fetchApi<{ message: string }>("/api/v1/cookies", { method: "DELETE" }),
+        deleteSingle: (cookieName: string, domain?: string) => {
+            const params = domain ? `?domain=${encodeURIComponent(domain)}` : "";
+            return fetchApi<CookiesResponse>(`/api/v1/cookies/${encodeURIComponent(cookieName)}${params}`, {
+                method: "DELETE",
+            });
+        },
         capture: () =>
             fetchApi<CaptureResponse>("/api/v1/cookies/capture", { method: "POST" }),
         exportJson: async () => {

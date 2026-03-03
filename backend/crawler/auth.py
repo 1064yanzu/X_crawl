@@ -10,8 +10,14 @@
 改动（v3）：
 - 新增 inject_account_cookies()：将 AccountEntry 的 cookies 注入 tab
 - 新增 ensure_login_with_pool()：注入指定账号 cookies 并验证登录状态
+
+改动（v4）：
+- 修复 Cookie 注入时缺少 secure/httpOnly 属性导致登录失败的 BUG
+- 注入前自动确保在 x.com 域下
+- 增加调试日志输出实际检测到的 Cookie 名称
 """
 import logging
+import time
 from DrissionPage._pages.chromium_tab import ChromiumTab
 from typing import TYPE_CHECKING
 
@@ -21,6 +27,7 @@ if TYPE_CHECKING:
 from crawler.cookie_manager import (
     inject_cookies_to_tab,
     capture_cookies_from_tab,
+    _build_cookie_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -65,6 +72,14 @@ def check_login(tab: ChromiumTab) -> bool:
     cookies = _get_cookie_dict(tab)
     logged_in = all(cookies.get(key) for key in _REQUIRED_COOKIES)
 
+    # 调试日志：输出当前检测到的所有 Cookie 名称，便于排查
+    logger.debug(
+        f"当前页面 Cookie 名称: {sorted(cookies.keys())}\n"
+        f"  当前 URL: {tab.url}\n"
+        f"  auth_token={'***…' if cookies.get('auth_token') else '缺失'}, "
+        f"twid={'***…' if cookies.get('twid') else '缺失'}"
+    )
+
     if logged_in:
         logger.info("X 登录状态验证通过")
     else:
@@ -80,10 +95,11 @@ def ensure_login(tab: ChromiumTab) -> bool:
     """
     确保 tab 已经登录 X。
     流程：
-      1. 注入持久化 Cookie（若有）
-      2. 访问 x.com
-      3. 检测登录状态
-      4. 若已登录，回写最新 Cookie（刷新持久化）
+      1. 注入持久化 Cookie（若有）；注入前自动确保在 x.com 域下
+      2. 等待浏览器处理 Cookie
+      3. 刷新页面让 Cookie 生效
+      4. 检测登录状态
+      5. 若已登录，回写最新 Cookie（刷新持久化）
 
     Args:
         tab: DrissionPage ChromiumTab 对象
@@ -91,22 +107,33 @@ def ensure_login(tab: ChromiumTab) -> bool:
     Returns:
         True 表示已登录，False 表示仍未登录
     """
-    # Step 1: 注入持久化 Cookie（注入后需刷新页面才生效）
+    # Step 1: 注入持久化 Cookie（inject_cookies_to_tab 内部会自动导航到 x.com）
     injected = inject_cookies_to_tab(tab)
     if injected > 0:
         logger.info(f"已注入 {injected} 条持久化 Cookie，即将刷新页面...")
 
-    # Step 2: 访问 x.com（注入的 Cookie 会随请求发送）
-    if "x.com" not in tab.url:
-        tab.get(X_BASE_URL + "/", timeout=20)
-    elif injected > 0:
-        # 若已在 x.com，刷新以让注入的 Cookie 生效
-        tab.get(tab.url, timeout=20)
+    # Step 2: 等待浏览器处理注入的 Cookie
+    if injected > 0:
+        time.sleep(1.0)
 
-    # Step 3: 检测登录状态
+    # Step 3: 刷新页面让 Cookie 生效
+    try:
+        current_url = tab.url or ""
+        if "x.com" not in current_url:
+            tab.get(X_BASE_URL + "/", timeout=30)
+        else:
+            # 已在 x.com，刷新以让注入的 Cookie 生效
+            tab.get(X_BASE_URL + "/", timeout=30)
+    except Exception as e:
+        logger.warning(f"刷新页面失败: {e}")
+
+    # Step 4: 等待页面完全加载
+    time.sleep(2.0)
+
+    # Step 5: 检测登录状态
     logged_in = check_login(tab)
 
-    # Step 4: 登录成功后回写最新 Cookie（更新持久化，防止过期）
+    # Step 6: 登录成功后回写最新 Cookie（更新持久化，防止过期）
     if logged_in:
         try:
             capture_cookies_from_tab(tab)
@@ -127,15 +154,22 @@ def inject_account_cookies(tab: ChromiumTab, account: "AccountEntry") -> int:
         logger.debug(f"账号 {account.alias!r} 无 Cookie，跳过注入")
         return 0
 
+    # 确保在 x.com 域下
+    try:
+        current_url = tab.url or ""
+        if "x.com" not in current_url and "twitter.com" not in current_url:
+            tab.get("https://x.com", timeout=15)
+    except Exception as e:
+        logger.warning(f"导航到 x.com 失败（将继续尝试注入）: {e}")
+
     injected = 0
     for c in account.cookies:
         name = c.get("name")
-        value = c.get("value", "")
-        domain = c.get("domain", ".x.com")
         if not name:
             continue
         try:
-            tab.set.cookies({"name": name, "value": value, "domain": domain})
+            cookie_dict = _build_cookie_dict(c)
+            tab.set.cookies(cookie_dict)
             injected += 1
         except Exception as e:
             logger.warning(f"注入账号 {account.alias!r} Cookie {name} 失败: {e}")
@@ -164,16 +198,27 @@ def ensure_login_with_pool(tab: ChromiumTab, account: "AccountEntry") -> bool:
     if injected > 0:
         logger.info(f"账号 {account.alias!r}：注入 {injected} 条 Cookie，即将刷新页面...")
 
-    # Step 2: 访问/刷新 x.com
-    if "x.com" not in tab.url:
-        tab.get(X_BASE_URL + "/", timeout=20)
-    elif injected > 0:
-        tab.get(tab.url, timeout=20)
+    # Step 2: 等待浏览器处理注入的 Cookie
+    if injected > 0:
+        time.sleep(1.0)
 
-    # Step 3: 检测登录状态
+    # Step 3: 访问/刷新 x.com
+    try:
+        current_url = tab.url or ""
+        if "x.com" not in current_url:
+            tab.get(X_BASE_URL + "/", timeout=30)
+        else:
+            tab.get(X_BASE_URL + "/", timeout=30)
+    except Exception as e:
+        logger.warning(f"刷新页面失败: {e}")
+
+    # Step 4: 等待页面完全加载
+    time.sleep(2.0)
+
+    # Step 5: 检测登录状态
     logged_in = check_login(tab)
 
-    # Step 4: 更新账号状态
+    # Step 6: 更新账号状态
     pool = get_pool()
     if logged_in:
         pool.mark_account_used(account.account_id)

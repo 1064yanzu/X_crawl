@@ -186,6 +186,35 @@ def navigate_with_retry(
 
             state, reason = detect_page_state(tab)
 
+            # ── 二次验证：过滤 noscript 误判 ──────────────────────────
+            # X 的 HTML 始终包含 <noscript>JavaScript is not available.</noscript>
+            # 如果 detect_page_state 将其误判为 transient_error，这里兜底修正
+            if state == PageState.TRANSIENT_ERROR:
+                try:
+                    import re as _re
+                    _raw = tab.html or ""
+                    # 去掉 noscript 块
+                    _cleaned = _re.sub(r"(?is)<noscript\b[^>]*>.*?</noscript>", "", _raw)
+                    _cleaned = _re.sub(r"(?is)<script\b[^>]*>.*?</script>", "", _cleaned)
+                    _cleaned = _re.sub(r"(?is)<style\b[^>]*>.*?</style>", "", _cleaned)
+                    _vis = _re.sub(r"(?is)<[^>]+>", " ", _cleaned)
+                    _vis = _re.sub(r"\s+", " ", _vis).strip().lower()
+                    _vis = _vis.replace("javascript is not available", "")
+                    _real_markers = [
+                        "something went wrong", "try reloading",
+                        "hmm...this page doesn", "hmm, this page doesn",
+                        "发生错误", "出错了",
+                    ]
+                    if not any(m in _vis for m in _real_markers):
+                        logger.info(
+                            f"{log_prefix}transient_error 疑似误判（noscript 残留），"
+                            f"已修正为 OK"
+                        )
+                        state = PageState.OK
+                        reason = "二次验证修正：noscript 误判"
+                except Exception:
+                    pass  # 二次验证失败不影响主流程
+
             # 非 OK 状态时保存调试快照（仅首次和末次尝试，避免过多文件）
             if state != PageState.OK and (attempt == 0 or attempt == max_retries):
                 _save_debug_snapshot(tab, state, reason, attempt, task_id)

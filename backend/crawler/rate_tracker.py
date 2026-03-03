@@ -75,6 +75,12 @@ class RateLimitTracker:
             from crawler.utils import interruptible_sleep
             interruptible_sleep(wait, task_id=task_id)
 
+    def get_reset_ts(self, endpoint_type: str) -> int:
+        """获取指定端点的限速重置时间戳（0 = 未知）"""
+        with self._lock:
+            s = self._state.get(endpoint_type, {})
+            return s.get("reset_ts", 0)
+
 
 def extract_rate_headers(packet) -> Optional[tuple[str, int, int, int]]:
     """从数据包提取速率限制头。

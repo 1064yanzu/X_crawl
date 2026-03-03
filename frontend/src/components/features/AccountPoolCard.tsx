@@ -6,8 +6,8 @@ import {
     ChevronDown,
     ChevronUp,
     Clock,
+    Info,
     Loader2,
-    Plus,
     RefreshCw,
     ShieldCheck,
     Trash2,
@@ -26,12 +26,6 @@ export function AccountPoolCard() {
     const [intervalSuggestion, setIntervalSuggestion] = React.useState<IntervalSuggestion | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [toast, setToast] = React.useState<Toast | null>(null);
-
-    // 添加账号表单
-    const [showAddForm, setShowAddForm] = React.useState(false);
-    const [addAlias, setAddAlias] = React.useState("");
-    const [addCookies, setAddCookies] = React.useState("");
-    const [adding, setAdding] = React.useState(false);
 
     // 验证状态
     const [validatingId, setValidatingId] = React.useState<string | null>(null);
@@ -65,38 +59,6 @@ export function AccountPoolCard() {
         fetchData();
     }, [fetchData]);
 
-    const handleAdd = async () => {
-        if (!addAlias.trim()) {
-            showToast("error", "请填写账号备注名");
-            return;
-        }
-        if (!addCookies.trim()) {
-            showToast("error", "请粘贴 Cookie 内容");
-            return;
-        }
-
-        setAdding(true);
-        try {
-            // 检测是 JSON 数组还是 document.cookie 字符串
-            let payload: Parameters<typeof api.accounts.add>[0];
-            if (addCookies.trim().startsWith("[")) {
-                const parsed = JSON.parse(addCookies.trim());
-                payload = { alias: addAlias.trim(), cookies: parsed };
-            } else {
-                payload = { alias: addAlias.trim(), cookies: [], raw_cookie_string: addCookies.trim() };
-            }
-            await api.accounts.add(payload);
-            showToast("success", `账号 "${addAlias}" 已添加`);
-            setAddAlias("");
-            setAddCookies("");
-            setShowAddForm(false);
-            await fetchData();
-        } catch (e) {
-            showToast("error", `添加失败: ${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-            setAdding(false);
-        }
-    };
 
     const handleToggleEnabled = async (acc: AccountOut) => {
         try {
@@ -161,13 +123,12 @@ export function AccountPoolCard() {
             {/* Toast */}
             {toast && (
                 <div
-                    className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${
-                        toast.type === "success"
+                    className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${toast.type === "success"
                             ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                             : toast.type === "error"
-                              ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                              : "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"
-                    }`}
+                                ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+                                : "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"
+                        }`}
                 >
                     {toast.type === "success" ? (
                         <CheckCircle2 className="h-4 w-4 shrink-0" />
@@ -220,29 +181,27 @@ export function AccountPoolCard() {
                     accounts.map((acc) => (
                         <div
                             key={acc.account_id}
-                            className={`rounded-lg border p-3 transition-colors ${
-                                acc.enabled && acc.is_valid
+                            className={`rounded-lg border p-3 transition-colors ${acc.enabled && acc.is_valid
                                     ? "bg-background"
                                     : "bg-muted/30 opacity-60"
-                            }`}
+                                }`}
                         >
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     {/* 状态指示点 */}
                                     <div
-                                        className={`h-2 w-2 rounded-full ${
-                                            acc.is_rate_limited
+                                        className={`h-2 w-2 rounded-full ${acc.is_rate_limited
                                                 ? "bg-amber-500"
                                                 : acc.is_valid && acc.enabled
-                                                  ? "bg-emerald-500"
-                                                  : "bg-slate-300 dark:bg-slate-600"
-                                        }`}
+                                                    ? "bg-emerald-500"
+                                                    : "bg-slate-300 dark:bg-slate-600"
+                                            }`}
                                         title={
                                             acc.is_rate_limited
                                                 ? "速率限制中"
                                                 : acc.is_valid && acc.enabled
-                                                  ? "活跃"
-                                                  : "未启用/无效"
+                                                    ? "活跃"
+                                                    : "未启用/无效"
                                         }
                                     />
                                     <span className="text-sm font-medium">{acc.alias}</span>
@@ -322,62 +281,16 @@ export function AccountPoolCard() {
                     ))
                 )}
             </div>
-
-            {/* 添加账号表单 */}
-            {showAddForm && (
-                <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
-                    <h4 className="text-sm font-medium">添加账号</h4>
-                    <div className="space-y-2">
-                        <input
-                            className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                            placeholder="账号备注名（如 @username）"
-                            value={addAlias}
-                            onChange={(e) => setAddAlias(e.target.value)}
-                        />
-                        <textarea
-                            className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                            placeholder={`粘贴 Cookie\n• document.cookie 格式：auth_token=xxx; twid=yyy\n• JSON 数组格式：[{"name":"auth_token","value":"xxx",...}]`}
-                            rows={4}
-                            value={addCookies}
-                            onChange={(e) => setAddCookies(e.target.value)}
-                        />
-                    </div>
-                    <div className="flex gap-2">
-                        <Button
-                            size="sm"
-                            onClick={handleAdd}
-                            disabled={adding}
-                            className="gap-1.5"
-                        >
-                            {adding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                            {adding ? "添加中..." : "确认添加"}
-                        </Button>
-                        <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                                setShowAddForm(false);
-                                setAddAlias("");
-                                setAddCookies("");
-                            }}
-                        >
-                            取消
-                        </Button>
-                    </div>
+            {/* 自动同步提示 */}
+            {accounts.length === 0 && !loading && (
+                <div className="flex items-start gap-2.5 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-700 dark:text-blue-400">
+                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <p>在上方「Cookie 管理」中保存 Cookie 后，账号会自动同步到此处。无需手动添加。</p>
                 </div>
             )}
 
             {/* 底部操作栏 */}
-            <div className="flex items-center justify-between">
-                <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5"
-                    onClick={() => setShowAddForm(!showAddForm)}
-                >
-                    <Plus className="h-4 w-4" />
-                    添加账号
-                </Button>
+            <div className="flex items-center justify-end">
                 <Button
                     size="sm"
                     variant="ghost"

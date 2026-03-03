@@ -9,6 +9,7 @@
 """
 import logging
 import random
+import time
 from typing import Optional
 
 from crawler.browser import get_new_tab
@@ -186,6 +187,25 @@ def _update_reply_rate_tracker(packet) -> None:
     if result:
         ep, remaining, limit, reset_ts = result
         get_tracker().update(ep, remaining, limit, reset_ts)
+
+
+def _get_rate_limit_wait_sec(endpoint: str = "tweet_detail") -> float:
+    """
+    估算当前账号距限速重置的等待时间（秒）。
+    从 rate_tracker 中读取最近一次响应头记录的 reset_ts。
+    若无记录或已过期，返回保守估计 900s（15分钟）。
+    """
+    reset_ts = get_tracker().get_reset_ts(endpoint)
+    if reset_ts > 0:
+        wait = reset_ts - time.time()
+        if 0 < wait < 1800:  # 合理范围：0~30 分钟
+            return wait
+    return 900.0  # 保守估计
+
+
+def _pick_replacement_account(frozen_id: str, pool) -> "AccountEntry | None":
+    """从池中选出一个不同于冻结账号的可用账号（round-robin 中第一个可用的）。"""
+    return pool.pick_next_account(frozen_id)
 
 
 def fetch_replies(
