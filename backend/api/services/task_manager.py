@@ -83,7 +83,8 @@ def _summarize_tweets(tweets: list[dict]) -> tuple[int, dict]:
         from api.services.task_insights import summarize_tweets
 
         return summarize_tweets(tweets)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"_summarize_tweets 异常: {e}", exc_info=True)
         return 0, {}
 
 

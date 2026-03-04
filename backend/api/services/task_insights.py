@@ -1,11 +1,18 @@
 """任务数据洞察：时间覆盖范围与轻量汇总。"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+# 默认时区：中国标准时间 (UTC+8)，微博数据默认在此时区
+_CST = timezone(timedelta(hours=8))
 
 
 def _parse_iso(value: object) -> Optional[datetime]:
+    """
+    解析多种日期格式，始终返回 timezone-aware datetime。
+    无时区信息的日期默认视为 CST (UTC+8)。
+    """
     if not isinstance(value, str) or not value:
         return None
     text = value.strip()
@@ -13,37 +20,53 @@ def _parse_iso(value: object) -> Optional[datetime]:
         return None
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
+
+    dt: Optional[datetime] = None
+
+    # ISO 格式
     try:
-        return datetime.fromisoformat(text)
+        dt = datetime.fromisoformat(text)
     except ValueError:
         pass
+
     # 微博搜索结果的中文日期格式：2023年12月31日 22:57
-    import re
-    m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})", text)
-    if m:
-        try:
-            return datetime(
-                int(m.group(1)), int(m.group(2)), int(m.group(3)),
-                int(m.group(4)), int(m.group(5))
-            )
-        except ValueError:
-            pass
+    if dt is None:
+        import re
+        m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})", text)
+        if m:
+            try:
+                dt = datetime(
+                    int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                    int(m.group(4)), int(m.group(5))
+                )
+            except ValueError:
+                pass
+
     # 微博评论 API 的英文日期格式：Mon Jan 01 00:04:47 +0800 2024
-    try:
-        from email.utils import parsedate_to_datetime
-        return parsedate_to_datetime(text)
-    except Exception:
-        pass
+    if dt is None:
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(text)
+        except Exception:
+            pass
+
     # 尝试常见中文格式：2023-12-31 22:57:00
-    try:
-        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        pass
-    try:
-        return datetime.strptime(text, "%Y-%m-%d %H:%M")
-    except ValueError:
-        pass
-    return None
+    if dt is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                pass
+
+    if dt is None:
+        return None
+
+    # 统一转为 timezone-aware，无时区信息的默认为 CST
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_CST)
+
+    return dt
 
 
 def _to_iso(dt: Optional[datetime]) -> Optional[str]:

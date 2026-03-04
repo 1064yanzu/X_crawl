@@ -210,7 +210,7 @@ class Settings(BaseSettings):
         default=4.0, description="微博评论翻页间隔（秒）"
     )
     weibo_max_pages: int = Field(
-        default=10, description="微博搜索最大页数（每次搜索最多 10 页）"
+        default=50, description="微博搜索最大页数（每次搜索最多 50 页）"
     )
     weibo_fetch_sub_comments: bool = Field(
         default=True, description="微博是否抓取评论（默认开启）"

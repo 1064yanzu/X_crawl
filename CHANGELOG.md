@@ -2,12 +2,55 @@
 
 ## 2026-03-04
 
+### 🐛 修复：搜索无结果时微博热门推荐被误解析为搜索结果
+
+**问题**：当日期子段内关键词无结果时（如 2022 年 6 月搜索"ChatGPT"——该词 2022 年 11 月才诞生），微博不返回空白页，而是展示"热门微博/大家都在搜"推荐。这些推荐帖的 HTML 结构与正常搜索结果完全一致，导致解析器误将贾乃亮、曾舜晞等无关内容当作搜索结果存入数据库。
+
+**修复**：
+- `html_parser.py`：在 `parse_search_page` 开头新增"无结果"检测（`card-no-result` / `noresult_tit` 元素 + 文本关键词 "未找到/没有找到" 兜底），命中时直接返回空列表。
+- `searcher.py`：`_safe_get_html` 新增 URL 重定向检测，若目标为 `s.weibo.com` 但实际被重定向到其他域名，立即返回错误而非解析错误页面。
+
+### 🐛 修复：大跨度时段（如数年）无限制搜索时，数据量意外极低（被 50 页截断）
+
+**问题**：执行无上限（`max_count=0`）的 4 年跨度热门词搜索，最终却仅导出 1000 多条结果。
+**根因**：两重限制叠加导致数据丢失：
+1. `config.py` 中的 `weibo_max_pages` 默认值为 10，每次搜索到达第 10 页即刻停止（微博真实限制为 50 页）。
+2. `date_splitter.py` 遇到超过 1 年的时间跨度时，固定硬编码「每 3 个月」切分一段。
+这导致 4 年时间被切分为 16 段，每段只能抓取 10 页（约 90 条），16 段总计约 1400 条，完全错过了由于大热度产生的海量页数。
+
+**修复**：
+- 取消单次小范围阈值：将 `config.py` 中的 `weibo_max_pages` 默认提升至微博原生上限 **50** 页。
+- 增强动态日期切分：大幅细化 `date_splitter.py` 的切片粒度。在用户选择无上限抓取（`max_count=0`）时，若总天数超 1 年，强制按**周**切分；若超 2 个月，按 3 天切分；否则**按天**切分。这通过密集的小时间窗，确保任何时间段内的数据都能在 50 页的窗口内被完整装下而不被截断。
+
+### 🐛 修复：微博分段搜索时前端预览数据丢失 + 评论与帖子不匹配
+
+**问题 1 — 子任务切换时前端数据重置**：
+- **根因**：日期范围分段搜索时，每个子段内部的 `search()` 调用 `update_preview_tweets()` 仅传入当前子段数据，覆盖了之前子段的累积数据
+- **修复** (`searcher.py`)：新增 `_parent_accumulated` 内部参数，子段递归调用时传入父级已累积数据；`update_preview_tweets` 合并父级 + 当前段数据后推送前端
+
+**问题 2 — 评论预览与帖子内容不匹配**：
+- **根因**：`comment_fetcher.py` 评论 API 携带 `uid` 参数，该参数来自 HTML 解析的 `author_id`，解析失败时为空字符串，导致 API 返回错误数据
+- **修复** (`comment_fetcher.py`)：移除不必要的 `uid` 参数（`buildComments` API 只需 `mid` 即可正确获取评论）
+- **修复** (`html_parser.py`)：增强用户 ID 提取正则，支持 `//weibo.com/u/数字` 格式
+
 ### ✨ 增强：微博爬虫随机时间扰动（反爬优化）
 
 为微博爬虫的所有等待点引入随机时间扰动，使行为更接近人类操作：
 
 - `searcher.py`：翻页间隔改用 `jittered_sleep`（±20% 随机浮动 + 资源节流 + 可中断），重试等待改用 `interruptible_sleep`（可响应暂停/停止信号）
 - `comment_fetcher.py`：评论翻页间隔改用 `jittered_sleep`，Cookie 注入后的等待加入 `random.uniform` 扰动
+
+### 🐛 修复：评论 API JS 请求返回空值（DrissionPage async 兼容性）
+
+**问题**：`tab.run_js()` 执行 async IIFE（`(async () => { ... })()`）时返回 `None`，导致所有评论请求都被判定为"返回空值"。
+**根因**：DrissionPage 4.x 的 `run_js` 不支持 async 函数返回值——async 函数返回的是 Promise 对象，而 `run_js` 无法等待 Promise resolve，直接返回 `None`。
+**修复**：将 `async fetch()` 替换为 **async fetch + DOM 桥接**方案——JS 端用 `fetch` 发请求并将结果写入隐藏 DOM 元素，Python 端轮询读取。同步 XMLHttpRequest 在页面未完全加载或跨域时会触发 `NetworkError: Failed to execute 'send'`。
+
+### 🐛 修复：评论覆盖范围和评论计数在前端显示为 0
+
+**问题**：后端成功抓取到评论（179 条），但前端"评论覆盖"时间范围为空，`replies_fetched` 始终为 0。
+**根因**：`task_insights.py` 的 `_parse_iso()` 解析微博帖子的中文日期（如 `2023年12月31日 22:57`）返回 **naive datetime**（无时区），而解析评论的英文日期（如 `Fri Aug 26 15:05:50 +0800 2022`）返回 **aware datetime**（带时区 `+08:00`）。合并推文和评论时间范围时 `min(tweet_min, reply_min)` 触发 `TypeError: can't compare offset-naive and offset-aware datetimes`，被 `_summarize_tweets` 的 `except Exception` 静默吞掉，返回 `0, {}`。
+**修复**：`task_insights.py` 的 `_parse_iso()` 统一返回 timezone-aware datetime —— 无时区信息的日期默认视为 CST（UTC+8）。
 
 ## 2026-03-03
 

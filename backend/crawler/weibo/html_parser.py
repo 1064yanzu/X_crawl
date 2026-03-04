@@ -170,7 +170,30 @@ def parse_search_page(html: str) -> tuple[list[WeiboPost], bool, int]:
     soup = BeautifulSoup(html, "lxml")
     posts: list[WeiboPost] = []
 
+    # ── 检测"无结果"页面 ─────────────────────────────────
+    # 微博搜索无结果时会显示"抱歉，未找到"等提示，
+    # 但页面下方仍会展示"热门微博/大家都在搜"推荐内容，
+    # 这些推荐内容的 HTML 与搜索结果结构完全一致。
+    # 如果不做检测，会将这些无关推荐内容当作搜索结果解析。
+    no_result_indicators = [
+        soup.find("div", class_="card-no-result"),
+        soup.find("p", class_="noresult_tit"),
+        soup.find("div", class_=re.compile(r"card-no-result")),
+    ]
+    if any(no_result_indicators):
+        logger.info("搜索结果页面检测到'无结果'标记，跳过解析热门推荐")
+        return [], False, 0
+
+    # 备用检测：页面纯文本中包含"未找到"/"没有找到"且 feed 数量很少
+    page_text = soup.get_text()
+    has_no_result_text = any(
+        kw in page_text for kw in ("未找到", "没有找到", "找不到")
+    )
     cards = soup.find_all("div", attrs={"action-type": "feed_list_item"})
+    if has_no_result_text and len(cards) <= 10:
+        logger.info("搜索结果页面文本包含'未找到'，当前微博为推荐内容，跳过")
+        return [], False, 0
+
     for card in cards:
         mid = card.get("mid", "")
         if not mid:
@@ -182,11 +205,11 @@ def parse_search_page(html: str) -> tuple[list[WeiboPost], bool, int]:
         if not author_name and name_tag:
             author_name = name_tag.get_text(strip=True)
 
-        # 用户 ID（从链接提取）
+        # 用户 ID（从链接提取，支持 //weibo.com/数字 和 //weibo.com/u/数字 两种格式）
         author_id = ""
-        user_link = card.find("a", href=re.compile(r"//weibo\.com/\d+"))
+        user_link = card.find("a", href=re.compile(r"//weibo\.com/(?:u/)?\d+"))
         if user_link:
-            m = re.search(r"//weibo\.com/(\d+)", user_link["href"])
+            m = re.search(r"//weibo\.com/(?:u/)?(\d+)", user_link["href"])
             if m:
                 author_id = m.group(1)
 

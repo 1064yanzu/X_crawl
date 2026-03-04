@@ -135,6 +135,13 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 3.0) -> tuple[Optional[s
         tab.get(url)
         time.sleep(wait_seconds)
 
+        # 检查是否被重定向到非搜索页面
+        current_url = tab.url or ""
+        if "s.weibo.com" in url and current_url:
+            # 如果目标是搜索页面但被重定向到了其他页面
+            if "s.weibo.com" not in current_url:
+                return None, f"被重定向到非搜索页: {current_url}"
+
         # 检查反爬
         anti_crawl_reason = _check_anti_crawl(tab)
         if anti_crawl_reason:
@@ -157,6 +164,7 @@ def search(
     fetch_comments: bool = False,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    _parent_accumulated: Optional[list] = None,
 ) -> WeiboSearchResult:
     """
     微博关键词搜索主入口。
@@ -204,7 +212,12 @@ def search(
     # ── 日期范围分割（突破 50 页限制）────────────────────────
     if start_date and end_date and not resumed:
         from .date_splitter import split_date_range
-        date_ranges = split_date_range(start_date, end_date, max_pages=max_pages)
+        date_ranges = split_date_range(
+            start_date, 
+            end_date, 
+            max_pages=max_pages,
+            target_count=max_count,
+        )
         if len(date_ranges) > 1:
             logger.info(
                 f"日期范围已分割为 {len(date_ranges)} 个子范围，将依次搜索"
@@ -236,6 +249,7 @@ def search(
                         fetch_comments=fetch_comments,
                         start_date=seg_start,
                         end_date=seg_end,
+                        _parent_accumulated=all_results,
                     )
                     all_results.extend(seg_result.posts)
                     # 实时推送合并后的预览
@@ -351,7 +365,6 @@ def search(
                         comments = do_fetch_comments(
                             tab,
                             post.mid,
-                            post.author_id,
                             page_interval=settings.weibo_comment_page_interval,
                             task_id=task_id,
                         )
@@ -375,16 +388,17 @@ def search(
                 f"本页 {len(posts)} 条，累计 {len(all_posts_dicts)} 条"
             )
 
-            # 实时上报进度给前端
+            # 实时上报进度给前端（合并父级已累积数据，确保前端看到的是全任务数据）
+            combined = (_parent_accumulated or []) + all_posts_dicts
             if task_id:
                 update_task_phase(
                     task_id,
-                    f"微博搜索第 {page} 页完成，累计 {len(all_posts_dicts)} 条"
+                    f"微博搜索第 {page} 页完成，累计 {len(combined)} 条"
                 )
                 update_preview_tweets(
                     task_id,
                     current_page=page,
-                    tweets_for_preview=all_posts_dicts,
+                    tweets_for_preview=combined,
                 )
 
             # 保存检查点

@@ -62,7 +62,6 @@ def _ensure_weibo_domain(tab) -> bool:
 def fetch_comments(
     tab,
     mid: str,
-    uid: str,
     max_comments: int = 50,
     page_interval: float = 4.0,
     task_id: str | None = None,
@@ -108,35 +107,75 @@ def fetch_comments(
         url = (
             f"https://weibo.com/ajax/statuses/buildComments"
             f"?is_reload=1&id={mid}&is_show_bulletin=2&is_mix=0"
-            f"&count=20&uid={uid}&fetch_level=0&locale=zh-CN"
+            f"&count=20&fetch_level=0&locale=zh-CN"
         )
         if max_id:
             url += f"&max_id={max_id}"
 
-        js = f"""
-(async () => {{
-    try {{
-        const r = await fetch("{url}", {{
-            headers: {{
-                "x-xsrf-token": "{fresh_token}",
-                "x-requested-with": "XMLHttpRequest",
-                "accept": "application/json, text/plain, */*",
-                "client-version": "3.0.0"
-            }},
-            credentials: "include"
-        }});
-        const status = r.status;
-        const text = await r.text();
-        return JSON.stringify({{httpStatus: status, body: text}});
-    }} catch(e) {{
-        return JSON.stringify({{httpStatus: 0, body: "", error: e.toString()}});
+        # 方案：async fetch + DOM 桥接
+        # DrissionPage 的 run_js 不支持 async 返回值，同步 XHR 又有 NetworkError 问题
+        # 所以用 fetch 发请求，将结果写入隐藏 DOM 元素，然后 Python 轮询读取
+        marker_id = f"xcrawl-comment-{mid}-{page_idx}"
+        js_fetch = f"""
+(function() {{
+    // 创建/重置标记元素
+    var el = document.getElementById("{marker_id}");
+    if (!el) {{
+        el = document.createElement("div");
+        el.id = "{marker_id}";
+        el.style.display = "none";
+        document.body.appendChild(el);
     }}
-}})()
+    el.setAttribute("data-status", "pending");
+    el.setAttribute("data-result", "");
+
+    fetch("{url}", {{
+        headers: {{
+            "x-xsrf-token": "{fresh_token}",
+            "x-requested-with": "XMLHttpRequest",
+            "accept": "application/json, text/plain, */*",
+            "client-version": "3.0.0"
+        }},
+        credentials: "include"
+    }})
+    .then(function(r) {{
+        return r.text().then(function(text) {{
+            el.setAttribute("data-result", JSON.stringify({{httpStatus: r.status, body: text}}));
+            el.setAttribute("data-status", "done");
+        }});
+    }})
+    .catch(function(e) {{
+        el.setAttribute("data-result", JSON.stringify({{httpStatus: 0, body: "", error: e.toString()}}));
+        el.setAttribute("data-status", "done");
+    }});
+}})();
 """
         try:
-            raw = tab.run_js(js, timeout=30)
+            # 触发 fetch（不等返回值）
+            tab.run_js(js_fetch)
+
+            # 轮询 DOM 等待结果（最多 15 秒）
+            raw = None
+            for _ in range(30):
+                time.sleep(0.5)
+                status_val = tab.run_js(f'''
+                    var el = document.getElementById("{marker_id}");
+                    return el ? el.getAttribute("data-status") : "missing";
+                ''')
+                if status_val == "done":
+                    raw = tab.run_js(f'''
+                        var el = document.getElementById("{marker_id}");
+                        var result = el ? el.getAttribute("data-result") : "";
+                        if (el) el.remove();
+                        return result;
+                    ''')
+                    break
+                elif status_val == "missing":
+                    logger.warning(f"评论 DOM 标记元素丢失 mid={mid} page={page_idx + 1}")
+                    break
+
             if not raw:
-                logger.warning(f"评论请求返回空值 mid={mid} page={page_idx + 1}")
+                logger.warning(f"评论请求超时或无结果 mid={mid} page={page_idx + 1}")
                 break
 
             wrapper = json.loads(raw) if isinstance(raw, str) else raw
