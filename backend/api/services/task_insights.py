@@ -16,7 +16,34 @@ def _parse_iso(value: object) -> Optional[datetime]:
     try:
         return datetime.fromisoformat(text)
     except ValueError:
-        return None
+        pass
+    # 微博搜索结果的中文日期格式：2023年12月31日 22:57
+    import re
+    m = re.match(r"(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})", text)
+    if m:
+        try:
+            return datetime(
+                int(m.group(1)), int(m.group(2)), int(m.group(3)),
+                int(m.group(4)), int(m.group(5))
+            )
+        except ValueError:
+            pass
+    # 微博评论 API 的英文日期格式：Mon Jan 01 00:04:47 +0800 2024
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(text)
+    except Exception:
+        pass
+    # 尝试常见中文格式：2023-12-31 22:57:00
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        pass
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M")
+    except ValueError:
+        pass
+    return None
 
 
 def _to_iso(dt: Optional[datetime]) -> Optional[str]:

@@ -143,6 +143,9 @@ def _ensure_db() -> None:
                 task.setdefault("runtime_metrics", {})
                 task.setdefault("last_event_at", task.get("created_at"))
                 task.setdefault("time_coverage", {})
+                task.setdefault("platform", "x")
+                task.setdefault("start_date", None)
+                task.setdefault("end_date", None)
 
                 if task["status"] in ("running", "pending", "paused"):
                     task["status"] = "stopped"
@@ -323,6 +326,9 @@ def create_task(
     max_replies_per_tweet: int = 20,
     reply_depth: int = 2,
     crawl_strategy: str = "bfs",
+    platform: str = "x",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
 ) -> str:
     _ensure_db()
     from crawler import telemetry
@@ -356,6 +362,9 @@ def create_task(
             "max_replies_per_tweet": max_replies_per_tweet,
             "reply_depth": reply_depth,
             "crawl_strategy": crawl_strategy,
+            "platform": platform,
+            "start_date": start_date,
+            "end_date": end_date,
             "replies_fetched": existing.get("replies_fetched", 0),
             "tweets": existing.get("tweets", []),
             "preview_tweets": existing.get("preview_tweets", []),

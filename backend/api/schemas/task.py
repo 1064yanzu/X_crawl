@@ -34,6 +34,9 @@ class SearchRequest(BaseModel):
             "- dfs（深度优先）：每爬到一条推文，立即抓取其回复，再继续翻页"
         )
     )
+    platform: Literal["x", "weibo"] = Field(default="x", description="爬虫平台：x 或 weibo")
+    start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
+    end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
 
 
 class CheckpointInfo(BaseModel):
@@ -78,4 +81,7 @@ class TaskOut(BaseModel):
     preview_tweets: list[dict] = Field(default_factory=list)
     # ── 爬虫实时阶段状态（空字符串代表尚未开始）──
     crawl_phase: str = Field(default="", description="爬虫当前阶段描述，如 '等待第 1 页数据'")
+    platform: Literal["x", "weibo"] = Field(default="x", description="爬虫平台：x 或 weibo")
+    start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
+    end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
     debug_screenshot: Optional[str] = Field(default=None, description="错误诊断截图 URL")

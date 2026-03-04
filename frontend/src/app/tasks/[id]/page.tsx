@@ -21,6 +21,7 @@ import { useTaskQuery } from "@/hooks/useTask";
 import { TaskStreamEvent, useTaskStream } from "@/hooks/useTaskStream";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { getPlatformMeta } from "@/lib/platformRegistry";
 import { TweetCard } from "@/components/features/TweetCard";
 import { LiveCrawlPreview } from "@/components/features/LiveCrawlPreview";
 import { FailedRepliesPanel } from "@/components/features/FailedRepliesPanel";
@@ -144,6 +145,14 @@ export default function TaskResultPage() {
                         <Badge variant="outline" className="ml-2 hidden font-mono text-xs text-muted-foreground sm:inline-flex">
                             ID: {task.task_id.substring(0, 12)}
                         </Badge>
+                        {(() => {
+                            const pm = getPlatformMeta(task.platform);
+                            return (
+                                <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium", pm.badgeClass)}>
+                                    {pm.label}
+                                </span>
+                            );
+                        })()}
                     </div>
                 </div>
 

@@ -34,6 +34,9 @@ async def create_search_task(
         max_replies_per_tweet=req.max_replies_per_tweet,
         reply_depth=req.reply_depth,
         crawl_strategy=req.crawl_strategy,
+        platform=req.platform,
+        start_date=req.start_date,
+        end_date=req.end_date,
     )
     task_data = task_manager.get_task(task_id)
     if not task_data:

@@ -19,6 +19,7 @@ from api.routers import crawler_config as crawler_config_router
 from api.routers import failed_replies as failed_replies_router
 from api.routers import browser_selector as browser_selector_router
 from api.routers import accounts as accounts_router
+from api.routers import weibo_cookies as weibo_cookies_router
 from crawler.browser import close_browser
 from crawler.browser_detector import detect_all
 from crawler.log_config import setup_logging
@@ -88,6 +89,7 @@ app.include_router(crawler_config_router.router)
 app.include_router(failed_replies_router.router)
 app.include_router(browser_selector_router.router)
 app.include_router(accounts_router.router)
+app.include_router(weibo_cookies_router.router)
 
 
 @app.exception_handler(Exception)

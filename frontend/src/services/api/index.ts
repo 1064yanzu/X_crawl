@@ -1,6 +1,7 @@
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "/xapi").replace(/\/$/, "");
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "paused" | "stopped";
+export type Platform = "x" | "weibo";
 export type CrawlStrategy = "bfs" | "dfs";
 export type RiskState = "none" | "challenge" | "rate_limited" | "login_required";
 export type QualityState = "complete" | "partial" | "interrupted";
@@ -34,6 +35,9 @@ export interface TaskOut {
     tweets: Record<string, unknown>[];
     preview_tweets: Record<string, unknown>[];  // 实时预览（最多 N 条）
     crawl_phase: string;  // 爬虫实时阶段描述，如 "等待第 1 页数据包..."
+    platform?: Platform;
+    start_date?: string | null;
+    end_date?: string | null;
     debug_screenshot?: string | null;
 }
 
@@ -58,6 +62,9 @@ export interface SearchRequest {
     max_replies_per_tweet?: number;
     reply_depth?: number;
     crawl_strategy?: CrawlStrategy;
+    platform?: Platform;
+    start_date?: string;
+    end_date?: string;
 }
 
 export interface HealthResponse {
@@ -433,5 +440,26 @@ export const api = {
             fetchApi<AccountOut>(`/api/v1/accounts/${accountId}/validate`, { method: "POST" }),
         intervalSuggestion: () =>
             fetchApi<IntervalSuggestion>("/api/v1/accounts/interval-suggestion"),
+    },
+    weiboCookies: {
+        list: () =>
+            fetchApi<{
+                cookies: { name: string; masked: string }[];
+                has_login: boolean;
+                count: number;
+            }>("/api/v1/weibo-cookies"),
+        save: (data: { cookies?: Record<string, string>[]; raw_string?: string }) =>
+            fetchApi<{ saved: number; has_login: boolean }>("/api/v1/weibo-cookies", {
+                method: "POST",
+                body: JSON.stringify(data),
+            }),
+        clear: () =>
+            fetchApi<{ message: string }>("/api/v1/weibo-cookies", { method: "DELETE" }),
+        capture: () =>
+            fetchApi<{
+                captured: number;
+                has_login: boolean;
+                message?: string;
+            }>("/api/v1/weibo-cookies/capture", { method: "POST" }),
     },
 };

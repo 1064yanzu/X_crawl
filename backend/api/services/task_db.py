@@ -118,6 +118,9 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "runtime_metrics_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "time_coverage_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "last_event_at", "TEXT")
+        _ensure_column(conn, "tasks", "platform",   "TEXT DEFAULT 'x'")
+        _ensure_column(conn, "tasks", "start_date", "TEXT")
+        _ensure_column(conn, "tasks", "end_date",   "TEXT")
 
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
@@ -151,14 +154,16 @@ def save_task(task: dict) -> None:
                     error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
                     resumed, fetch_replies, max_replies_per_tweet,
                     crawl_strategy, replies_fetched, crawl_phase,
-                    tweets_json, preview_json
+                    tweets_json, preview_json,
+                    platform, start_date, end_date
                 ) VALUES (
                     :task_id, :status, :keyword, :product, :max_count,
                     :result_count, :current_page, :created_at, :finished_at,
                     :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
                     :resumed, :fetch_replies, :max_replies_per_tweet,
                     :crawl_strategy, :replies_fetched, :crawl_phase,
-                    :tweets_json, :preview_json
+                    :tweets_json, :preview_json,
+                    :platform, :start_date, :end_date
                 )
             """, {
                 "task_id":               task["task_id"],
@@ -184,6 +189,9 @@ def save_task(task: dict) -> None:
                 "crawl_phase":           task.get("crawl_phase", ""),
                 "tweets_json":           tweets_json,
                 "preview_json":          preview_json,
+                "platform":              task.get("platform", "x"),
+                "start_date":            task.get("start_date"),
+                "end_date":              task.get("end_date"),
             })
             conn.commit()
     except Exception as e:
@@ -278,6 +286,7 @@ def load_all_tasks() -> list[dict]:
             d["time_coverage"] = json.loads(d.pop("time_coverage_json", "{}") or "{}")
             d["resumed"]        = bool(d["resumed"])
             d["fetch_replies"]  = bool(d["fetch_replies"])
+            d.setdefault("platform", "x")
             tasks.append(d)
         logger.info(f"已从数据库加载 {len(tasks)} 条历史任务")
         return tasks

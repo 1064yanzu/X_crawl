@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { api, SearchRequest, CrawlStrategy } from "@/services/api";
+import { api, SearchRequest, CrawlStrategy, Platform } from "@/services/api";
 import { Search, Sparkles, Play, Loader2, TerminalSquare, TrendingUp, Clock, Image, Film, Settings, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -46,6 +46,11 @@ export function CrawlerTaskBuilder() {
     const [strategy, setStrategy] = React.useState<CrawlStrategy>("dfs");
     const [replyDepth, setReplyDepth] = React.useState(2);
 
+    // 平台选择 & 微博时间范围
+    const [platform, setPlatform] = React.useState<Platform>("x");
+    const [startDate, setStartDate] = React.useState("");
+    const [endDate, setEndDate] = React.useState("");
+
     const buildFinalKeyword = () => {
         let q = keyword.trim();
         const advancedQuery = buildAdvancedQuery(advancedParams);
@@ -71,6 +76,9 @@ export function CrawlerTaskBuilder() {
                 max_replies_per_tweet: 0, // 无限制
                 reply_depth: replyDepth,
                 crawl_strategy: strategy,
+                platform,
+                start_date: platform === "weibo" && startDate ? startDate : undefined,
+                end_date: platform === "weibo" && endDate ? endDate : undefined,
             };
             const task = await api.search.create(payload);
             router.push(`/tasks/${task.task_id}`);
@@ -114,6 +122,34 @@ export function CrawlerTaskBuilder() {
             </div>
 
             <div className="p-6 flex flex-col gap-5">
+                {/* 平台选择 */}
+                <div className="flex rounded-lg border border-border overflow-hidden w-fit">
+                    <button
+                        type="button"
+                        onClick={() => setPlatform("x")}
+                        className={cn(
+                            "px-4 py-1.5 text-sm font-medium transition-colors",
+                            platform === "x"
+                                ? "bg-blue-600 text-white"
+                                : "bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
+                        )}
+                    >
+                        𝕏 Twitter
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setPlatform("weibo")}
+                        className={cn(
+                            "px-4 py-1.5 text-sm font-medium transition-colors",
+                            platform === "weibo"
+                                ? "bg-orange-500 text-white"
+                                : "bg-background text-muted-foreground hover:text-foreground hover:bg-muted"
+                        )}
+                    >
+                        微博
+                    </button>
+                </div>
+
                 {/* Keyword Input */}
                 <div className="space-y-2">
                     <label className="text-sm font-medium">目标关键词</label>
@@ -148,7 +184,28 @@ export function CrawlerTaskBuilder() {
                     />
                 </div>
 
+                {/* 微博时间范围选择器 */}
+                {platform === "weibo" && (
+                    <div className="flex gap-3 items-center">
+                        <label className="text-sm text-muted-foreground whitespace-nowrap">时间范围</label>
+                        <input
+                            type="date"
+                            value={startDate}
+                            onChange={e => setStartDate(e.target.value)}
+                            className="rounded-md border px-2 py-1 text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                        <span className="text-muted-foreground">~</span>
+                        <input
+                            type="date"
+                            value={endDate}
+                            onChange={e => setEndDate(e.target.value)}
+                            className="rounded-md border px-2 py-1 text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                        />
+                    </div>
+                )}
+
                 {/* ── 排序方式：分段控制器（仿 X 原生 tab 设计）── */}
+                {platform === "x" && (
                 <div className="space-y-2">
                     <label className="text-sm font-medium flex items-center gap-1.5">
                         排序 / 内容类型
@@ -189,14 +246,17 @@ export function CrawlerTaskBuilder() {
                         ))}
                     </select>
                 </div>
+                )}
 
                 {/* ── 高级搜索面板（完整版）── */}
+                {platform === "x" && (
                 <AdvancedSearchPanel
                     params={advancedParams}
                     onChange={setAdvancedParams}
                     isOpen={advancedOpen}
                     onToggle={() => setAdvancedOpen(o => !o)}
                 />
+                )}
 
                 {/* ── 回复抓取选项 ── */}
                 <div className="space-y-3 pt-3 border-t">

@@ -278,6 +278,7 @@ def reset_browser() -> None:
     """关闭并重置浏览器单例，下次 get_browser() 将根据最新设置重新创建。
 
     用于任务恢复时，确保使用用户最新选择的浏览器。
+    如果 quit() 失败（浏览器卡死），将强制杀掉 Chrome 进程并清理锁文件。
     """
     global _browser
     if _browser is not None:
@@ -285,9 +286,26 @@ def reset_browser() -> None:
             _browser.quit()
             logger.info("已关闭旧浏览器实例，将根据最新配置重新创建")
         except Exception as e:
-            logger.warning(f"关闭旧浏览器时出错（不影响后续操作）: {e}")
+            logger.warning(f"关闭旧浏览器时出错，尝试强制杀进程: {e}")
+            _force_kill_chrome()
         finally:
             _browser = None
+    else:
+        # 即使 _browser 为 None，也清理可能残留的 Chrome 进程
+        _force_kill_chrome()
+
+
+def _force_kill_chrome() -> None:
+    """强制杀掉使用爬虫 profile 的 Chrome 进程，并清理锁文件。"""
+    try:
+        subprocess.run(
+            ["pkill", "-9", "-f", f"chrome.*{_CRAWLER_PROFILE_DIR}"],
+            capture_output=True, timeout=5,
+        )
+        logger.info("已强制杀掉残留 Chrome 进程")
+    except Exception:
+        pass
+    _cleanup_stale_singleton_locks(_CRAWLER_PROFILE_DIR)
 
 
 def close_browser():

@@ -202,6 +202,20 @@ class Settings(BaseSettings):
         )
     )
 
+    # 微博爬虫配置
+    weibo_search_page_interval: float = Field(
+        default=6.0, description="微博搜索翻页间隔（秒）"
+    )
+    weibo_comment_page_interval: float = Field(
+        default=4.0, description="微博评论翻页间隔（秒）"
+    )
+    weibo_max_pages: int = Field(
+        default=10, description="微博搜索最大页数（每次搜索最多 10 页）"
+    )
+    weibo_fetch_sub_comments: bool = Field(
+        default=True, description="微博是否抓取评论（默认开启）"
+    )
+
 
 settings = Settings()
 

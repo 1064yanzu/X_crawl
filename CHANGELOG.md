@@ -1,5 +1,142 @@
 # Changelog
 
+## 2026-03-04
+
+### ✨ 增强：微博爬虫随机时间扰动（反爬优化）
+
+为微博爬虫的所有等待点引入随机时间扰动，使行为更接近人类操作：
+
+- `searcher.py`：翻页间隔改用 `jittered_sleep`（±20% 随机浮动 + 资源节流 + 可中断），重试等待改用 `interruptible_sleep`（可响应暂停/停止信号）
+- `comment_fetcher.py`：评论翻页间隔改用 `jittered_sleep`，Cookie 注入后的等待加入 `random.uniform` 扰动
+
+## 2026-03-03
+
+### 🐛 修复：微博评论始终抓取 0 条 + 暂停按钮对微博爬取不生效
+
+**问题 1 — 评论始终返回 0 条**：
+- **根因**：搜索和评论共用同一 tab，域名在 `s.weibo.com` ↔ `weibo.com` 间切换导致 Cookie/XSRF-TOKEN 状态混乱；API 返回异常时被静默跳过无日志
+- **修复** (`comment_fetcher.py`)：
+  - 域切换后重注入 Cookie 并刷新页面，确保 XSRF-TOKEN 可用
+  - JS fetch 改为捕获 HTTP 状态码和完整响应体，API 异常时打印详细日志
+  - 补充 `client-version` 请求头
+  - XSRF-TOKEN 获取失败时自动从 Cookie 文件加载重试
+
+**问题 2 — 暂停按钮不生效**：
+- **根因**：`searcher.py` 只检查 `stop` 信号（`get_signal() == "stop"`），完全忽略 `pause` 信号
+- **修复** (`searcher.py`)：
+  - 用 `check_signal()` + `StopSignal` 异常机制替代简单的 stop 检查
+  - `check_signal()` 支持 pause（轮询等待）+ stop（抛异常终止）+ run（正常继续）
+  - 日期分段循环和主搜索循环都加入暂停检查
+  - 评论抓取传入 `task_id` 支持暂停/停止
+
+## 2026-03-03
+
+### ✨ 优化：前端展示按平台分门别类整理（可扩展架构）
+
+将爬虫配置、预览、历史记录等按平台（X / 微博）分类展示，并预留可扩展性，新增平台只需在注册中心追加一行。
+
+**新增文件**：
+- `frontend/src/lib/platformRegistry.ts`：平台注册中心，统一管理平台元数据（名称、颜色、图标、样式），导出 `getPlatformMeta()` / `getPlatformsWithAll()` 工具函数
+- `frontend/src/components/ui/platform-tabs.tsx`：可复用的 PlatformTabs 分段控制器组件，支持图标、名称和计数 Badge
+
+**任务列表页**（`tasks/page.tsx`）：
+- 顶部新增平台 Tab 切换器（全部 / 𝕏 Twitter / 微博），实时过滤
+- 每个任务卡片左侧新增平台色条指示器 + 平台 Badge
+- 空态文案根据当前过滤平台动态切换
+
+**仪表盘**（`DashboardTasks.tsx`）：
+- 正在运行和历史任务按平台分组展示
+- 每组带平台色点 + 名称标题 + 数量统计
+- 单平台时保持紧凑布局，多平台时分组显示
+
+**设置页**（`settings/page.tsx`）：
+- 使用 Tab 将设置项分为三个区域：通用设置 / 𝕏 Twitter / 微博
+- 通用设置：浏览器选择、引擎参数、代理、归档、安全操作
+- X Tab：Cookie 管理 + 多账号池
+- 微博 Tab：Cookie 管理
+- Tab 切换带 fade-in 动画
+
+**任务详情页**（`tasks/[id]/page.tsx`）：
+- 标题行新增平台 Badge 标识
+
+**性能优化**：
+- 设置页拆分为 3 个独立子路由（`/settings`、`/settings/x`、`/settings/weibo`），共享 `layout.tsx` 导航
+- 每个子页面只导入自己需要的组件，避免 dev 模式 Turbopack 一次性编译所有组件导致 OOM
+- `start-frontend.sh` 新增自动内存检测：可用内存不足 1GB 时自动切换 production 模式运行
+
+## 2026-03-03
+
+### 🐛 修复：微博前端不显示时间覆盖范围 + 评论导出为空 + 总页数提取 + 50页扩容
+
+**问题 1 — 前端不显示时间覆盖范围**：`_parse_iso()` 只支持 ISO 格式，无法解析微博中文日期（如 "2023年12月31日 22:57"）
+- `task_insights.py`：扩展 `_parse_iso` 支持中文日期、英文日期（评论 API）、短日期等多种格式
+
+**问题 2 — 总页数不显示**：搜索结果 HTML 中分页器包含总页数但未提取
+- `html_parser.py`：从 `ul.s-scroll > li` 提取总页数，返回签名改为三元组 `(posts, has_next, total_pages)`
+
+**问题 3 — 50 页限制扩容**：微博搜索最多返回 50 页，大时间范围数据不足
+- [NEW] `date_splitter.py`：自动按月/周/天分割日期范围
+- `searcher.py`：日期跨度大时自动分段搜索，递归合并结果
+
+**问题 4 — 评论返回 0 条**：`comment_fetcher.py` 导航 `weibo.com/{uid}/{数字mid}` 无效，且评论后未回搜索域名
+- `comment_fetcher.py`：改为导航 `weibo.com` 首页确保域名正确
+- `searcher.py`：每页评论抓取后导航回 `s.weibo.com`
+
+### ✨ 增强：微博数据全面采集（帖子+评论字段完整提取）
+
+对照微博抓包数据，全面重写解析逻辑，确保所有可提取信息无遗漏：
+
+**帖子新增字段**（`html_parser.py` + `models.py`）：
+- `source`：来源设备（微博网页版、NIO Phone Android 等）
+- `verified` + `verified_type`：认证标识（蓝V企业/黄V个人）
+- `hashtags`：话题标签列表
+- `is_repost` + `repost_text/author/metrics`：转发微博的原微博完整信息
+
+**评论新增字段**（`comment_fetcher.py` + `models.py`）：
+- `source`：IP 属地（来自四川 等）
+- `avatar_url`：评论者头像
+- `is_author`：是否博主
+- `verified` + `verified_reason`：评论者认证信息
+- `gender` / `location` / `followers_count`：性别/地区/粉丝数
+- `sub_comments` + `sub_comments_count`：楼中楼子评论（递归解析）
+- `reply_to_user`：回复目标用户名
+- 优先使用 `text_raw` 获取纯文本，避免 HTML 清理损失
+
+### 🐛 修复：微博帖子缺少互动数据 + 评论未抓取
+
+**问题 1**：微博帖子的转发、评论、点赞数始终显示 0。
+**原因**：`html_parser.py` 未解析互动数据，`models.py` 硬编码 `metrics` 为 0。
+**修复**：
+- `html_parser.py`：新增 `_extract_metrics()` 从 `div.card-act` 提取转发/评论/赞数（支持万/亿单位）
+- `models.py`：新增 `reposts_count`/`comments_count`/`likes_count` 字段
+
+**问题 2**：用户开启了评论抓取但微博评论未被获取。
+**原因**：`_run_weibo_task()` 没有传递 `fetch_replies` 参数给 `weibo_search` 的 `fetch_comments`。
+**修复**：
+- `crawl_service.py`：传递 `fetch_replies` → 微博的 `fetch_comments`
+- `comment_fetcher.py`：评论前先导航到帖子页面（解决跨域问题），增加 likes 解析和 HTML 清理
+- `searcher.py`：评论条件简化为 `fetch_comments and comments_count > 0`
+
+### 🐛 修复：微博爬虫搜索超时（Cookie 注入时序错误 + 缺乏崩溃恢复）
+
+**问题**：微博搜索任务报 `DOM.getOuterHTML timeout`（超时 30s），随后 `Target crashed`，导致爬虫完全无法获取搜索结果。
+
+**根本原因**（4 重问题）：
+1. **Cookie 注入时序错误**：在 `about:blank` 页上注入 `.weibo.com` 域的 Cookie，浏览器可能不接受
+2. **关键 Cookie 缺失**：`normalize_cookies()` 只保留 name/value/domain/path 四个字段，丢失了 httpOnly/secure/sameSite 等属性
+3. **搜索域名 Cookie 未准备**：auth 验证走 `weibo.com`，搜索走 `s.weibo.com`，Cookie 上下文断裂
+4. **Tab 崩溃无恢复**：`Target crashed` 后没有重建 tab，后续所有 DOM 操作全部超时
+
+**修复**：
+- `crawler/weibo/cookie_manager.py`：`normalize_cookies()` 改为保留所有原始字段，只补全缺失的 domain/path 默认值
+- `crawler/weibo/auth.py`：重构为正确时序（先导航到域名 → 注入 Cookie → 刷新验证），新增 `ensure_search_cookies()` 为 `s.weibo.com` 预注入 Cookie
+- `crawler/weibo/searcher.py`：
+  - 搜索前调用 `ensure_search_cookies()` 确保搜索域 Cookie 就位
+  - 新增 `_safe_get_html()` 带重试的安全页面获取
+  - 新增 `_check_anti_crawl()` 检测验证码/登录跳转/安全验证
+  - Tab 崩溃后自动重建 tab 并重新注入 Cookie
+  - 连续 3 页失败自动终止，避免无限循环
+
 ## 2026-03-03
 
 ### ✨ 新增：高级搜索功能（完整对齐 X 原生高级搜索面板）
