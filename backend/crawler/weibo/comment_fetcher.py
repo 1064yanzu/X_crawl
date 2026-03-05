@@ -62,7 +62,8 @@ def _ensure_weibo_domain(tab) -> bool:
 def fetch_comments(
     tab,
     mid: str,
-    max_comments: int = 50,
+    author_uid: str = "",
+    max_comments: int = 500,
     page_interval: float = 4.0,
     task_id: str | None = None,
 ) -> list[WeiboComment]:
@@ -90,7 +91,7 @@ def fetch_comments(
 
     comments: list[WeiboComment] = []
     max_id = 0
-    max_pages = 10
+    max_pages = 50  # 每页 20 条，50 页 = 最多 1000 条
 
     for page_idx in range(max_pages):
         # 检查任务信号（支持暂停/停止）
@@ -104,13 +105,17 @@ def fetch_comments(
         # 每页重新获取 token（可能过期）
         fresh_token = get_xsrf_token_from_tab(tab) or xsrf_token
 
+        # URL 参数顺序严格按照抓包真实请求还原
+        # 抓包: flow=0&is_reload=1&id={}&is_show_bulletin=2&is_mix=0&max_id={}&count=20&uid={}&fetch_level=0&locale=zh-CN
+        max_id_part = f"&max_id={max_id}" if max_id else ""
+        uid_part = f"&uid={author_uid}" if author_uid else ""
         url = (
             f"https://weibo.com/ajax/statuses/buildComments"
-            f"?is_reload=1&id={mid}&is_show_bulletin=2&is_mix=0"
-            f"&count=20&fetch_level=0&locale=zh-CN"
+            f"?flow=0&is_reload=1&id={mid}&is_show_bulletin=2&is_mix=0"
+            f"{max_id_part}&count=20{uid_part}&fetch_level=0&locale=zh-CN"
         )
-        if max_id:
-            url += f"&max_id={max_id}"
+
+        logger.info(f"评论请求 mid={mid} 第{page_idx + 1}页: {url}")
 
         # 方案：async fetch + DOM 桥接
         # DrissionPage 的 run_js 不支持 async 返回值，同步 XHR 又有 NetworkError 问题
@@ -134,7 +139,10 @@ def fetch_comments(
             "x-xsrf-token": "{fresh_token}",
             "x-requested-with": "XMLHttpRequest",
             "accept": "application/json, text/plain, */*",
-            "client-version": "3.0.0"
+            "client-version": "3.0.0",
+            "server-version": "v2026.03.02.1",
+            "cache-control": "no-cache",
+            "pragma": "no-cache"
         }},
         credentials: "include"
     }})
@@ -222,6 +230,12 @@ def fetch_comments(
         )
 
         next_max_id = data.get("max_id", 0)
+        total_number = data.get("total_number", 0)
+        logger.info(
+            f"评论 mid={mid} 第{page_idx + 1}页 分页参数："
+            f"max_id={next_max_id}, total_number={total_number}, "
+            f"已获取={len(comments)}/{max_comments}"
+        )
         if not next_max_id or len(comments) >= max_comments:
             break
         max_id = next_max_id

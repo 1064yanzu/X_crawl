@@ -215,6 +215,9 @@ class Settings(BaseSettings):
     weibo_fetch_sub_comments: bool = Field(
         default=True, description="微博是否抓取评论（默认开启）"
     )
+    weibo_max_comments_per_post: int = Field(
+        default=500, description="微博每条帖子最多抓取评论数（0=不限制）"
+    )
 
 
 settings = Settings()

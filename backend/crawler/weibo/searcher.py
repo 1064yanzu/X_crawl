@@ -210,7 +210,9 @@ def search(
     page_interval: float = settings.weibo_search_page_interval
 
     # ── 日期范围分割（突破 50 页限制）────────────────────────
-    if start_date and end_date and not resumed:
+    # 注意：如果 _parent_accumulated 不为 None，说明当前调用已经是父级分段的子段，
+    # 不应再次分割，否则会导致 43 个月 × 10 个子段 = 430 个切片的指数级膨胀
+    if start_date and end_date and not resumed and _parent_accumulated is None:
         from .date_splitter import split_date_range
         date_ranges = split_date_range(
             start_date, 
@@ -365,6 +367,8 @@ def search(
                         comments = do_fetch_comments(
                             tab,
                             post.mid,
+                            author_uid=post.author_id,
+                            max_comments=settings.weibo_max_comments_per_post,
                             page_interval=settings.weibo_comment_page_interval,
                             task_id=task_id,
                         )

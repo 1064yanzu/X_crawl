@@ -10,6 +10,17 @@
 - `html_parser.py`：在 `parse_search_page` 开头新增"无结果"检测（`card-no-result` / `noresult_tit` 元素 + 文本关键词 "未找到/没有找到" 兜底），命中时直接返回空列表。
 - `searcher.py`：`_safe_get_html` 新增 URL 重定向检测，若目标为 `s.weibo.com` 但实际被重定向到其他域名，立即返回错误而非解析错误页面。
 
+### 🐛 修复：评论抓取被硬限制在 50 条以内，无法翻页获取全部评论
+
+**问题**：帖子元数据显示有几百条评论，但实际抓取仅得到几十条。
+**根因**：`comment_fetcher.py` 中 `max_comments` 默认值为 50，`max_pages` 为 10。对于评论过百的热帖，抓到 50 条就被截断了。
+**修复**：
+- `max_comments` 从 50 提升至 **500**，`max_pages` 从 10 提升至 **50**（每页 20 条，最多可抓 1000 条）。
+- 新增配置 `weibo_max_comments_per_post`，可在设置页面调整每帖最大评论抓取数。
+- `searcher.py` 调用时读取配置值并传入。
+- URL 参数顺序严格按照抓包真实请求还原：`flow=0&is_reload=1&id&is_show_bulletin=2&is_mix=0&max_id&count=20&uid&fetch_level=0&locale=zh-CN`，补充 `server-version`、`cache-control`、`pragma` 等缺失请求头。
+- 重新加回 `uid`（帖子作者 UID）参数。之前为修复评论错配曾完全移除 `uid`，但抓包证实：缺少 `uid` 时，API 在 2-3 页后提前返回 `max_id=0` 截断分页。现在从 `post.author_id`（HTML 解析器已可靠提取）安全传入。
+
 ### 🐛 修复：大跨度时段（如数年）无限制搜索时，数据量意外极低（被 50 页截断）
 
 **问题**：执行无上限（`max_count=0`）的 4 年跨度热门词搜索，最终却仅导出 1000 多条结果。
