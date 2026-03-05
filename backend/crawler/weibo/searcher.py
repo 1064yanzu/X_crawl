@@ -365,9 +365,9 @@ def search(
                         )
                     try:
                         comments = do_fetch_comments(
-                            tab,
                             post.mid,
                             author_uid=post.author_id,
+                            post_url=post.url,
                             max_comments=settings.weibo_max_comments_per_post,
                             page_interval=settings.weibo_comment_page_interval,
                             task_id=task_id,
@@ -379,13 +379,7 @@ def search(
                         logger.warning(f"抓取评论失败 mid={post.mid}: {e}")
                 all_posts_dicts.append(post.to_dict())
 
-            # 评论抓取后导航回搜索域名，避免后续页面抓取失败
-            if need_comments:
-                try:
-                    tab.get("https://s.weibo.com")
-                    interruptible_sleep(1.0, task_id=task_id)
-                except Exception:
-                    pass
+            # 评论抓取使用独立标签页，不影响搜索 tab，无需导航回搜索域名
 
             logger.info(
                 f"微博搜索第 {page} 页完成，"
