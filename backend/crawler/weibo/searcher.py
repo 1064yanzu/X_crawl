@@ -179,248 +179,258 @@ def search(
 
     tab = _get_tab_with_retry()
 
-    # ── 1. 登录验证 ──────────────────────────────────────────
-    if task_id:
-        update_task_phase(task_id, "正在验证微博登录状态...")
     try:
-        logged_in = ensure_weibo_login(tab)
-        if not logged_in:
-            logger.warning("微博未登录，将以游客模式尝试（可能受限）")
-    except Exception as e:
-        logger.warning(f"微博登录验证失败: {e}")
+        # ── 1. 登录验证 ──────────────────────────────────────────
+        if task_id:
+            update_task_phase(task_id, "正在验证微博登录状态...")
+        try:
+            logged_in = ensure_weibo_login(tab)
+            if not logged_in:
+                logger.warning("微博未登录，将以游客模式尝试（可能受限）")
+        except Exception as e:
+            logger.warning(f"微博登录验证失败: {e}")
 
-    # ── 2. 搜索 Cookie 准备 ──────────────────────────────────
-    if task_id:
-        update_task_phase(task_id, "正在准备搜索 Cookie...")
-    try:
-        ensure_search_cookies(tab)
-    except Exception as e:
-        logger.warning(f"搜索 Cookie 准备失败: {e}")
+        # ── 2. 搜索 Cookie 准备 ──────────────────────────────────
+        if task_id:
+            update_task_phase(task_id, "正在准备搜索 Cookie...")
+        try:
+            ensure_search_cookies(tab)
+        except Exception as e:
+            logger.warning(f"搜索 Cookie 准备失败: {e}")
 
-    # ── 3. 断点恢复 ──────────────────────────────────────────
-    checkpoint: dict = {}
-    if resume and task_id:
-        checkpoint = _load_checkpoint(task_id)
+        # ── 3. 断点恢复 ──────────────────────────────────────────
+        checkpoint: dict = {}
+        if resume and task_id:
+            checkpoint = _load_checkpoint(task_id)
 
-    start_page: int = checkpoint.get("page", 1)
-    all_posts_dicts: list[dict] = checkpoint.get("posts", [])
-    resumed = bool(checkpoint)
+        start_page: int = checkpoint.get("page", 1)
+        all_posts_dicts: list[dict] = checkpoint.get("posts", [])
+        resumed = bool(checkpoint)
 
-    max_pages: int = settings.weibo_max_pages
-    page_interval: float = settings.weibo_search_page_interval
+        max_pages: int = settings.weibo_max_pages
+        page_interval: float = settings.weibo_search_page_interval
 
-    # ── 日期范围分割（突破 50 页限制）────────────────────────
-    # 注意：如果 _parent_accumulated 不为 None，说明当前调用已经是父级分段的子段，
-    # 不应再次分割，否则会导致 43 个月 × 10 个子段 = 430 个切片的指数级膨胀
-    if start_date and end_date and not resumed and _parent_accumulated is None:
-        from .date_splitter import split_date_range
-        date_ranges = split_date_range(
-            start_date, 
-            end_date, 
-            max_pages=max_pages,
-            target_count=max_count,
-        )
-        if len(date_ranges) > 1:
-            logger.info(
-                f"日期范围已分割为 {len(date_ranges)} 个子范围，将依次搜索"
+        # ── 日期范围分割（突破 50 页限制）────────────────────────
+        # 注意：如果 _parent_accumulated 不为 None，说明当前调用已经是父级分段的子段，
+        # 不应再次分割，否则会导致 43 个月 × 10 个子段 = 430 个切片的指数级膨胀
+        if start_date and end_date and not resumed and _parent_accumulated is None:
+            from .date_splitter import split_date_range
+            date_ranges = split_date_range(
+                start_date, 
+                end_date, 
+                max_pages=max_pages,
+                target_count=max_count,
             )
-            if task_id:
-                update_task_phase(
-                    task_id,
-                    f"日期范围已拆分为 {len(date_ranges)} 段，开始分段搜索..."
+            if len(date_ranges) > 1:
+                logger.info(
+                    f"日期范围已分割为 {len(date_ranges)} 个子范围，将依次搜索"
                 )
-            all_results: list[dict] = []
-            try:
-                for seg_idx, (seg_start, seg_end) in enumerate(date_ranges):
-                    check_signal(task_id)  # 支持 pause/stop
-                    if task_id:
-                        update_task_phase(
-                            task_id,
-                            f"正在搜索第 {seg_idx + 1}/{len(date_ranges)} 段: "
-                            f"{seg_start} ~ {seg_end}"
-                        )
-                    # 递归调用自身，每段单独搜索
-                    remaining = max(0, max_count - len(all_results)) if max_count > 0 else 0
-                    if max_count > 0 and remaining <= 0:
-                        break
-                    seg_result = search(
-                        keyword=keyword,
-                        max_count=remaining if max_count > 0 else 0,
-                        task_id=task_id,
-                        resume=False,
-                        fetch_comments=fetch_comments,
-                        start_date=seg_start,
-                        end_date=seg_end,
-                        _parent_accumulated=all_results,
-                    )
-                    all_results.extend(seg_result.posts)
-                    # 实时推送合并后的预览
-                    if task_id:
-                        update_preview_tweets(
-                            task_id,
-                            current_page=seg_idx + 1,
-                            tweets_for_preview=all_results,
-                        )
-            except StopSignal:
-                logger.info(f"收到停止信号，微博分段搜索终止 task_id={task_id}")
-            return WeiboSearchResult(posts=all_results, resumed=False)
-
-    # 构建搜索 URL
-    kw_encoded = quote(keyword)
-
-    consecutive_errors = 0  # 连续错误计数
-
-    try:
-        for page in range(start_page, max_pages + 1):
-            # 检查暂停/停止信号
-            check_signal(task_id)
-
-            # 构建 URL
-            url = f"https://s.weibo.com/weibo?q={kw_encoded}&typeall=1&suball=1&count=50&page={page}"
-            if start_date and end_date:
-                url += f"&timescope=custom:{start_date}:{end_date}"
-
-            logger.info(f"微博搜索第 {page} 页: {url}")
-            if task_id:
-                update_task_phase(task_id, f"正在获取微博搜索第 {page} 页...")
-
-            # ── 带重试的页面获取 ──────────────
-            html = None
-            page_error = None
-
-            for retry in range(MAX_PAGE_RETRIES + 1):
-                html, page_error = _safe_get_html(tab, url)
-                if html:
-                    break
-
-                # 错误处理
-                is_crash = page_error and ("crashed" in page_error.lower() or "timeout" in page_error.lower())
-                logger.warning(
-                    f"获取微博搜索页失败 page={page} retry={retry}/{MAX_PAGE_RETRIES}: {page_error}"
-                )
-
-                if is_crash and retry < MAX_PAGE_RETRIES:
-                    # Tab 崩溃：重建 tab
-                    logger.info("检测到 Tab 崩溃/超时，正在重建...")
-                    try:
-                        tab = _get_fresh_tab()
-                        # 重新注入 Cookie
-                        from .cookie_manager import load_cookies, inject_cookies_to_tab
-                        cookies = load_cookies()
-                        if cookies:
-                            tab.get("https://s.weibo.com")
-                            time.sleep(1)
-                            inject_cookies_to_tab(tab, cookies)
-                            time.sleep(1)
-                    except Exception as e:
-                        logger.error(f"重建 Tab 失败: {e}")
-                    interruptible_sleep(RETRY_DELAY, task_id=task_id)
-                elif "反爬拦截" in (page_error or ""):
-                    # 反爬拦截：加大延迟后重试
-                    wait = RETRY_DELAY * (retry + 1) * 2
-                    logger.warning(f"触发反爬，等待 {wait}s 后重试...")
-                    time.sleep(wait)
-                else:
-                    interruptible_sleep(RETRY_DELAY, task_id=task_id)
-
-            if not html:
-                consecutive_errors += 1
-                logger.error(f"获取微博搜索页最终失败 page={page}: {page_error}")
-                if consecutive_errors >= 3:
-                    logger.error("连续 3 页获取失败，终止搜索")
-                    break
-                continue
-            else:
-                consecutive_errors = 0
-
-            # ── 解析结果 ─────────────────────
-            try:
-                posts, has_next, total_pages = parse_search_page(html)
-            except Exception as e:
-                logger.error(f"解析微博搜索结果失败 page={page}: {e}")
-                break
-
-            if page == start_page and total_pages > 0:
-                logger.info(f"微博搜索共 {total_pages} 页")
                 if task_id:
                     update_task_phase(
                         task_id,
-                        f"微博搜索共 {total_pages} 页，正在获取第 {page} 页..."
+                        f"日期范围已拆分为 {len(date_ranges)} 段，开始分段搜索..."
+                    )
+                all_results: list[dict] = []
+                try:
+                    for seg_idx, (seg_start, seg_end) in enumerate(date_ranges):
+                        check_signal(task_id)  # 支持 pause/stop
+                        if task_id:
+                            update_task_phase(
+                                task_id,
+                                f"正在搜索第 {seg_idx + 1}/{len(date_ranges)} 段: "
+                                f"{seg_start} ~ {seg_end}"
+                            )
+                        # 递归调用自身，每段单独搜索
+                        remaining = max(0, max_count - len(all_results)) if max_count > 0 else 0
+                        if max_count > 0 and remaining <= 0:
+                            break
+                        seg_result = search(
+                            keyword=keyword,
+                            max_count=remaining if max_count > 0 else 0,
+                            task_id=task_id,
+                            resume=False,
+                            fetch_comments=fetch_comments,
+                            start_date=seg_start,
+                            end_date=seg_end,
+                            _parent_accumulated=all_results,
+                        )
+                        all_results.extend(seg_result.posts)
+                        # 实时推送合并后的预览
+                        if task_id:
+                            update_preview_tweets(
+                                task_id,
+                                current_page=seg_idx + 1,
+                                tweets_for_preview=all_results,
+                            )
+                except StopSignal:
+                    logger.info(f"收到停止信号，微博分段搜索终止 task_id={task_id}")
+                return WeiboSearchResult(posts=all_results, resumed=False)
+
+        # 构建搜索 URL
+        kw_encoded = quote(keyword)
+
+        consecutive_errors = 0  # 连续错误计数
+
+        try:
+            for page in range(start_page, max_pages + 1):
+                # 检查暂停/停止信号
+                check_signal(task_id)
+
+                # 构建 URL
+                url = f"https://s.weibo.com/weibo?q={kw_encoded}&typeall=1&suball=1&count=50&page={page}"
+                if start_date and end_date:
+                    url += f"&timescope=custom:{start_date}:{end_date}"
+
+                logger.info(f"微博搜索第 {page} 页: {url}")
+                if task_id:
+                    update_task_phase(task_id, f"正在获取微博搜索第 {page} 页...")
+
+                # ── 带重试的页面获取 ──────────────
+                html = None
+                page_error = None
+
+                for retry in range(MAX_PAGE_RETRIES + 1):
+                    html, page_error = _safe_get_html(tab, url)
+                    if html:
+                        break
+
+                    # 错误处理
+                    is_crash = page_error and ("crashed" in page_error.lower() or "timeout" in page_error.lower())
+                    logger.warning(
+                        f"获取微博搜索页失败 page={page} retry={retry}/{MAX_PAGE_RETRIES}: {page_error}"
                     )
 
-            if not posts:
-                logger.info(f"微博搜索第 {page} 页无结果，终止")
-                break
+                    if is_crash and retry < MAX_PAGE_RETRIES:
+                        # Tab 崩溃：重建 tab
+                        logger.info("检测到 Tab 崩溃/超时，正在重建...")
+                        try:
+                            tab = _get_fresh_tab()
+                            # 重新注入 Cookie
+                            from .cookie_manager import load_cookies, inject_cookies_to_tab
+                            cookies = load_cookies()
+                            if cookies:
+                                tab.get("https://s.weibo.com")
+                                time.sleep(1)
+                                inject_cookies_to_tab(tab, cookies)
+                                time.sleep(1)
+                        except Exception as e:
+                            logger.error(f"重建 Tab 失败: {e}")
+                        interruptible_sleep(RETRY_DELAY, task_id=task_id)
+                    elif "反爬拦截" in (page_error or ""):
+                        # 反爬拦截：加大延迟后重试
+                        wait = RETRY_DELAY * (retry + 1) * 2
+                        logger.warning(f"触发反爬，等待 {wait}s 后重试...")
+                        time.sleep(wait)
+                    else:
+                        interruptible_sleep(RETRY_DELAY, task_id=task_id)
 
-            need_comments = fetch_comments and any(
-                p.comments_count > 0 for p in posts
-            )
-            for post_idx, post in enumerate(posts):
-                # 按需抓取评论
-                if fetch_comments and post.comments_count > 0:
+                if not html:
+                    consecutive_errors += 1
+                    logger.error(f"获取微博搜索页最终失败 page={page}: {page_error}")
+                    if consecutive_errors >= 3:
+                        logger.error("连续 3 页获取失败，终止搜索")
+                        break
+                    continue
+                else:
+                    consecutive_errors = 0
+
+                # ── 解析结果 ─────────────────────
+                try:
+                    posts, has_next, total_pages = parse_search_page(html)
+                except Exception as e:
+                    logger.error(f"解析微博搜索结果失败 page={page}: {e}")
+                    break
+
+                if page == start_page and total_pages > 0:
+                    logger.info(f"微博搜索共 {total_pages} 页")
                     if task_id:
                         update_task_phase(
                             task_id,
-                            f"正在抓取第 {page} 页第 {post_idx + 1}/{len(posts)} 条微博的评论..."
+                            f"微博搜索共 {total_pages} 页，正在获取第 {page} 页..."
                         )
-                    try:
-                        comments = do_fetch_comments(
-                            post.mid,
-                            author_uid=post.author_id,
-                            post_url=post.url,
-                            max_comments=settings.weibo_max_comments_per_post,
-                            page_interval=settings.weibo_comment_page_interval,
-                            task_id=task_id,
-                        )
-                        post.comments = comments
-                    except StopSignal:
-                        raise  # 停止信号向上传播
-                    except Exception as e:
-                        logger.warning(f"抓取评论失败 mid={post.mid}: {e}")
-                all_posts_dicts.append(post.to_dict())
 
-            # 评论抓取使用独立标签页，不影响搜索 tab，无需导航回搜索域名
+                if not posts:
+                    logger.info(f"微博搜索第 {page} 页无结果，终止")
+                    break
 
-            logger.info(
-                f"微博搜索第 {page} 页完成，"
-                f"本页 {len(posts)} 条，累计 {len(all_posts_dicts)} 条"
-            )
-
-            # 实时上报进度给前端（合并父级已累积数据，确保前端看到的是全任务数据）
-            combined = (_parent_accumulated or []) + all_posts_dicts
-            if task_id:
-                update_task_phase(
-                    task_id,
-                    f"微博搜索第 {page} 页完成，累计 {len(combined)} 条"
+                need_comments = fetch_comments and any(
+                    p.comments_count > 0 for p in posts
                 )
-                update_preview_tweets(
-                    task_id,
-                    current_page=page,
-                    tweets_for_preview=combined,
-                )
+                for post_idx, post in enumerate(posts):
+                    # 按需抓取评论
+                    if fetch_comments and post.comments_count > 0:
+                        if task_id:
+                            update_task_phase(
+                                task_id,
+                                f"正在抓取第 {page} 页第 {post_idx + 1}/{len(posts)} 条微博的评论..."
+                            )
+                        try:
+                            comments = do_fetch_comments(
+                                post.mid,
+                                author_uid=post.author_id,
+                                post_url=post.url,
+                                max_comments=settings.weibo_max_comments_per_post,
+                                page_interval=settings.weibo_comment_page_interval,
+                                task_id=task_id,
+                            )
+                            post.comments = comments
+                        except StopSignal:
+                            raise  # 停止信号向上传播
+                        except Exception as e:
+                            logger.warning(f"抓取评论失败 mid={post.mid}: {e}")
+                    all_posts_dicts.append(post.to_dict())
 
-            # 保存检查点
-            if task_id:
-                _save_checkpoint(
-                    task_id,
-                    {
-                        "page": page + 1,
-                        "posts": all_posts_dicts,
-                        "keyword": keyword,
-                    },
+                # 评论抓取使用独立标签页，不影响搜索 tab，无需导航回搜索域名
+
+                logger.info(
+                    f"微博搜索第 {page} 页完成，"
+                    f"本页 {len(posts)} 条，累计 {len(all_posts_dicts)} 条"
                 )
 
-            # 检查是否达到 max_count
-            if max_count > 0 and len(all_posts_dicts) >= max_count:
-                break
+                # 实时上报进度给前端（合并父级已累积数据，确保前端看到的是全任务数据）
+                combined = (_parent_accumulated or []) + all_posts_dicts
+                if task_id:
+                    update_task_phase(
+                        task_id,
+                        f"微博搜索第 {page} 页完成，累计 {len(combined)} 条"
+                    )
+                    update_preview_tweets(
+                        task_id,
+                        current_page=page,
+                        tweets_for_preview=combined,
+                    )
 
-            if not has_next:
-                break
+                # 保存检查点
+                if task_id:
+                    _save_checkpoint(
+                        task_id,
+                        {
+                            "page": page + 1,
+                            "posts": all_posts_dicts,
+                            "keyword": keyword,
+                        },
+                    )
 
-            jittered_sleep(page_interval, task_id=task_id)
+                # 检查是否达到 max_count
+                if max_count > 0 and len(all_posts_dicts) >= max_count:
+                    break
 
-    except StopSignal:
-        logger.info(f"收到停止信号，微博搜索终止 task_id={task_id}")
+                if not has_next:
+                    break
+
+                jittered_sleep(page_interval, task_id=task_id)
+
+        except StopSignal:
+            logger.info(f"收到停止信号，微博搜索终止 task_id={task_id}")
+
+    finally:
+        # 确保搜索 tab 在函数结束后关闭
+        if tab is not None:
+            try:
+                tab.close()
+                logger.debug("微博搜索 tab 已关闭")
+            except Exception:
+                pass
 
     return WeiboSearchResult(posts=all_posts_dicts, resumed=resumed)
 
