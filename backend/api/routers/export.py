@@ -32,6 +32,7 @@ EXPORT_FIELDS = [
     ("author_id", "作者ID"),
     ("author_verified", "认证状态"),
     ("author_followers", "作者粉丝数"),
+    ("is_author", "是否楼主"),
     # 内容
     ("text", "推文内容"),
     ("lang", "语言"),
@@ -97,6 +98,10 @@ def _flatten_tweet(tweet: dict) -> dict:
             value = "蓝标认证" if blue else ("已认证" if verified else "")
         elif field == "author_followers":
             value = author.get("followers_count", "")
+        elif field == "is_author":
+            # 微博评论数据中 is_author 标识是否为原帖作者
+            is_author_val = tweet.get("is_author", False)
+            value = "是" if is_author_val else ""
         elif field == "like_count":
             value = tweet.get("like_count") or metrics.get("likes", "")
         elif field == "retweet_count":
@@ -151,31 +156,71 @@ def _flatten_tweet(tweet: dict) -> dict:
     return flat
 
 
-def _collect_replies(replies: list[dict], parent_id: str) -> list[dict]:
-    """递归收集回复，并标注数据类型和所属推文ID"""
+def _collect_replies(
+    replies: list[dict],
+    parent_id: str,
+    parent_author_name: str = "",
+) -> list[dict]:
+    """递归收集回复/评论，标注数据类型、所属推文ID、回复目标用户。
+
+    对于一级评论（直接回复原帖的），如果本身没有 reply_to 字段，
+    则自动填充 reply_to 为原帖作者。
+    """
     all_replies = []
     for reply in replies:
         reply_copy = dict(reply)
-        reply_copy["row_type"] = "回复"
+        reply_copy["row_type"] = "评论"
         reply_copy["parent_tweet_id"] = parent_id
+
+        # 如果评论自身没有 reply_to 信息（一级评论）,
+        # 自动填充为原帖/父级作者
+        existing_reply_to = reply_copy.get("reply_to") or {}
+        if not existing_reply_to.get("screen_name") and parent_author_name:
+            reply_copy.setdefault("reply_to", {})
+            reply_copy["reply_to"]["screen_name"] = parent_author_name
+
         all_replies.append(reply_copy)
+
         nested = reply.get("replies", [])
         if nested and isinstance(nested, list):
-            all_replies.extend(_collect_replies(nested, parent_id=parent_id))
+            # 子评论的 parent_author_name 用当前评论的作者
+            current_author = ""
+            author = reply.get("author") or {}
+            if isinstance(author, dict):
+                current_author = author.get("name", "") or author.get("screen_name", "")
+            all_replies.extend(_collect_replies(
+                nested,
+                parent_id=parent_id,
+                parent_author_name=current_author or parent_author_name,
+            ))
     return all_replies
 
 
 def _collect_all_rows(tweets: list[dict]) -> list[dict]:
-    """递归收集所有推文及其嵌套回复，展平为独立行，并标注数据类型"""
+    """递归收集所有推文及其嵌套评论/回复，展平为独立行，并标注数据类型"""
     all_rows = []
     for tweet in tweets:
         tweet_copy = dict(tweet)
         tweet_copy["row_type"] = "原帖"
         tweet_copy["parent_tweet_id"] = ""
         all_rows.append(tweet_copy)
+
+        # 提取原帖作者名称，供一级评论自动填充 reply_to
+        author = tweet.get("author") or {}
+        parent_author_name = ""
+        if isinstance(author, dict):
+            parent_author_name = (
+                author.get("name", "")
+                or author.get("screen_name", "")
+            )
+
         replies = tweet.get("replies", [])
         if replies and isinstance(replies, list):
-            all_rows.extend(_collect_replies(replies, parent_id=tweet.get("id", "")))
+            all_rows.extend(_collect_replies(
+                replies,
+                parent_id=tweet.get("id", ""),
+                parent_author_name=parent_author_name,
+            ))
     return all_rows
 
 
@@ -291,6 +336,7 @@ def _build_excel(tweets: list[dict]) -> bytes:
         18,  # 作者ID
         10,  # 认证状态
         12,  # 作者粉丝数
+        10,  # 是否楼主
         60,  # 推文内容
          8,  # 语言
         10,  # 点赞数
