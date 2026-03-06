@@ -57,8 +57,8 @@ export function CrawlerConfigCard() {
                             <ConfigRow label="检查点刷新间隔" description="DFS 回复阶段检查点最长刷新间隔" value={config.crawler_checkpoint_flush_interval_sec ?? 4} onChange={set("crawler_checkpoint_flush_interval_sec")} min={0.2} max={60} />
                             <ConfigRow label="检查点批次阈值" description="DFS 回复阶段每累计多少条触发检查点刷新" value={config.crawler_checkpoint_reply_batch ?? 3} onChange={set("crawler_checkpoint_reply_batch")} min={1} max={200} step={1} unit="条" />
                             <ConfigRow label="X 时间分割触发阈值" description="时间跨度达到该天数后自动拆分搜索窗口" value={config.x_time_split_trigger_days ?? 30} onChange={set("x_time_split_trigger_days")} min={1} max={3650} step={1} unit="天" />
-                            <ConfigRow label="X 限定抓取窗口" description="有目标采集数量时，每个时间窗覆盖天数" value={config.x_time_split_window_days ?? 14} onChange={set("x_time_split_window_days")} min={1} max={365} step={1} unit="天" />
-                            <ConfigRow label="X 无上限抓取窗口" description="无上限抓取时，每个时间窗覆盖天数" value={config.x_time_split_window_days_unlimited ?? 7} onChange={set("x_time_split_window_days_unlimited")} min={1} max={365} step={1} unit="天" />
+                            <ConfigRow label="X 限定抓取窗口" description="跨度 < 90 天时的每段天数；≥ 90 天将按月分割" value={config.x_time_split_window_days ?? 14} onChange={set("x_time_split_window_days")} min={1} max={365} step={1} unit="天" />
+                            <ConfigRow label="X 无上限抓取窗口" description="跨度 < 90 天时无上限模式的每段天数；≥ 90 天按月分割" value={config.x_time_split_window_days_unlimited ?? 7} onChange={set("x_time_split_window_days_unlimited")} min={1} max={365} step={1} unit="天" />
                             <ConfigRow label="X 最大分段数" description="自动时间分割最多拆出的时间段数" value={config.x_time_split_max_segments ?? 120} onChange={set("x_time_split_max_segments")} min={1} max={2000} step={1} unit="段" />
                         </div>
 

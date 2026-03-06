@@ -1,8 +1,13 @@
 """
 X 搜索自动时间分割。
+
+根据搜索的时间跨度自适应选择分割粒度：
+- 跨度较短时使用用户配置的 window_days
+- 跨度较长时（≥90 天）自动升级到按月分割，避免分段过多触发反爬
 """
 from __future__ import annotations
 
+import calendar
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -11,6 +16,9 @@ from typing import Optional
 
 _SINCE_RE = re.compile(r"^since:(\d{4}-\d{2}-\d{2})$", re.IGNORECASE)
 _UNTIL_RE = re.compile(r"^until:(\d{4}-\d{2}-\d{2})$", re.IGNORECASE)
+
+# 自适应窗口阈值：超过此天数后切换到按月分割
+_MONTHLY_SPLIT_THRESHOLD_DAYS = 90
 
 
 @dataclass(frozen=True)
@@ -51,6 +59,19 @@ def build_query_with_window(base_query: str, since: str, until: str) -> str:
     return f"{base_query} {suffix}".strip()
 
 
+def _compute_adaptive_window(span_days: int, configured_window: int) -> int:
+    """根据时间跨度自适应计算实际窗口天数。
+
+    策略：
+    - 跨度 < 90 天：使用用户配置的 window_days（如 7/14 天）
+    - 跨度 ≥ 90 天：升级到 30 天（按月级别），避免分段过多触发反爬
+    """
+    if span_days < _MONTHLY_SPLIT_THRESHOLD_DAYS:
+        return max(1, configured_window)
+    # 跨度 ≥ 90 天：至少按 30 天分
+    return max(30, configured_window)
+
+
 def build_time_split_plan(
     query: str,
     *,
@@ -74,8 +95,15 @@ def build_time_split_plan(
     if span_days < max(1, trigger_days):
         return TimeSplitPlan(False, base_query, since, until, ())
 
-    window = max(1, unlimited_window_days if max_count == 0 else window_days)
-    segments = _split_date_range(start, end, window_days=window, max_segments=max_segments)
+    configured_window = max(1, unlimited_window_days if max_count == 0 else window_days)
+    adaptive_window = _compute_adaptive_window(span_days, configured_window)
+
+    # 当跨度 ≥ 90 天时使用按自然月分割，否则仍按固定天数分割
+    if span_days >= _MONTHLY_SPLIT_THRESHOLD_DAYS:
+        segments = _split_by_calendar_month(start, end, max_segments=max_segments)
+    else:
+        segments = _split_by_fixed_days(start, end, window_days=adaptive_window, max_segments=max_segments)
+
     if len(segments) <= 1:
         return TimeSplitPlan(False, base_query, since, until, ())
 
@@ -104,13 +132,48 @@ def deserialize_segments(items: list[dict] | tuple[dict, ...] | None) -> tuple[T
     return tuple(segments)
 
 
-def _split_date_range(
+def _split_by_calendar_month(
+    start: datetime,
+    end: datetime,
+    *,
+    max_segments: int,
+) -> list[TimeSplitSegment]:
+    """按自然月边界分割时间范围。
+
+    每个 segment 从某月某日到下月同一日（或月末），
+    对齐到自然月边界更符合直觉，且每段约 28-31 天，
+    避免了固定天数分割导致的过多分段。
+    """
+    segments: list[TimeSplitSegment] = []
+    total_limit = max(1, max_segments)
+    current = start
+
+    while current < end and len(segments) < total_limit:
+        # 计算下一个月的同一天
+        next_month = _add_one_month(current)
+        segment_end = min(next_month, end)
+
+        segments.append(
+            TimeSplitSegment(
+                since=current.strftime("%Y-%m-%d"),
+                until=segment_end.strftime("%Y-%m-%d"),
+            )
+        )
+        if segment_end >= end:
+            break
+        current = segment_end
+
+    return segments
+
+
+def _split_by_fixed_days(
     start: datetime,
     end: datetime,
     *,
     window_days: int,
     max_segments: int,
 ) -> list[TimeSplitSegment]:
+    """按固定天数分割时间范围（用于短跨度场景）。"""
     segments: list[TimeSplitSegment] = []
     current = start
     total_limit = max(1, max_segments)
@@ -130,6 +193,19 @@ def _split_date_range(
         current = segment_end
 
     return segments
+
+
+def _add_one_month(dt: datetime) -> datetime:
+    """给定日期加一个自然月。例如 2024-01-15 -> 2024-02-15，
+    若目标月没有对应日期则取月末（如 1-31 -> 2-28/29）。"""
+    year = dt.year
+    month = dt.month + 1
+    if month > 12:
+        month = 1
+        year += 1
+    max_day = calendar.monthrange(year, month)[1]
+    day = min(dt.day, max_day)
+    return dt.replace(year=year, month=month, day=day)
 
 
 def _parse_date(value: str) -> Optional[datetime]:

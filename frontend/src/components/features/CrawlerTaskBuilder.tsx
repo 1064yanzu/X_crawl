@@ -73,6 +73,11 @@ export function CrawlerTaskBuilder() {
         if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
         const days = Math.floor((end.getTime() - start.getTime()) / 86400000);
         if (days < splitTriggerDays) return null;
+        const monthlyThreshold = 90;
+        if (days >= monthlyThreshold) {
+            const months = Math.ceil(days / 30);
+            return `检测到 ${days} 天跨度，任务将自动按月分割（约 ${months} 段），降低触发反爬风险。`;
+        }
         return `检测到 ${days} 天跨度，任务会自动按时间窗口拆分搜索以提升覆盖率。`;
     }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays]);
 
