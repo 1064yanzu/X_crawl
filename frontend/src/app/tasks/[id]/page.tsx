@@ -34,6 +34,7 @@ import { TaskLiveKpiBar } from "@/components/features/task-detail/TaskLiveKpiBar
 import { TaskLiveTimeline } from "@/components/features/task-detail/TaskLiveTimeline";
 import { TaskLiveHealth } from "@/components/features/task-detail/TaskLiveHealth";
 import { TaskCoverageRange } from "@/components/features/task-detail/TaskCoverageRange";
+import { TaskSegmentProgress } from "@/components/features/task-detail/TaskSegmentProgress";
 import { cn } from "@/lib/utils";
 
 export default function TaskResultPage() {
@@ -260,6 +261,7 @@ export default function TaskResultPage() {
             {isActive && (
                 <div className="space-y-3">
                     <TaskLiveKpiBar task={task} connected={stream.connected} />
+                    <TaskSegmentProgress task={task} />
                     <TaskLiveHealth task={task} />
                     <TaskCoverageRange task={task} />
                     <TaskLiveTimeline
@@ -274,7 +276,12 @@ export default function TaskResultPage() {
                 </div>
             )}
 
-            {!isActive && task.result_count > 0 && <TaskCoverageRange task={task} />}
+            {!isActive && task.result_count > 0 && (
+                <div className="space-y-3">
+                    <TaskSegmentProgress task={task} />
+                    <TaskCoverageRange task={task} />
+                </div>
+            )}
 
             {task.fetch_replies && <FailedRepliesPanel taskId={task.task_id} taskStatus={task.status} />}
 

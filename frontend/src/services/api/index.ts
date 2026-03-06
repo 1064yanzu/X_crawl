@@ -6,6 +6,15 @@ export type CrawlStrategy = "bfs" | "dfs";
 export type RiskState = "none" | "challenge" | "rate_limited" | "login_required";
 export type QualityState = "complete" | "partial" | "interrupted";
 
+export interface SegmentProgress {
+    enabled: boolean;
+    total_segments: number;
+    completed_segments: number;
+    current_segment_index: number;
+    current_since?: string | null;
+    current_until?: string | null;
+}
+
 export interface TaskOut {
     task_id: string;
     status: TaskStatus;
@@ -26,6 +35,7 @@ export interface TaskOut {
     queue_position?: number | null;
     last_event_at?: string | null;
     resumed: boolean;
+    segment_progress?: SegmentProgress;
     // 回复抓取
     fetch_replies: boolean;
     crawl_strategy: CrawlStrategy;
@@ -111,6 +121,11 @@ export interface CrawlerConfig {
     browser_stealth_enabled?: boolean;
     browser_linux_hardening?: boolean;
     crawler_dedup_enabled?: boolean;   // 跨任务推文去重
+    x_auto_time_split_enabled?: boolean;
+    x_time_split_trigger_days?: number;
+    x_time_split_window_days?: number;
+    x_time_split_window_days_unlimited?: number;
+    x_time_split_max_segments?: number;
 }
 
 // 失败评论记录

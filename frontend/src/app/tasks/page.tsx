@@ -38,7 +38,7 @@ function rangeText(range: Record<string, unknown> | undefined): string {
 
 export default function TasksPage() {
     const { data, isLoading, refetch } = useTasksQuery(5000);
-    const tasks = data ?? [];
+    const tasks = React.useMemo(() => data ?? [], [data]);
     const loading = isLoading;
     const { push } = useToast();
     const [resumingId, setResumingId] = React.useState<string | null>(null);

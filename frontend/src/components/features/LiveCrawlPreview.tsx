@@ -3,7 +3,7 @@ import * as React from "react";
 import type { ReactNode } from "react";
 import {
     Loader2, Pause, Database, Wifi, Code2, ScrollText,
-    Zap, CheckCircle2,
+    Zap, CheckCircle2, SplitSquareVertical,
 } from "lucide-react";
 import { TweetCard } from "@/components/features/TweetCard";
 import { cn } from "@/lib/utils";
@@ -160,6 +160,15 @@ function LiveStatusBanner({
                         覆盖时间: <span className="font-mono">{new Date(task.time_coverage.combined_start_at).toLocaleDateString()} ~ {new Date(task.time_coverage.combined_end_at).toLocaleDateString()}</span>
                     </p>
                 )}
+                {task.segment_progress?.enabled && (task.segment_progress.total_segments ?? 0) > 1 ? (
+                    <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                        <SplitSquareVertical className="h-3 w-3" />
+                        时间分段: {task.segment_progress.completed_segments}/{task.segment_progress.total_segments}
+                        {task.segment_progress.current_since && task.segment_progress.current_until
+                            ? ` · ${task.segment_progress.current_since} ~ ${task.segment_progress.current_until}`
+                            : ""}
+                    </p>
+                ) : null}
             </div>
         </div>
     );

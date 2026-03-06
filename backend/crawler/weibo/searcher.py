@@ -365,15 +365,29 @@ def search(
                                 f"正在抓取第 {page} 页第 {post_idx + 1}/{len(posts)} 条微博的评论..."
                             )
                         try:
-                            comments = do_fetch_comments(
+                            comment_result = do_fetch_comments(
                                 post.mid,
                                 author_uid=post.author_id,
                                 post_url=post.url,
+                                post_comment_count=post.comments_count,
                                 max_comments=settings.weibo_max_comments_per_post,
                                 page_interval=settings.weibo_comment_page_interval,
                                 task_id=task_id,
                             )
-                            post.comments = comments
+                            post.comments = comment_result.comments
+                            from .comment_stats import build_comment_stats, collect_comment_tree_stats
+
+                            tree_stats = collect_comment_tree_stats(comment_result.comments)
+                            post.comment_stats = build_comment_stats(
+                                post_comment_count=post.comments_count,
+                                api_claimed_total=comment_result.api_claimed_total,
+                                fetched_total_count=tree_stats.total_count,
+                                fetched_top_level_count=tree_stats.top_level_count,
+                                max_depth=tree_stats.max_depth,
+                                sub_comment_completion_status=comment_result.sub_comment_completion_status,
+                                truncated_reason=comment_result.truncated_reason,
+                                pages_fetched=comment_result.pages_fetched,
+                            )
                         except StopSignal:
                             raise  # 停止信号向上传播
                         except Exception as e:
@@ -433,4 +447,3 @@ def search(
                 pass
 
     return WeiboSearchResult(posts=all_posts_dicts, resumed=resumed)
-

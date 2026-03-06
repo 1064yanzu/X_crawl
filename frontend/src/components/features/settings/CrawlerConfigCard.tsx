@@ -56,6 +56,10 @@ export function CrawlerConfigCard() {
                             <ConfigRow label="中断轮询粒度" description="长等待期间检查 pause/stop 的频率" value={config.crawler_interrupt_poll_ms ?? 300} onChange={set("crawler_interrupt_poll_ms")} min={50} max={3000} step={50} unit="ms" />
                             <ConfigRow label="检查点刷新间隔" description="DFS 回复阶段检查点最长刷新间隔" value={config.crawler_checkpoint_flush_interval_sec ?? 4} onChange={set("crawler_checkpoint_flush_interval_sec")} min={0.2} max={60} />
                             <ConfigRow label="检查点批次阈值" description="DFS 回复阶段每累计多少条触发检查点刷新" value={config.crawler_checkpoint_reply_batch ?? 3} onChange={set("crawler_checkpoint_reply_batch")} min={1} max={200} step={1} unit="条" />
+                            <ConfigRow label="X 时间分割触发阈值" description="时间跨度达到该天数后自动拆分搜索窗口" value={config.x_time_split_trigger_days ?? 30} onChange={set("x_time_split_trigger_days")} min={1} max={3650} step={1} unit="天" />
+                            <ConfigRow label="X 限定抓取窗口" description="有目标采集数量时，每个时间窗覆盖天数" value={config.x_time_split_window_days ?? 14} onChange={set("x_time_split_window_days")} min={1} max={365} step={1} unit="天" />
+                            <ConfigRow label="X 无上限抓取窗口" description="无上限抓取时，每个时间窗覆盖天数" value={config.x_time_split_window_days_unlimited ?? 7} onChange={set("x_time_split_window_days_unlimited")} min={1} max={365} step={1} unit="天" />
+                            <ConfigRow label="X 最大分段数" description="自动时间分割最多拆出的时间段数" value={config.x_time_split_max_segments ?? 120} onChange={set("x_time_split_max_segments")} min={1} max={2000} step={1} unit="段" />
                         </div>
 
                         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -73,6 +77,14 @@ export function CrawlerConfigCard() {
                                     type="checkbox"
                                     checked={Boolean(config.crawler_dedup_enabled)}
                                     onChange={(e) => setConfig((prev) => ({ ...prev, crawler_dedup_enabled: e.target.checked }))}
+                                />
+                            </label>
+                            <label className="flex items-center justify-between rounded-lg border bg-muted/10 px-3 py-2 text-sm">
+                                <span>X 自动时间分割</span>
+                                <input
+                                    type="checkbox"
+                                    checked={Boolean(config.x_auto_time_split_enabled)}
+                                    onChange={(e) => setConfig((prev) => ({ ...prev, x_auto_time_split_enabled: e.target.checked }))}
                                 />
                             </label>
                             <label className="flex items-center justify-between rounded-lg border bg-muted/10 px-3 py-2 text-sm">

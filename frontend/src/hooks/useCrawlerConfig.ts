@@ -38,6 +38,11 @@ const DEFAULT_CONFIG: CrawlerConfig = {
     browser_stealth_enabled: true,
     browser_linux_hardening: true,
     crawler_dedup_enabled: true,
+    x_auto_time_split_enabled: true,
+    x_time_split_trigger_days: 30,
+    x_time_split_window_days: 14,
+    x_time_split_window_days_unlimited: 7,
+    x_time_split_max_segments: 120,
 };
 
 export function useCrawlerConfig() {

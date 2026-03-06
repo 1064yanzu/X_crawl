@@ -34,9 +34,6 @@ SUB_COMMENT_API_BASE = "https://weibo.com/ajax/statuses/buildComments"
 # 每页最大条数
 _COUNT_PER_PAGE = 20
 
-# 最大翻页数（单条评论的子评论分页上限）
-_MAX_PAGES = 20
-
 # 连续空页容忍次数
 _MAX_EMPTY = 2
 
@@ -107,13 +104,15 @@ def fetch_sub_comments(
         子评论原始 dict 列表，或空列表
     """
     from crawler.utils import check_signal
+    from config import settings
 
     all_subs: list[dict] = []
     seen_ids: set[str] = set()
     max_id = 0
     empty_count = 0
+    max_pages = max(1, int(getattr(settings, "weibo_sub_comment_max_pages", 200)))
 
-    for page in range(1, _MAX_PAGES + 1):
+    for page in range(1, max_pages + 1):
         if task_id:
             try:
                 check_signal(task_id)
@@ -165,7 +164,7 @@ def fetch_sub_comments(
             break
 
         # 翻页间隔
-        if page < _MAX_PAGES:
+        if page < max_pages:
             time.sleep(page_interval)
 
     return all_subs

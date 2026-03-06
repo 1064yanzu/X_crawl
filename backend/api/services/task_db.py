@@ -68,6 +68,7 @@ def init_db(db_path: str | Path) -> None:
                 crawl_strategy        TEXT DEFAULT 'dfs',
                 replies_fetched       INTEGER DEFAULT 0,
                 crawl_phase           TEXT DEFAULT '',
+                segment_progress_json TEXT DEFAULT '{}',
                 tweets_json           TEXT DEFAULT '[]',
                 preview_json          TEXT DEFAULT '[]'
             )
@@ -121,6 +122,7 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "platform",   "TEXT DEFAULT 'x'")
         _ensure_column(conn, "tasks", "start_date", "TEXT")
         _ensure_column(conn, "tasks", "end_date",   "TEXT")
+        _ensure_column(conn, "tasks", "segment_progress_json", "TEXT DEFAULT '{}'")
 
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
@@ -146,6 +148,7 @@ def save_task(task: dict) -> None:
         preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
         runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
         time_coverage_json = json.dumps(task.get("time_coverage", {}), ensure_ascii=False)
+        segment_progress_json = json.dumps(task.get("segment_progress", {}), ensure_ascii=False)
         with _get_conn() as conn:
             conn.execute("""
                 INSERT OR REPLACE INTO tasks (
@@ -154,6 +157,7 @@ def save_task(task: dict) -> None:
                     error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
                     resumed, fetch_replies, max_replies_per_tweet,
                     crawl_strategy, replies_fetched, crawl_phase,
+                    segment_progress_json,
                     tweets_json, preview_json,
                     platform, start_date, end_date
                 ) VALUES (
@@ -162,6 +166,7 @@ def save_task(task: dict) -> None:
                     :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
                     :resumed, :fetch_replies, :max_replies_per_tweet,
                     :crawl_strategy, :replies_fetched, :crawl_phase,
+                    :segment_progress_json,
                     :tweets_json, :preview_json,
                     :platform, :start_date, :end_date
                 )
@@ -187,6 +192,7 @@ def save_task(task: dict) -> None:
                 "crawl_strategy":        task.get("crawl_strategy", "dfs"),
                 "replies_fetched":       task.get("replies_fetched", 0),
                 "crawl_phase":           task.get("crawl_phase", ""),
+                "segment_progress_json": segment_progress_json,
                 "tweets_json":           tweets_json,
                 "preview_json":          preview_json,
                 "platform":              task.get("platform", "x"),
@@ -210,6 +216,7 @@ def save_task_summary(task: dict) -> None:
         preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
         runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
         time_coverage_json = json.dumps(task.get("time_coverage", {}), ensure_ascii=False)
+        segment_progress_json = json.dumps(task.get("segment_progress", {}), ensure_ascii=False)
         with _get_conn() as conn:
             cur = conn.execute(
                 """
@@ -230,6 +237,7 @@ def save_task_summary(task: dict) -> None:
                        crawl_strategy = :crawl_strategy,
                        replies_fetched = :replies_fetched,
                        crawl_phase = :crawl_phase,
+                       segment_progress_json = :segment_progress_json,
                        preview_json = :preview_json
                  WHERE task_id = :task_id
                 """,
@@ -251,6 +259,7 @@ def save_task_summary(task: dict) -> None:
                     "crawl_strategy": task.get("crawl_strategy", "dfs"),
                     "replies_fetched": task.get("replies_fetched", 0),
                     "crawl_phase": task.get("crawl_phase", ""),
+                    "segment_progress_json": segment_progress_json,
                     "preview_json": preview_json,
                 },
             )
@@ -284,6 +293,7 @@ def load_all_tasks() -> list[dict]:
             d["quality_state"]  = d.get("quality_state") or "complete"
             d["runtime_metrics"] = json.loads(d.pop("runtime_metrics_json", "{}") or "{}")
             d["time_coverage"] = json.loads(d.pop("time_coverage_json", "{}") or "{}")
+            d["segment_progress"] = json.loads(d.pop("segment_progress_json", "{}") or "{}")
             d["resumed"]        = bool(d["resumed"])
             d["fetch_replies"]  = bool(d["fetch_replies"])
             d.setdefault("platform", "x")

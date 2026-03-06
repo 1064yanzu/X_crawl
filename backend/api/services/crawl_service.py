@@ -120,11 +120,15 @@ def run_search_task(
                 fetch_replies=fetch_replies,
             )
             tweets = result.posts
+            replies_fetched = sum(
+                int((tweet.get("comment_stats") or {}).get("fetched_total_count", 0))
+                for tweet in tweets
+            )
             task_manager.update_task_result(
                 task_id=task_id,
                 tweets=tweets,
                 resumed=result.resumed,
-                replies_fetched=0,
+                replies_fetched=replies_fetched,
                 quality_state="complete",
                 runtime_metrics=get_metrics(task_id),
             )
@@ -132,7 +136,7 @@ def run_search_task(
                 task_id, "crawler_finished", status="done",
                 phase="微博任务执行完成",
                 delta_tweets=len(tweets),
-                delta_replies=0,
+                delta_replies=replies_fetched,
             )
         else:
             result = search(

@@ -88,6 +88,7 @@ class WeiboPost:
     platform: str = "weibo"
     url: str = ""
     comments: list = field(default_factory=list)
+    comment_stats: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         result: dict = {
@@ -113,6 +114,8 @@ class WeiboPost:
             },
             "replies": [c.to_dict() for c in self.comments],
         }
+        if self.comment_stats:
+            result["comment_stats"] = self.comment_stats
         if self.hashtags:
             result["hashtags"] = self.hashtags
         if self.is_repost:
@@ -129,3 +132,14 @@ class WeiboPost:
                 },
             }
         return result
+
+
+@dataclass
+class WeiboCommentFetchResult:
+    comments: list[WeiboComment] = field(default_factory=list)
+    fetched_total_count: int = 0
+    fetched_top_level_count: int = 0
+    api_claimed_total: int = 0
+    sub_comment_completion_status: str = "top_level_only"
+    truncated_reason: Optional[str] = None
+    pages_fetched: int = 0

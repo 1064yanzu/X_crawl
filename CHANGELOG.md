@@ -2,6 +2,47 @@
 
 ## 2026-03-06
 
+### ✨ 新增：X 搜索自动时间分割（大跨度高级搜索自动拆段）
+
+**背景**：X 原生高级搜索支持 `since:` / `until:`，但单次大跨度搜索容易因为窗口过大而漏掉大量帖子。
+
+**新增**：
+- 新增 `backend/crawler/x_time_splitter.py`：解析查询中的 `since:` / `until:`，按配置生成连续时间窗
+- `x_searcher.py` 接入父任务级自动时间分段执行：
+  - 同一任务内顺序执行多个时间窗
+  - 全局按 tweet id 去重聚合
+  - checkpoint 扩展支持 `mode=time_split`
+  - 新增 `segment_progress` 结构化进度
+- 设置页新增 5 个 X 时间分割配置项：
+  - `x_auto_time_split_enabled`
+  - `x_time_split_trigger_days`
+  - `x_time_split_window_days`
+  - `x_time_split_window_days_unlimited`
+  - `x_time_split_max_segments`
+- 任务创建页在检测到大跨度 `since/until` 时展示自动拆段提示
+- 任务详情页与实时预览横幅新增时间分段进度展示
+
+### 🐛 修复：微博评论 KPI 和覆盖时间低估（二级评论未递归统计）
+
+**问题**：微博帖子虽然已抓到二级评论，但任务汇总层只统计第一层 `replies`，导致：
+- `replies_fetched` 偏低
+- 评论覆盖时间范围偏窄
+- 前端任务 KPI 与帖子详情不一致
+
+**修复**：
+- `task_insights.py` 改为递归统计所有层级评论
+- 微博任务完成时 `crawl_service.py` 显式回写真实评论总数
+- 新增 `comment_stats` 字段解释帖子元数据显示评论数、API 声称总数、实际抓取总数与顶层评论数之间的差异
+
+### 🐛 修复：微博单条评论楼中楼分页被固定 20 页截断
+
+**问题**：`sub_comment_fetcher.py` 对单条顶层评论的子评论分页硬编码 20 页，超大楼中楼会提前停止。
+
+**修复**：
+- 子评论分页上限改为配置驱动（默认 200 页）
+- `comment_fetcher.py` 返回 richer result：`fetched_total_count / fetched_top_level_count / api_claimed_total / truncated_reason / pages_fetched`
+- 新增 `comment_stats.py` 统一生成微博评论诊断数据
+
 ### 🐛 修复：微博搜索/评论爬取后浏览器标签页未关闭（资源泄漏）
 
 **问题**：微博爬取评论时，每条帖子的评论抓取会打开一个新标签页（`get_new_tab()`），评论爬完后标签页正常关闭（`comment_fetcher.py` 已有 `finally` 兜底）。但**搜索主入口** `searcher.py` 的 `search()` 函数创建的搜索 tab 在函数结束后从未关闭，导致标签页不断积累。

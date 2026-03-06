@@ -1,4 +1,5 @@
 "use client";
+import Image from "next/image";
 import { AlertCircle, ShieldAlert } from "lucide-react";
 import { API_BASE_URL } from "@/services/api";
 
@@ -28,7 +29,14 @@ export function TaskAlerts({ error, isRiskPaused, debugScreenshot }: Props) {
                                     [点击放大查看]
                                 </a>
                             </p>
-                            <img src={API_BASE_URL + debugScreenshot} alt="Debug Screenshot" className="max-w-2xl w-full h-auto rounded border border-red-200 dark:border-red-900/50 object-contain max-h-[600px] bg-white dark:bg-black" />
+                            <Image
+                                src={API_BASE_URL + debugScreenshot}
+                                alt="Debug Screenshot"
+                                width={1600}
+                                height={900}
+                                className="max-w-2xl w-full h-auto rounded border border-red-200 dark:border-red-900/50 object-contain max-h-[600px] bg-white dark:bg-black"
+                                unoptimized
+                            />
                         </div>
                     )}
                 </div>
@@ -46,4 +54,3 @@ export function TaskAlerts({ error, isRiskPaused, debugScreenshot }: Props) {
         </>
     );
 }
-

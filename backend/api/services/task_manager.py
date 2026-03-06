@@ -45,6 +45,17 @@ def _touch(task: dict) -> None:
     task["last_event_at"] = _now_iso()
 
 
+def _default_segment_progress() -> dict:
+    return {
+        "enabled": False,
+        "total_segments": 0,
+        "completed_segments": 0,
+        "current_segment_index": 0,
+        "current_since": None,
+        "current_until": None,
+    }
+
+
 def _make_preview(tweets: list[dict]) -> list[dict]:
     from config import settings
     n = settings.crawler_preview_count
@@ -144,6 +155,7 @@ def _ensure_db() -> None:
                 task.setdefault("runtime_metrics", {})
                 task.setdefault("last_event_at", task.get("created_at"))
                 task.setdefault("time_coverage", {})
+                task.setdefault("segment_progress", _default_segment_progress())
                 task.setdefault("platform", "x")
                 task.setdefault("start_date", None)
                 task.setdefault("end_date", None)
@@ -357,6 +369,7 @@ def create_task(
             "quality_state": "complete",
             "runtime_metrics": existing.get("runtime_metrics", {}),
             "time_coverage": existing.get("time_coverage", {}),
+            "segment_progress": existing.get("segment_progress", _default_segment_progress()),
             "last_event_at": _now_iso(),
             "resumed": False,
             "fetch_replies": fetch_replies,
@@ -463,6 +476,19 @@ def update_task_phase(task_id: str, phase: str) -> None:
         risk_state=risk_state,
         page=page,
     )
+
+
+def update_task_segment_progress(task_id: str, progress: Optional[dict]) -> None:
+    if progress is None:
+        progress = _default_segment_progress()
+    merged = {**_default_segment_progress(), **progress}
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        task["segment_progress"] = merged
+        _touch(task)
+    _persist(task_id)
 
 
 def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[dict]) -> None:

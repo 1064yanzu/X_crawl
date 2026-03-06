@@ -34,6 +34,13 @@ from crawler.runtime_metrics import bump_metric
 from crawler.rate_tracker import get_tracker, extract_rate_headers
 from crawler.account_pool import get_pool, compute_dynamic_interval
 from crawler import telemetry
+from crawler.x_time_splitter import (
+    TimeSplitSegment,
+    build_query_with_window,
+    build_time_split_plan,
+    deserialize_segments,
+    serialize_segments,
+)
 import api.services.task_manager as _task_mgr
 from config import settings
 
@@ -154,6 +161,178 @@ class SearchResult:
         self.replies_fetched = replies_fetched
         self.stopped = stopped
         self.failed_replies = failed_replies or []
+
+
+def _merge_tweets_by_id(*groups: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    index_by_id: dict[str, int] = {}
+    for group in groups:
+        for tweet in group or []:
+            tweet_id = str(tweet.get("id", ""))
+            if tweet_id and tweet_id in index_by_id:
+                merged[index_by_id[tweet_id]] = tweet
+                continue
+            index_by_id[tweet_id] = len(merged)
+            merged.append(tweet)
+    return merged
+
+
+def _build_segment_progress(
+    *,
+    enabled: bool,
+    total_segments: int,
+    completed_segments: int,
+    current_segment_index: int,
+    current_since: Optional[str],
+    current_until: Optional[str],
+) -> dict:
+    return {
+        "enabled": enabled,
+        "total_segments": total_segments,
+        "completed_segments": completed_segments,
+        "current_segment_index": current_segment_index,
+        "current_since": current_since,
+        "current_until": current_until,
+    }
+
+
+def _search_with_time_splits(
+    *,
+    keyword: str,
+    max_count: int,
+    product: ProductType,
+    timeout: Optional[float],
+    task_id: Optional[str],
+    resume: bool,
+    fetch_replies: bool,
+    max_replies_per_tweet: int,
+    reply_depth: int,
+    crawl_strategy: CrawlStrategy,
+    checkpoint: Optional[dict] = None,
+) -> SearchResult:
+    if checkpoint and checkpoint.get("mode") == "time_split":
+        base_query = str(checkpoint.get("base_query", "")).strip()
+        segments = deserialize_segments(checkpoint.get("segments"))
+        aggregated = checkpoint.get("aggregated_tweets", []) or []
+        start_index = int(checkpoint.get("current_segment_index", 0))
+    else:
+        plan = build_time_split_plan(
+            keyword,
+            max_count=max_count,
+            enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
+            trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
+            window_days=int(getattr(settings, "x_time_split_window_days", 14)),
+            unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+            max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
+        )
+        if not plan.enabled:
+            raise RuntimeError("时间分割计划未启用，不能进入分段搜索")
+        base_query = plan.base_query
+        segments = plan.segments
+        aggregated = []
+        start_index = 0
+
+    seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
+    total_segments = len(segments)
+
+    for seg_idx in range(start_index, total_segments):
+        segment = segments[seg_idx]
+        progress = _build_segment_progress(
+            enabled=True,
+            total_segments=total_segments,
+            completed_segments=seg_idx,
+            current_segment_index=seg_idx + 1,
+            current_since=segment.since,
+            current_until=segment.until,
+        )
+        if task_id:
+            _task_mgr.update_task_segment_progress(task_id, progress)
+            _task_mgr.update_task_phase(
+                task_id,
+                f"正在执行时间分段 {seg_idx + 1}/{total_segments}: {segment.since} ~ {segment.until}",
+            )
+
+        remaining = max(0, max_count - len(aggregated)) if max_count > 0 else 0
+        if max_count > 0 and remaining <= 0:
+            break
+
+        segment_keyword = build_query_with_window(base_query, segment.since, segment.until)
+        segment_result = search(
+            keyword=segment_keyword,
+            max_count=remaining if max_count > 0 else 0,
+            product=product,
+            timeout=timeout,
+            task_id=task_id,
+            resume=resume and seg_idx == start_index,
+            fetch_replies=fetch_replies,
+            max_replies_per_tweet=max_replies_per_tweet,
+            reply_depth=reply_depth,
+            crawl_strategy=crawl_strategy,
+            _time_split_context={
+                "root_keyword": keyword,
+                "base_query": base_query,
+                "segments": serialize_segments(segments),
+                "current_segment_index": seg_idx,
+                "current_segment": {"since": segment.since, "until": segment.until},
+                "completed_segments": seg_idx,
+                "parent_tweets": aggregated,
+            },
+        )
+        aggregated = _merge_tweets_by_id(aggregated, segment_result.tweets)
+        seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
+
+        if task_id:
+            progress = _build_segment_progress(
+                enabled=True,
+                total_segments=total_segments,
+                completed_segments=seg_idx + 1,
+                current_segment_index=min(seg_idx + 2, total_segments),
+                current_since=segments[seg_idx + 1].since if seg_idx + 1 < total_segments else None,
+                current_until=segments[seg_idx + 1].until if seg_idx + 1 < total_segments else None,
+            )
+            _task_mgr.update_task_segment_progress(task_id, progress)
+            current_page = int((_task_mgr.get_task(task_id) or {}).get("current_page", 0))
+            _task_mgr.update_task_progress(task_id, current_page, aggregated)
+
+            save_checkpoint(
+                task_id=task_id,
+                keyword=segment_keyword,
+                product=product,
+                tweets_so_far=segment_result.tweets,
+                next_cursor=None,
+                page_fetched=0,
+                extra={
+                    "mode": "time_split",
+                    "root_keyword": keyword,
+                    "base_query": base_query,
+                    "segments": serialize_segments(segments),
+                    "current_segment_index": seg_idx + 1,
+                    "aggregated_tweets": aggregated,
+                    "segment_progress": progress,
+                },
+            )
+
+        if max_count > 0 and len(seen_ids) >= max_count:
+            break
+
+    final_tweets = aggregated[:max_count] if max_count else aggregated
+    if task_id:
+        _task_mgr.update_task_segment_progress(task_id, _build_segment_progress(
+            enabled=True,
+            total_segments=total_segments,
+            completed_segments=min(total_segments, len(segments)),
+            current_segment_index=total_segments if total_segments else 0,
+            current_since=None,
+            current_until=None,
+        ))
+
+    return SearchResult(
+        tweets=final_tweets,
+        total_fetched=len(final_tweets),
+        keyword=keyword,
+        resumed=bool(checkpoint),
+        replies_fetched=_count_replies(final_tweets),
+    )
 
 
 def _to_risk_state(state: PageState) -> RiskState:
@@ -298,6 +477,7 @@ def search(
     max_replies_per_tweet: int = 20,
     reply_depth: int = 2,
     crawl_strategy: CrawlStrategy = "dfs",  # 保留参数兼容旧调用，统一走 DFS
+    _time_split_context: Optional[dict] = None,
 ) -> SearchResult:
     """
     搜索 X 推文（含断点续爬 + 可选回复抓取 + 可暂停/可终止）
@@ -334,9 +514,129 @@ def search(
     _last_bottom_cursor: Optional[str] = None  # 追踪最后有效 cursor，用于兜底保存
     _crawl_start_time = time.monotonic()
     _long_rest_done_at = 0.0  # 上次长休息时间戳
+    ckpt: Optional[dict] = None
 
-    if resume and task_id:
+    time_split_active = bool(_time_split_context)
+    segment_prefix = ""
+    segment_progress = None
+    parent_tweets: list[dict] = []
+    if time_split_active:
+        current_segment = _time_split_context.get("current_segment", {})
+        current_segment_index = int(_time_split_context.get("current_segment_index", 0))
+        segments = _time_split_context.get("segments", [])
+        total_segments = len(segments)
+        parent_tweets = list(_time_split_context.get("parent_tweets", []))
+        segment_progress = _build_segment_progress(
+            enabled=True,
+            total_segments=total_segments,
+            completed_segments=int(_time_split_context.get("completed_segments", 0)),
+            current_segment_index=current_segment_index + 1,
+            current_since=current_segment.get("since"),
+            current_until=current_segment.get("until"),
+        )
+        segment_prefix = (
+            f"时间分段 {current_segment_index + 1}/{total_segments} "
+            f"[{current_segment.get('since')} ~ {current_segment.get('until')}] · "
+        )
+
+    def _combine_for_task(segment_tweets: list[dict]) -> list[dict]:
+        if not time_split_active:
+            return segment_tweets
+        return _merge_tweets_by_id(parent_tweets, segment_tweets)
+
+    def _save_search_checkpoint(
+        tweets_so_far: list[dict],
+        next_cursor: Optional[str],
+        page_fetched_to_save: int,
+    ) -> None:
+        extra = _build_checkpoint_extra(tweets_so_far)
+        save_checkpoint(
+            task_id=task_id,
+            keyword=_search_keyword,
+            product=_search_product,
+            tweets_so_far=tweets_so_far,
+            next_cursor=next_cursor,
+            page_fetched=page_fetched_to_save,
+            extra=extra,
+        )
+
+    def _build_checkpoint_extra(tweets_so_far: list[dict]) -> Optional[dict]:
+        extra = None
+        if time_split_active:
+            extra = {
+                "mode": "time_split",
+                "root_keyword": _time_split_context.get("root_keyword", keyword),
+                "base_query": _time_split_context.get("base_query", ""),
+                "segments": _time_split_context.get("segments", []),
+                "current_segment_index": int(_time_split_context.get("current_segment_index", 0)),
+                "aggregated_tweets": _combine_for_task(tweets_so_far),
+                "segment_progress": segment_progress or {},
+            }
+        return extra
+
+    def _update_phase(message: str) -> None:
+        if not task_id:
+            return
+        if segment_progress:
+            _task_mgr.update_task_segment_progress(task_id, segment_progress)
+        _task_mgr.update_task_phase(task_id, f"{segment_prefix}{message}" if segment_prefix else message)
+
+    def _update_progress(current_page: int, tweets_so_far: list[dict]) -> None:
+        if not task_id:
+            return
+        _task_mgr.update_task_progress(task_id, current_page, _combine_for_task(tweets_so_far))
+        if segment_progress:
+            _task_mgr.update_task_segment_progress(task_id, segment_progress)
+
+    def _update_preview(current_page: int, tweets_so_far: list[dict]) -> None:
+        if not task_id:
+            return
+        _task_mgr.update_preview_tweets(task_id, current_page, _combine_for_task(tweets_so_far))
+        if segment_progress:
+            _task_mgr.update_task_segment_progress(task_id, segment_progress)
+
+    if task_id and resume:
         ckpt = load_checkpoint(task_id)
+        if not time_split_active and ckpt and ckpt.get("mode") == "time_split" and ckpt.get("root_keyword") == keyword and ckpt.get("product") == product:
+            return _search_with_time_splits(
+                keyword=keyword,
+                max_count=max_count,
+                product=product,
+                timeout=timeout,
+                task_id=task_id,
+                resume=resume,
+                fetch_replies=fetch_replies,
+                max_replies_per_tweet=max_replies_per_tweet,
+                reply_depth=reply_depth,
+                crawl_strategy=crawl_strategy,
+                checkpoint=ckpt,
+            )
+        if (
+            not time_split_active
+            and not (ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product)
+        ):
+            plan = build_time_split_plan(
+                keyword,
+                max_count=max_count,
+                enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
+                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
+                window_days=int(getattr(settings, "x_time_split_window_days", 14)),
+                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
+            )
+            if plan.enabled:
+                return _search_with_time_splits(
+                    keyword=keyword,
+                    max_count=max_count,
+                    product=product,
+                    timeout=timeout,
+                    task_id=task_id,
+                    resume=resume,
+                    fetch_replies=fetch_replies,
+                    max_replies_per_tweet=max_replies_per_tweet,
+                    reply_depth=reply_depth,
+                    crawl_strategy=crawl_strategy,
+                )
         if ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product:
             all_tweets = ckpt.get("tweets", [])
             seen_ids = {t["id"] for t in all_tweets if t.get("id")}
@@ -382,6 +682,30 @@ def search(
                     replies_fetched=_count_replies(all_tweets),
                     failed_replies=_resume_failed,
                 )
+
+    if task_id and not time_split_active and ckpt is None:
+        plan = build_time_split_plan(
+            keyword,
+            max_count=max_count,
+            enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
+            trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
+            window_days=int(getattr(settings, "x_time_split_window_days", 14)),
+            unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+            max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
+        )
+        if plan.enabled:
+            return _search_with_time_splits(
+                keyword=keyword,
+                max_count=max_count,
+                product=product,
+                timeout=timeout,
+                task_id=task_id,
+                resume=resume,
+                fetch_replies=fetch_replies,
+                max_replies_per_tweet=max_replies_per_tweet,
+                reply_depth=reply_depth,
+                crawl_strategy=crawl_strategy,
+            )
 
     # ── 2. 启动浏览器标签页 ─────────────────────────────────────────
     tab = get_new_tab()
@@ -461,7 +785,7 @@ def search(
 
             logger.info(f"等待第 {page_num} 页数据包（timeout={timeout}s）...")
             if task_id:
-                _task_mgr.update_task_phase(task_id, f"等待第 {page_num} 页数据包...")
+                _update_phase(f"等待第 {page_num} 页数据包...")
                 telemetry.record_event(
                     task_id,
                     "search_wait_packet",
@@ -518,23 +842,11 @@ def search(
                     # ★ 关键修复：不使用 update_task_progress 保存无回复的 tweets，
                     #   避免后续 _persist 调用用无回复版本覆盖数据库
                     if task_id:
-                        _task_mgr.update_task_phase(
-                            task_id,
-                            f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复..."
-                        )
+                        _update_phase(f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复...")
                         # 更新预览推文 + 同步 tweets 到内存和 DB
-                        _task_mgr.update_preview_tweets(
-                            task_id, page_num, list(all_tweets) + new_tweets
-                        )
+                        _update_preview(page_num, list(all_tweets) + new_tweets)
                         # 保存 checkpoint：确保搜索到的推文在回复抓取阶段崩溃时不丢失
-                        save_checkpoint(
-                            task_id=task_id,
-                            keyword=_search_keyword,
-                            product=_search_product,
-                            tweets_so_far=list(all_tweets) + new_tweets,
-                            next_cursor=bottom_cursor,
-                            page_fetched=page_num,
-                        )
+                        _save_search_checkpoint(list(all_tweets) + new_tweets, bottom_cursor, page_num)
 
                     # 停止搜索监听，切换到回复抓取，完成后重新开启搜索监听
                     tab.listen.stop()
@@ -567,9 +879,10 @@ def search(
                                 tweets_so_far=interim_tweets,
                                 next_cursor=bottom_cursor,
                                 page_fetched=page_num,
+                                extra=_build_checkpoint_extra(interim_tweets),
                             )
                             if flushed:
-                                _task_mgr.update_task_progress(task_id, page_num, interim_tweets)
+                                _update_progress(page_num, interim_tweets)
 
                         # DFS 期间让搜索页保持微滚动（模拟人类偶尔回来看看）
                         try:
@@ -598,15 +911,8 @@ def search(
                         if e.partial_tweets:
                             all_tweets.extend(e.partial_tweets)
                         if task_id:
-                            _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
-                            save_checkpoint(
-                                task_id=task_id,
-                                keyword=_search_keyword,
-                                product=_search_product,
-                                tweets_so_far=list(all_tweets),
-                                next_cursor=bottom_cursor,
-                                page_fetched=page_num,
-                            )
+                            _update_progress(page_num, list(all_tweets))
+                            _save_search_checkpoint(list(all_tweets), bottom_cursor, page_num)
                         raise
                     finally:
                         tab.listen.start(SEARCH_TIMELINE_PATTERN)
@@ -631,16 +937,9 @@ def search(
 
                 # 写检查点（每页立即保存）
                 if task_id:
-                    save_checkpoint(
-                        task_id=task_id,
-                        keyword=keyword,
-                        product=product,
-                        tweets_so_far=all_tweets,
-                        next_cursor=bottom_cursor,
-                        page_fetched=page_num,
-                    )
-                    _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
-                    _task_mgr.update_task_phase(task_id, f"已完成第 {page_num} 页，共 {len(all_tweets)} 条")
+                    _save_search_checkpoint(all_tweets, bottom_cursor, page_num)
+                    _update_progress(page_num, list(all_tweets))
+                    _update_phase(f"已完成第 {page_num} 页，共 {len(_combine_for_task(all_tweets))} 条")
 
                 if not bottom_cursor:
                     logger.info("无更多数据（bottom_cursor 为空），停止")
@@ -657,9 +956,7 @@ def search(
                         _micro_wait = random.uniform(30, 90)
                         logger.info(f"微休息 {_micro_wait:.0f}s（模拟阅读有趣内容暂停）...")
                         if task_id:
-                            _task_mgr.update_task_phase(
-                                task_id, f"微休息中 ({_micro_wait:.0f}s)，稍后继续..."
-                            )
+                            _update_phase(f"微休息中 ({_micro_wait:.0f}s)，稍后继续...")
                         interruptible_sleep(_micro_wait, task_id=task_id)
                     # 小憩（每 short_break_every_n 条推文，3-8 分钟）
                     _short_n = getattr(settings, "crawler_short_break_every_n", 250)
@@ -671,9 +968,7 @@ def search(
                                 f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条，模拟起身休息）..."
                             )
                             if task_id:
-                                _task_mgr.update_task_phase(
-                                    task_id, f"小憩中 ({_short_wait:.0f}s)，稍后继续..."
-                                )
+                                _update_phase(f"小憩中 ({_short_wait:.0f}s)，稍后继续...")
                             interruptible_sleep(_short_wait, task_id=task_id)
                     # 长休息（每 long_rest_interval_hours 小时，15-25 分钟）
                     _rest_h = getattr(settings, "crawler_long_rest_interval_hours", 2.0)
@@ -686,9 +981,7 @@ def search(
                             f"长休息 {_long_wait/60:.0f}min（运行 {(_now_mono - _crawl_start_time)/3600:.1f}h，模拟离开电脑）..."
                         )
                         if task_id:
-                            _task_mgr.update_task_phase(
-                                task_id, f"长休息中 ({_long_wait/60:.0f}min)，稍后继续..."
-                            )
+                            _update_phase(f"长休息中 ({_long_wait/60:.0f}min)，稍后继续...")
                         interruptible_sleep(_long_wait, task_id=task_id)
                         _long_rest_done_at = time.monotonic()
 
@@ -744,15 +1037,8 @@ def search(
         # ── 安全兜底：无论何种原因退出，都尝试保存已采集数据 ──
         if task_id and all_tweets:
             try:
-                save_checkpoint(
-                    task_id=task_id,
-                    keyword=keyword,
-                    product=product,
-                    tweets_so_far=all_tweets,
-                    next_cursor=_last_bottom_cursor,  # 使用最后有效 cursor，而非 None
-                    page_fetched=page_num,
-                )
-                _task_mgr.update_task_progress(task_id, page_num, list(all_tweets))
+                _save_search_checkpoint(all_tweets, _last_bottom_cursor, page_num)
+                _update_progress(page_num, list(all_tweets))
                 logger.info(
                     f"安全兜底保存: {len(all_tweets)} 条推文已持久化"
                     f"（cursor={'有' if _last_bottom_cursor else '无'}）"
@@ -836,7 +1122,23 @@ def _fetch_replies_for_tweets(
 
 def _count_replies(tweets: list[dict]) -> int:
     """统计推文列表中回复总数"""
-    return sum(len(tweet.get("replies", [])) for tweet in tweets)
+    total = 0
+
+    def _walk(nodes: list[dict]) -> None:
+        nonlocal total
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            total += 1
+            replies = node.get("replies") or []
+            if isinstance(replies, list) and replies:
+                _walk(replies)
+
+    for tweet in tweets:
+        replies = tweet.get("replies") or []
+        if isinstance(replies, list) and replies:
+            _walk(replies)
+    return total
 
 
 # ═══════════════════════════════════════════════════════════════════

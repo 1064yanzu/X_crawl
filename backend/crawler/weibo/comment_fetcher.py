@@ -25,7 +25,8 @@ from typing import Optional
 
 import requests as http_requests
 
-from .models import WeiboComment
+from .comment_stats import build_comment_stats, collect_comment_tree_stats
+from .models import WeiboComment, WeiboCommentFetchResult
 
 logger = logging.getLogger(__name__)
 
@@ -275,10 +276,11 @@ def fetch_comments(
     mid: str,
     author_uid: str = "",
     post_url: str = "",
+    post_comment_count: int = 0,
     max_comments: int = 500,
     page_interval: float = 4.0,
     task_id: str | None = None,
-) -> list[WeiboComment]:
+) -> WeiboCommentFetchResult:
     """
     抓取微博评论（v6 - 首页网络拦截 + Python requests 翻页）。
 
@@ -304,6 +306,10 @@ def fetch_comments(
     all_raw_data: list[dict] = []  # 保留原始数据，子评论补全后重新解析
     session: http_requests.Session | None = None
     api_headers: dict[str, str] = {}
+    pages_fetched = 0
+    truncated_reason: str | None = None
+    sub_comment_completion_status = "top_level_only"
+    total_number = 0
 
     page_url = _build_post_url(author_uid, post_url, mid)
     logger.info(f"评论抓取：打开帖子页面 URL={page_url} (mid={mid})")
@@ -332,7 +338,7 @@ def fetch_comments(
         current_url = tab.url or ""
         if "passport.weibo.com" in current_url or "security.weibo.com" in current_url:
             logger.warning(f"评论抓取：被重定向到登录/安全页面 URL={current_url}，放弃")
-            return []
+            return WeiboCommentFetchResult(truncated_reason="redirected_to_login")
 
         # 等待首个评论数据包
         first_data = None
@@ -356,12 +362,13 @@ def fetch_comments(
 
         if not first_data or first_data.get("ok") != 1:
             logger.warning(f"评论 mid={mid} 首页数据获取失败")
-            return []
+            return WeiboCommentFetchResult(truncated_reason="first_page_failed")
 
         # 解析首页评论
         page_data = first_data.get("data", [])
         next_max_id = first_data.get("max_id", 0)
         total_number = first_data.get("total_number", 0)
+        pages_fetched = 1
 
         # 保留原始数据供后续子评论补全
         for c in page_data:
@@ -440,6 +447,7 @@ def fetch_comments(
                 page_data = data.get("data", [])
                 next_max_id = data.get("max_id", 0)
                 total_number = data.get("total_number", total_number)
+                pages_fetched = max(pages_fetched, page_num)
 
                 new_top = 0
                 for c in page_data:
@@ -467,6 +475,7 @@ def fetch_comments(
 
                 if len(all_raw_data) >= max_comments:
                     logger.info(f"评论 mid={mid} 顶层已达上限 {max_comments}，停止")
+                    truncated_reason = f"top_level_limit_reached:{max_comments}"
                     break
 
                 if not next_max_id:
@@ -497,6 +506,9 @@ def fetch_comments(
                 )
                 if _update_phase:
                     _update_phase(f"二级评论补全完成，新增 {new_subs} 条")
+                sub_comment_completion_status = "complete"
+            elif all_raw_data:
+                sub_comment_completion_status = "complete"
 
         # ─── 解析所有评论 ────────────────────────────────────────────
         for c in all_raw_data:
@@ -504,6 +516,8 @@ def fetch_comments(
 
     except Exception as e:
         logger.error(f"评论抓取异常 mid={mid}: {e}", exc_info=True)
+        if truncated_reason is None:
+            truncated_reason = f"exception:{type(e).__name__}"
     finally:
         if tab is not None:
             try:
@@ -515,12 +529,35 @@ def fetch_comments(
             except Exception:
                 pass
 
-    all_count = _count_all_comments(comments)
-    logger.info(
-        f"评论抓取完成 mid={mid}，顶层 {len(comments)} 条，"
-        f"含子评论共 {all_count} 条（API total_number={total_number}）"
+    tree_stats = collect_comment_tree_stats(comments)
+    if sub_comment_completion_status == "top_level_only" and tree_stats.total_count > tree_stats.top_level_count:
+        sub_comment_completion_status = "partial"
+    if truncated_reason and sub_comment_completion_status == "complete":
+        sub_comment_completion_status = "partial"
+    comment_stats = build_comment_stats(
+        post_comment_count=post_comment_count,
+        api_claimed_total=total_number,
+        fetched_total_count=tree_stats.total_count,
+        fetched_top_level_count=tree_stats.top_level_count,
+        max_depth=tree_stats.max_depth,
+        sub_comment_completion_status=sub_comment_completion_status,
+        truncated_reason=truncated_reason,
+        pages_fetched=pages_fetched,
     )
-    return comments
+    logger.info(
+        f"评论抓取完成 mid={mid}，顶层 {tree_stats.top_level_count} 条，"
+        f"含子评论共 {tree_stats.total_count} 条（API total_number={total_number}，"
+        f"状态={sub_comment_completion_status}）"
+    )
+    return WeiboCommentFetchResult(
+        comments=comments,
+        fetched_total_count=comment_stats["fetched_total_count"],
+        fetched_top_level_count=comment_stats["fetched_top_level_count"],
+        api_claimed_total=comment_stats["api_claimed_total"],
+        sub_comment_completion_status=sub_comment_completion_status,
+        truncated_reason=truncated_reason,
+        pages_fetched=pages_fetched,
+    )
 
 
 # ────────────────────────────────────────────────────────────

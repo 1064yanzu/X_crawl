@@ -96,6 +96,21 @@ def summarize_tweets(tweets: list[dict]) -> tuple[int, dict]:
     reply_ts_count = 0
     replies_count = 0
 
+    def _walk_replies(nodes: list[dict]) -> None:
+        nonlocal replies_count, reply_min, reply_max, reply_ts_count
+        for reply in nodes:
+            if not isinstance(reply, dict):
+                continue
+            replies_count += 1
+            reply_dt = _parse_iso(reply.get("created_at"))
+            if reply_dt:
+                reply_ts_count += 1
+                reply_min = reply_dt if reply_min is None else min(reply_min, reply_dt)
+                reply_max = reply_dt if reply_max is None else max(reply_max, reply_dt)
+            nested = reply.get("replies") or []
+            if isinstance(nested, list) and nested:
+                _walk_replies(nested)
+
     for tweet in tweets:
         tweet_dt = _parse_iso(tweet.get("created_at"))
         if tweet_dt:
@@ -105,16 +120,7 @@ def summarize_tweets(tweets: list[dict]) -> tuple[int, dict]:
 
         replies = tweet.get("replies") or []
         if isinstance(replies, list):
-            replies_count += len(replies)
-            for reply in replies:
-                if not isinstance(reply, dict):
-                    continue
-                reply_dt = _parse_iso(reply.get("created_at"))
-                if not reply_dt:
-                    continue
-                reply_ts_count += 1
-                reply_min = reply_dt if reply_min is None else min(reply_min, reply_dt)
-                reply_max = reply_dt if reply_max is None else max(reply_max, reply_dt)
+            _walk_replies(replies)
 
     merged_start = min([d for d in (tweet_min, reply_min) if d is not None], default=None)
     merged_end = max([d for d in (tweet_max, reply_max) if d is not None], default=None)

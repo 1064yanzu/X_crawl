@@ -73,6 +73,11 @@ class CrawlerConfig(BaseModel):
     raw_responses_max_pages: int = Field(default=0, ge=0, le=20000, description="每任务最多保存页数（0=不限制）")
     # 去重配置
     crawler_dedup_enabled: bool = Field(default=True, description="是否启用跨任务推文去重（缓存命中后跳过重复抓取）")
+    x_auto_time_split_enabled: bool = Field(default=True, description="是否启用 X 搜索自动时间分割")
+    x_time_split_trigger_days: int = Field(default=30, ge=1, le=3650, description="X 搜索时间跨度达到该值后触发时间分割")
+    x_time_split_window_days: int = Field(default=14, ge=1, le=365, description="X 限定抓取模式下的时间窗天数")
+    x_time_split_window_days_unlimited: int = Field(default=7, ge=1, le=365, description="X 无上限抓取模式下的时间窗天数")
+    x_time_split_max_segments: int = Field(default=120, ge=1, le=2000, description="X 自动时间分割最大时间段数")
 
 
 @router.get(
@@ -119,6 +124,11 @@ async def get_crawler_config() -> CrawlerConfig:
         save_raw_responses=settings.save_raw_responses,
         raw_responses_max_pages=settings.raw_responses_max_pages,
         crawler_dedup_enabled=settings.crawler_dedup_enabled,
+        x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
+        x_time_split_trigger_days=settings.x_time_split_trigger_days,
+        x_time_split_window_days=settings.x_time_split_window_days,
+        x_time_split_window_days_unlimited=settings.x_time_split_window_days_unlimited,
+        x_time_split_max_segments=settings.x_time_split_max_segments,
     )
 
 
@@ -171,6 +181,11 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.save_raw_responses = config.save_raw_responses
     settings.raw_responses_max_pages = config.raw_responses_max_pages
     settings.crawler_dedup_enabled = config.crawler_dedup_enabled
+    settings.x_auto_time_split_enabled = config.x_auto_time_split_enabled
+    settings.x_time_split_trigger_days = config.x_time_split_trigger_days
+    settings.x_time_split_window_days = config.x_time_split_window_days
+    settings.x_time_split_window_days_unlimited = config.x_time_split_window_days_unlimited
+    settings.x_time_split_max_segments = config.x_time_split_max_segments
 
     # 构建要持久化的设置 dict
     persist = {
@@ -203,6 +218,11 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "save_raw_responses": settings.save_raw_responses,
         "raw_responses_max_pages": settings.raw_responses_max_pages,
         "crawler_dedup_enabled": settings.crawler_dedup_enabled,
+        "x_auto_time_split_enabled": settings.x_auto_time_split_enabled,
+        "x_time_split_trigger_days": settings.x_time_split_trigger_days,
+        "x_time_split_window_days": settings.x_time_split_window_days,
+        "x_time_split_window_days_unlimited": settings.x_time_split_window_days_unlimited,
+        "x_time_split_max_segments": settings.x_time_split_max_segments,
     }
 
     # 可选字段：只在显式传入时持久化
@@ -269,4 +289,9 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         save_raw_responses=settings.save_raw_responses,
         raw_responses_max_pages=settings.raw_responses_max_pages,
         crawler_dedup_enabled=settings.crawler_dedup_enabled,
+        x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
+        x_time_split_trigger_days=settings.x_time_split_trigger_days,
+        x_time_split_window_days=settings.x_time_split_window_days,
+        x_time_split_window_days_unlimited=settings.x_time_split_window_days_unlimited,
+        x_time_split_max_segments=settings.x_time_split_max_segments,
     )

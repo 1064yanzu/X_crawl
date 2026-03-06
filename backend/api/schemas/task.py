@@ -49,6 +49,15 @@ class CheckpointInfo(BaseModel):
     can_resume: bool
 
 
+class SegmentProgress(BaseModel):
+    enabled: bool = Field(default=False, description="是否启用时间分段抓取")
+    total_segments: int = Field(default=0, description="总时间段数")
+    completed_segments: int = Field(default=0, description="已完成时间段数")
+    current_segment_index: int = Field(default=0, description="当前时间段索引（从 1 开始）")
+    current_since: Optional[str] = Field(default=None, description="当前时间段起始日期 YYYY-MM-DD")
+    current_until: Optional[str] = Field(default=None, description="当前时间段结束日期 YYYY-MM-DD")
+
+
 class TaskOut(BaseModel):
     task_id: str
     status: TaskStatus
@@ -69,6 +78,7 @@ class TaskOut(BaseModel):
     queue_position: Optional[int] = Field(default=None, description="队列位置（pending 时有效）")
     last_event_at: Optional[str] = Field(default=None, description="最近状态事件时间（ISO）")
     resumed: bool = Field(default=False, description="是否从断点恢复")
+    segment_progress: SegmentProgress = Field(default_factory=SegmentProgress, description="时间分段抓取进度")
     # ── 回复相关字段 ──
     fetch_replies: bool = Field(default=False)
     crawl_strategy: CrawlStrategy = Field(default="bfs")

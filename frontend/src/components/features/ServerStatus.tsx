@@ -3,16 +3,20 @@ import * as React from "react";
 import { Badge } from "@/components/ui/badge";
 import { AppWindow, ActivitySquare } from "lucide-react";
 import { useHealthQuery } from "@/hooks/useHealth";
-import { API_BASE_URL } from "@/services/api";
+import { API_BASE_URL, HealthResponse } from "@/services/api";
 
 export function ServerStatus() {
     const { data: health, isLoading: loading, isError: error, error: queryError } = useHealthQuery();
-    const [fallbackHealth, setFallbackHealth] = React.useState<any>(null);
+    const [fallbackHealth, setFallbackHealth] = React.useState<HealthResponse | null>(null);
     const [fallbackError, setFallbackError] = React.useState<string>("");
     const [lastCheckAt, setLastCheckAt] = React.useState<string>("");
 
     React.useEffect(() => {
-        let timer: any;
+        const toMessage = (value: unknown) => {
+            if (value instanceof Error) return value.message;
+            return String(value ?? "fallback failed");
+        };
+
         const run = async () => {
             try {
                 const resp = await fetch(`${API_BASE_URL}/health?t=${Date.now()}`, { cache: "no-store" });
@@ -21,16 +25,16 @@ export function ServerStatus() {
                     setFallbackError(`fallback http ${resp.status}`);
                     return;
                 }
-                const data = await resp.json();
+                const data = await resp.json() as HealthResponse;
                 setFallbackHealth(data);
                 setFallbackError("");
-            } catch (e: any) {
-                setFallbackError(String(e?.message || e || "fallback failed"));
+            } catch (e: unknown) {
+                setFallbackError(toMessage(e));
             }
         };
 
         if (error) run();
-        timer = setInterval(run, 10000);
+        const timer = setInterval(run, 10000);
         return () => clearInterval(timer);
     }, [error]);
 
@@ -81,7 +85,7 @@ export function ServerStatus() {
 
             <div className="text-[11px] text-muted-foreground border-t pt-2 space-y-1">
                 <div>debug api: <span className="font-mono">{API_BASE_URL}</span></div>
-                <div>debug react-query: {error ? "error" : "ok"}{queryError ? ` | ${String((queryError as any)?.message || "")}` : ""}</div>
+                <div>debug react-query: {error ? "error" : "ok"}{queryError instanceof Error ? ` | ${queryError.message}` : ""}</div>
                 <div>debug fallback: {fallbackError ? `error | ${fallbackError}` : (fallbackHealth ? "ok" : "empty")}</div>
                 <div>debug last-check: {lastCheckAt || "-"}</div>
             </div>

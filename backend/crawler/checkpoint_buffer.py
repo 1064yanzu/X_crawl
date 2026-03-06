@@ -22,6 +22,7 @@ class _ReplyCheckpointState:
     tweets_so_far: list[dict]
     next_cursor: Optional[str]
     page_fetched: int
+    extra: Optional[dict]
     pending_items: int
     last_flush_at: float
 
@@ -46,6 +47,7 @@ def stage_reply_checkpoint(
     tweets_so_far: list[dict],
     next_cursor: Optional[str],
     page_fetched: int,
+    extra: Optional[dict] = None,
 ) -> bool:
     """
     记录一次 DFS 回复进度并按策略决定是否落盘。
@@ -64,6 +66,7 @@ def stage_reply_checkpoint(
                 tweets_so_far=tweets_so_far,
                 next_cursor=next_cursor,
                 page_fetched=page_fetched,
+                extra=extra,
                 pending_items=0,
                 last_flush_at=now,
             )
@@ -74,6 +77,7 @@ def stage_reply_checkpoint(
         state.tweets_so_far = tweets_so_far
         state.next_cursor = next_cursor
         state.page_fetched = page_fetched
+        state.extra = extra
         state.pending_items += 1
 
         should_flush = (
@@ -90,6 +94,7 @@ def stage_reply_checkpoint(
             tweets_so_far=state.tweets_so_far,
             next_cursor=state.next_cursor,
             page_fetched=state.page_fetched,
+            extra=state.extra,
         )
         state.pending_items = 0
         state.last_flush_at = now
@@ -116,6 +121,7 @@ def flush_reply_checkpoint(task_id: str) -> bool:
             tweets_so_far=state.tweets_so_far,
             next_cursor=state.next_cursor,
             page_fetched=state.page_fetched,
+            extra=state.extra,
         )
         state.pending_items = 0
         state.last_flush_at = time.monotonic()
@@ -125,4 +131,3 @@ def flush_reply_checkpoint(task_id: str) -> bool:
 def clear_reply_checkpoint(task_id: str) -> None:
     with _lock:
         _states.pop(task_id, None)
-

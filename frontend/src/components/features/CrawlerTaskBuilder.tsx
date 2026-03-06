@@ -12,7 +12,6 @@ import {
     AdvancedSearchParams,
     DEFAULT_ADVANCED_PARAMS,
     buildAdvancedQuery,
-    hasActiveFilters,
 } from "@/components/features/AdvancedSearchPanel";
 
 type ProductType = "Top" | "Latest" | "Photos" | "Videos";
@@ -43,13 +42,14 @@ export function CrawlerTaskBuilder() {
 
     // 回复抓取选项
     const [fetchReplies, setFetchReplies] = React.useState(false);
-    const [strategy, setStrategy] = React.useState<CrawlStrategy>("dfs");
+    const strategy: CrawlStrategy = "dfs";
     const [replyDepth, setReplyDepth] = React.useState(2);
 
     // 平台选择 & 微博时间范围
     const [platform, setPlatform] = React.useState<Platform>("x");
     const [startDate, setStartDate] = React.useState("");
     const [endDate, setEndDate] = React.useState("");
+    const [splitTriggerDays, setSplitTriggerDays] = React.useState(30);
 
     const buildFinalKeyword = () => {
         let q = keyword.trim();
@@ -59,6 +59,22 @@ export function CrawlerTaskBuilder() {
         }
         return q;
     };
+
+    React.useEffect(() => {
+        api.crawlerConfig.get()
+            .then((cfg) => setSplitTriggerDays(cfg.x_time_split_trigger_days ?? 30))
+            .catch(() => undefined);
+    }, []);
+
+    const xSplitNotice = React.useMemo(() => {
+        if (platform !== "x" || !advancedParams.since || !advancedParams.until) return null;
+        const start = new Date(`${advancedParams.since}T00:00:00`);
+        const end = new Date(`${advancedParams.until}T00:00:00`);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+        const days = Math.floor((end.getTime() - start.getTime()) / 86400000);
+        if (days < splitTriggerDays) return null;
+        return `检测到 ${days} 天跨度，任务会自动按时间窗口拆分搜索以提升覆盖率。`;
+    }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays]);
 
     const handleSubmit = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -257,6 +273,11 @@ export function CrawlerTaskBuilder() {
                     onToggle={() => setAdvancedOpen(o => !o)}
                 />
                 )}
+                {xSplitNotice ? (
+                    <div className="rounded-xl border border-blue-200 bg-blue-50/70 px-4 py-3 text-sm text-blue-800">
+                        {xSplitNotice}
+                    </div>
+                ) : null}
 
                 {/* ── 回复抓取选项 ── */}
                 <div className="space-y-3 pt-3 border-t">

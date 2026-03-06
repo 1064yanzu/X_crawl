@@ -218,6 +218,24 @@ class Settings(BaseSettings):
     weibo_max_comments_per_post: int = Field(
         default=500, description="微博每条帖子最多抓取评论数（0=不限制）"
     )
+    weibo_sub_comment_max_pages: int = Field(
+        default=200, description="微博单条顶层评论子评论最大翻页数（安全上限）"
+    )
+    x_auto_time_split_enabled: bool = Field(
+        default=True, description="X 搜索是否自动启用时间分割"
+    )
+    x_time_split_trigger_days: int = Field(
+        default=30, description="X 搜索时间跨度达到多少天后触发自动时间分割"
+    )
+    x_time_split_window_days: int = Field(
+        default=14, description="X 限定抓取模式下每个时间窗覆盖天数"
+    )
+    x_time_split_window_days_unlimited: int = Field(
+        default=7, description="X 无上限抓取模式下每个时间窗覆盖天数"
+    )
+    x_time_split_max_segments: int = Field(
+        default=120, description="X 自动时间分割最大时间段数"
+    )
 
 
 settings = Settings()

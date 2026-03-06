@@ -28,6 +28,7 @@ def save_checkpoint(
     tweets_so_far: list[dict],
     next_cursor: Optional[str],
     page_fetched: int,
+    extra: Optional[dict] = None,
 ) -> None:
     """
     保存断点到磁盘
@@ -50,6 +51,8 @@ def save_checkpoint(
         "page_fetched": page_fetched,
         "saved_at": datetime.now(timezone.utc).isoformat(),
     }
+    if extra:
+        data.update(extra)
     try:
         tmp_path = path.with_suffix(".tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
