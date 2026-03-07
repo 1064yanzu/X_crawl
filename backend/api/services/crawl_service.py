@@ -11,7 +11,7 @@ from api.services import task_manager
 from api.services.failed_replies_db import record_failed_replies_batch
 from api.services.task_scheduler import scheduler
 from crawler.browser import ensure_browser_alive, reset_browser
-from crawler.crawl_signals import ChallengeSignal, StopSignal
+from crawler.crawl_signals import ChallengeSignal, LoginRequiredPause, StopSignal
 from crawler import telemetry
 from crawler.runtime_metrics import clear_metrics, get_metrics, start_task_metrics
 from crawler.x_searcher import search
@@ -175,8 +175,35 @@ def run_search_task(
                 f"任务完成: task_id={task_id}, 推文={len(result.tweets)}, "
                 f"回复={result.replies_fetched}, 失败评论={len(result.failed_replies)}"
             )
+    except LoginRequiredPause as e:
+        phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
+        task_manager.update_task_risk_paused(
+            task_id,
+            e.risk_state,
+            phase,
+            runtime_metrics=get_metrics(task_id),
+        )
+        telemetry.record_event(
+            task_id,
+            "crawler_login_paused",
+            status="paused",
+            phase=phase,
+            risk_state=e.risk_state,
+            meta={
+                "reason": e.reason,
+                "session_mode": e.session_mode,
+                "effective_user_data_path": e.effective_user_data_path,
+            },
+        )
+        logger.warning(
+            f"任务进入登录暂停: task_id={task_id}, reason={e.reason}, "
+            f"session_mode={e.session_mode}, profile={e.effective_user_data_path}"
+        )
     except ChallengeSignal as e:
-        phase = f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
+        if e.risk_state == "login_required":
+            phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
+        else:
+            phase = f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
         task_manager.update_task_risk_paused(
             task_id,
             e.risk_state,

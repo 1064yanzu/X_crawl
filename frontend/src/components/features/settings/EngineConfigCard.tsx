@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 export function EngineConfigCard() {
     const { push } = useToast();
     const [headless, setHeadless] = React.useState(false);
+    const [backgroundTabs, setBackgroundTabs] = React.useState(false);
+    const [foregroundOnLogin, setForegroundOnLogin] = React.useState(true);
     const [stealth, setStealth] = React.useState(true);
     const [linuxHardening, setLinuxHardening] = React.useState(true);
     const [pushIntervalMs, setPushIntervalMs] = React.useState(800);
@@ -24,6 +26,8 @@ export function EngineConfigCard() {
         api.crawlerConfig.get()
             .then((data) => {
                 setHeadless(Boolean(data.browser_headless));
+                setBackgroundTabs(Boolean(data.browser_background_tabs ?? false));
+                setForegroundOnLogin(Boolean(data.browser_foreground_on_login ?? true));
                 setStealth(Boolean(data.browser_stealth_enabled ?? true));
                 setLinuxHardening(Boolean(data.browser_linux_hardening ?? true));
                 setPushIntervalMs(Number(data.crawler_live_push_interval_ms ?? 800));
@@ -43,6 +47,8 @@ export function EngineConfigCard() {
             await api.crawlerConfig.update({
                 ...current,
                 browser_headless: headless,
+                browser_background_tabs: backgroundTabs,
+                browser_foreground_on_login: foregroundOnLogin,
                 browser_stealth_enabled: stealth,
                 browser_linux_hardening: linuxHardening,
                 crawler_live_push_interval_ms: Math.min(5000, Math.max(200, pushIntervalMs)),
@@ -81,6 +87,28 @@ export function EngineConfigCard() {
                                 <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
                             </label>
                         )}
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
+                        <div>
+                            <h4 className="font-medium">后台创建标签页</h4>
+                            <p className="text-sm text-muted-foreground">macOS 推荐开启，尽量避免 Edge/Chrome 每次开新标签都抢占系统焦点。</p>
+                        </div>
+                        <label className="relative inline-flex cursor-pointer items-center">
+                            <input type="checkbox" className="peer sr-only" checked={backgroundTabs} onChange={(e) => setBackgroundTabs(e.target.checked)} disabled={saving || loading} />
+                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
+                        </label>
+                    </div>
+
+                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
+                        <div>
+                            <h4 className="font-medium">登录时前台唤起浏览器</h4>
+                            <p className="text-sm text-muted-foreground">抓取阶段保持后台；只有登录失效或风控需要人工处理时，才自动把浏览器切到前台。</p>
+                        </div>
+                        <label className="relative inline-flex cursor-pointer items-center">
+                            <input type="checkbox" className="peer sr-only" checked={foregroundOnLogin} onChange={(e) => setForegroundOnLogin(e.target.checked)} disabled={saving || loading} />
+                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
+                        </label>
                     </div>
 
                     <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">

@@ -17,12 +17,13 @@ import os
 import logging
 import socket
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 from DrissionPage import Chromium, ChromiumOptions
 
 from config import settings
-from crawler.browser_detector import detect_browser_path, get_browser_by_id
+from crawler.browser_detector import detect_all_browsers, detect_browser_path, get_browser_by_id
 from crawler.platform_runtime import (
     should_force_headless_on_linux,
     linux_headless_args_enabled,
@@ -32,9 +33,41 @@ from crawler.stealth import apply_stealth_to_tab
 logger = logging.getLogger(__name__)
 
 _browser: Optional[Chromium] = None
+_session_info: dict[str, object] = {
+    "session_mode": "unknown",
+    "effective_user_data_path": None,
+    "debug_port": None,
+    "browser_alive": False,
+    "headless": False,
+}
 
 # 爬虫专用独立 Profile 目录（与系统 Chrome 完全隔离）
 _CRAWLER_PROFILE_DIR = str(Path.home() / ".xcrawl-browser-profile")
+
+
+def _profile_has_content(user_data_path: str) -> bool:
+    try:
+        return any(Path(user_data_path).iterdir())
+    except Exception:
+        return False
+
+
+def _update_session_info(**changes) -> None:
+    _session_info.update(changes)
+
+
+def get_crawler_profile_dir() -> str:
+    return _CRAWLER_PROFILE_DIR
+
+
+def get_browser_session_info() -> dict[str, object]:
+    info = dict(_session_info)
+    info.update({
+        "crawler_profile_path": _CRAWLER_PROFILE_DIR,
+        "crawler_profile_exists": os.path.isdir(_CRAWLER_PROFILE_DIR),
+        "crawler_profile_initialized": _profile_has_content(_CRAWLER_PROFILE_DIR),
+    })
+    return info
 
 
 def _is_user_data_locked(user_data_path: str) -> bool:
@@ -106,6 +139,8 @@ def get_browser() -> Chromium:
     global _browser
     if _browser is None:
         _browser = _create_browser()
+    else:
+        _update_session_info(browser_alive=True)
     return _browser
 
 
@@ -151,6 +186,13 @@ def _create_browser() -> Chromium:
             co = ChromiumOptions()
             co.set_local_port(debug_port)
             browser = Chromium(co)
+            _update_session_info(
+                session_mode="attached_browser",
+                effective_user_data_path=settings.browser_user_data_path or None,
+                debug_port=debug_port,
+                browser_alive=True,
+                headless=False,
+            )
             logger.info("成功接管现有浏览器，复用真实指纹和登录状态")
             return browser
         except Exception as e:
@@ -213,6 +255,14 @@ def _create_browser() -> Chromium:
         co.set_argument("--user-agent", _REAL_UA)
         logger.info("浏览器运行于无头模式（已覆盖 User-Agent 为 Edge 145 macOS）")
 
+    _update_session_info(
+        session_mode="crawler_profile",
+        effective_user_data_path=user_data,
+        debug_port=local_port,
+        browser_alive=True,
+        headless=effective_headless,
+    )
+
     # 反识别与运行稳定策略
     # 1) 显式窗口尺寸与语言，减少自动化默认指纹
     co.set_argument("--window-size", "1366,860")
@@ -255,12 +305,77 @@ def _create_browser() -> Chromium:
     return browser
 
 
-def get_new_tab():
+def get_new_tab(background: Optional[bool] = None):
     """获取一个新标签页（用于单次爬虫任务）"""
-    tab = get_browser().new_tab()
+    if background is None:
+        background = bool(settings.browser_background_tabs)
+        if not background and sys.platform == "darwin":
+            logger.debug("macOS 当前配置为前台打开新标签页，浏览器可能会抢占系统焦点")
+    tab = get_browser().new_tab(background=background)
     # 始终注入 stealth 脚本（反检测是基本需求，不应默认关闭）
     apply_stealth_to_tab(tab, enabled=True)
     return tab
+
+
+def _resolve_browser_app_name() -> Optional[str]:
+    selected_id = settings.browser_selected_id
+    if selected_id:
+        info = get_browser_by_id(selected_id)
+        if info and info.get("name"):
+            return str(info["name"])
+
+    exec_path = settings.browser_exec_path
+    if not exec_path:
+        exec_path, _ = _resolve_browser_paths()
+
+    if not exec_path:
+        return None
+
+    for info in detect_all_browsers():
+        if info.get("path") == exec_path and info.get("name"):
+            return str(info["name"])
+
+    for part in Path(exec_path).parts:
+        if part.endswith(".app"):
+            return part[:-4]
+
+    return Path(exec_path).stem or None
+
+
+def promote_browser_for_manual_interaction(tab, *, reason: str = "manual_interaction") -> None:
+    if not bool(settings.browser_foreground_on_login):
+        return
+
+    try:
+        browser = getattr(tab, "browser", None)
+        if browser is not None:
+            browser.activate_tab(tab)
+            logger.info(f"已激活需人工处理的浏览器标签页，reason={reason}")
+    except Exception as e:
+        logger.debug(f"激活浏览器标签页失败（忽略）: {e}")
+
+    if sys.platform != "darwin":
+        return
+
+    app_name = _resolve_browser_app_name()
+    if not app_name:
+        logger.debug("未能解析 macOS 浏览器应用名，跳过前台唤起")
+        return
+
+    try:
+        proc = subprocess.run(
+            ["osascript", "-e", f'tell application "{app_name}" to activate'],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+        if proc.returncode == 0:
+            logger.info(f"已将浏览器切到前台，app={app_name}, reason={reason}")
+        else:
+            err = (proc.stderr or "").strip()
+            logger.debug(f"前台唤起浏览器失败（忽略）: app={app_name}, reason={reason}, err={err}")
+    except Exception as e:
+        logger.debug(f"前台唤起浏览器异常（忽略）: app={app_name}, reason={reason}, err={e}")
 
 
 def ensure_browser_alive() -> None:
@@ -269,9 +384,11 @@ def ensure_browser_alive() -> None:
     if _browser is not None:
         try:
             _browser.latest_tab
+            _update_session_info(browser_alive=True)
         except Exception:
             logger.warning("浏览器实例已失效，重置单例以便重新创建")
             _browser = None
+            _update_session_info(browser_alive=False)
 
 
 def reset_browser() -> None:
@@ -290,9 +407,11 @@ def reset_browser() -> None:
             _force_kill_chrome()
         finally:
             _browser = None
+            _update_session_info(browser_alive=False)
     else:
         # 即使 _browser 为 None，也清理可能残留的 Chrome 进程
         _force_kill_chrome()
+        _update_session_info(browser_alive=False)
 
 
 def _force_kill_chrome() -> None:
@@ -319,3 +438,4 @@ def close_browser():
             logger.warning(f"关闭浏览器时出错: {e}")
         finally:
             _browser = None
+            _update_session_info(browser_alive=False)

@@ -2,6 +2,8 @@
 全局配置模块
 支持从 .env 文件读取配置
 """
+import sys
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
@@ -32,6 +34,14 @@ class Settings(BaseSettings):
     )
     browser_headless: bool = Field(
         default=False, description="是否无头模式"
+    )
+    browser_background_tabs: bool = Field(
+        default=(sys.platform == "darwin"),
+        description="新标签页是否以后台方式创建（macOS 默认开启，减少浏览器抢前台焦点）"
+    )
+    browser_foreground_on_login: bool = Field(
+        default=True,
+        description="检测到登录失效或风控需人工处理时，是否自动将浏览器切到前台"
     )
     browser_load_mode: str = Field(
         default="normal", description="页面加载模式：normal/eager"

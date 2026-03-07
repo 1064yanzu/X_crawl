@@ -115,6 +115,8 @@ export interface CrawlerConfig {
     save_raw_responses?: boolean;
     raw_responses_max_pages?: number;
     browser_headless?: boolean;        // 是否无头模式
+    browser_background_tabs?: boolean; // 是否后台创建新标签页
+    browser_foreground_on_login?: boolean; // 登录/风控时是否自动前台唤起浏览器
     browser_proxy?: string;            // 代理配置
     browser_load_mode?: "normal" | "eager";
     browser_block_images?: boolean;
@@ -235,6 +237,17 @@ export interface BrowserListResponse {
     platform: string;
     count: number;
     selected_id: string;
+    session_mode: string;
+    effective_user_data_path: string | null;
+    crawler_profile_path: string;
+    crawler_profile_exists: boolean;
+    crawler_profile_initialized: boolean;
+    browser_alive: boolean;
+    headless: boolean;
+    last_login_check_at: string | null;
+    last_login_success_at: string | null;
+    last_login_failure_reason: string | null;
+    last_page_state: string | null;
     browsers: BrowserInfo[];
 }
 

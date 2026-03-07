@@ -27,6 +27,12 @@ function getBrowserIcon(id: string): string {
     return BROWSER_ICONS[id] || "🌐";
 }
 
+function getSessionModeLabel(mode: string): string {
+    if (mode === "attached_browser") return "接管真实浏览器";
+    if (mode === "crawler_profile") return "爬虫专用 Profile";
+    return "尚未建立会话";
+}
+
 // ── 浏览器卡片 ──────────────────────────────────────────────────────────────
 function BrowserCard({
     browser,
@@ -191,6 +197,62 @@ export function BrowserSelector() {
 
     return (
         <div className="space-y-4">
+            <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <h4 className="text-sm font-semibold text-foreground">当前浏览器会话</h4>
+                        <p className="text-xs text-muted-foreground mt-1">
+                            {getSessionModeLabel(data.session_mode)}
+                            {data.headless ? " · Headless" : " · 有界面"}
+                            {data.browser_alive ? " · 运行中" : " · 未启动"}
+                        </p>
+                    </div>
+                    {data.last_login_failure_reason ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-amber-500/10 text-amber-600 px-2 py-1 rounded-full border border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3" />
+                            最近登录失败
+                        </span>
+                    ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-green-500/10 text-green-700 dark:text-green-400 px-2 py-1 rounded-full border border-green-500/20">
+                            <Check className="w-3 h-3" />
+                            最近登录正常
+                        </span>
+                    )}
+                </div>
+
+                <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <p>
+                        实际用户目录：
+                        <span className="font-mono text-[11px] text-foreground/80 ml-1 break-all">
+                            {data.effective_user_data_path || "未启动后端浏览器时暂不可见"}
+                        </span>
+                    </p>
+                    <p>
+                        爬虫专用目录：
+                        <span className="font-mono text-[11px] text-foreground/80 ml-1 break-all">
+                            {data.crawler_profile_path}
+                        </span>
+                        <span className="ml-2">
+                            {data.crawler_profile_initialized ? "已初始化" : data.crawler_profile_exists ? "目录已创建" : "目录未创建"}
+                        </span>
+                    </p>
+                    <p>
+                        最近登录检测：
+                        <span className="ml-1 text-foreground/80">
+                            {data.last_login_check_at || "暂无"}
+                        </span>
+                        {data.last_page_state && (
+                            <span className="ml-2">页面状态：{data.last_page_state}</span>
+                        )}
+                    </p>
+                    {data.last_login_failure_reason && (
+                        <p className="text-amber-600 dark:text-amber-400">
+                            最近失败原因：{data.last_login_failure_reason}
+                        </p>
+                    )}
+                </div>
+            </div>
+
             {/* 自动检测选项 */}
             <button
                 onClick={() => handleSelect("")}

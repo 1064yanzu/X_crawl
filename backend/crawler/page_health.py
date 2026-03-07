@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from crawler.crawl_signals import ChallengeSignal, RiskState
+from crawler.browser import promote_browser_for_manual_interaction
 from crawler.page_state import PageState, detect_page_state, is_error_like_state
 from crawler.recovery_policy import sleep_with_jitter, backoff_seconds
 from crawler.runtime_metrics import bump_metric
@@ -246,6 +247,7 @@ def navigate_with_retry(
                     sleep_with_jitter(challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
                     continue
                 if raise_on_risk:
+                    promote_browser_for_manual_interaction(tab, reason=state.value)
                     raise ChallengeSignal(
                         f"检测到 {state.value}，请人工处理后继续",
                         risk_state=_to_risk_state(state),

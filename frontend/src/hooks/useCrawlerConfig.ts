@@ -32,6 +32,8 @@ const DEFAULT_CONFIG: CrawlerConfig = {
     save_raw_responses: true,
     raw_responses_max_pages: 0,
     browser_headless: false,
+    browser_background_tabs: false,
+    browser_foreground_on_login: true,
     browser_proxy: "",
     browser_load_mode: "normal",
     browser_block_images: false,

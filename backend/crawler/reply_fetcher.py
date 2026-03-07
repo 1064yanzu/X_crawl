@@ -12,7 +12,7 @@ import random
 import time
 from typing import Optional
 
-from crawler.browser import get_new_tab
+from crawler.browser import get_new_tab, promote_browser_for_manual_interaction
 from crawler.reply_parser import parse_tweet_detail_response, TWEET_DETAIL_PATTERN
 from crawler.response_saver import save_reply_response
 from crawler.page_health import navigate_with_retry
@@ -130,6 +130,7 @@ def _wait_reply_packet_with_recovery(
                 meta={"tweet_url": tweet_url, "hit": risk_hits},
             )
             if risk_hits > policy.challenge_retry_times:
+                promote_browser_for_manual_interaction(tab, reason=state.value)
                 raise ChallengeSignal(
                     f"回复页检测到 {state.value} 且重试耗尽：{reason}",
                     risk_state=_to_risk_state(state),
@@ -685,6 +686,12 @@ def fetch_replies_batch(
             except ChallengeSignal:
                 raise
             except Exception as e:
+                import traceback
+                error_msg = str(e).lower()
+                if "disconnected" in error_msg or "connection lost" in error_msg or "target closed" in error_msg:
+                    logger.warning(f"检测到浏览器断开连接，尝试重置浏览器: {e}")
+                    from crawler.browser import reset_browser
+                    reset_browser()
                 logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
                 tweet = dict(tweet)
                 tweet["replies"] = []

@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from crawler.auth import get_login_diagnostics
+from crawler.browser import get_browser_session_info
 from crawler.browser_detector import detect_all_browsers, get_browser_by_id, _get_platform
 from api.services.settings_db import get_setting, set_setting
 from config import settings
@@ -32,6 +34,17 @@ class BrowserListResponse(BaseModel):
     platform: str = Field(description="当前操作系统平台")
     count: int = Field(description="检测到的浏览器数量")
     selected_id: str = Field(description="当前选中的浏览器 ID（空字符串表示自动检测）")
+    session_mode: str = Field(default="unknown", description="当前实际会话模式：attached_browser / crawler_profile / unknown")
+    effective_user_data_path: Optional[str] = Field(default=None, description="当前实际使用的用户数据目录")
+    crawler_profile_path: str = Field(default="", description="爬虫专用持久化 Profile 路径")
+    crawler_profile_exists: bool = Field(default=False, description="爬虫专用 Profile 目录是否存在")
+    crawler_profile_initialized: bool = Field(default=False, description="爬虫专用 Profile 是否已有初始化内容")
+    browser_alive: bool = Field(default=False, description="当前浏览器实例是否存活")
+    headless: bool = Field(default=False, description="当前浏览器是否运行于无头模式")
+    last_login_check_at: Optional[str] = Field(default=None, description="最近一次登录检测时间")
+    last_login_success_at: Optional[str] = Field(default=None, description="最近一次登录通过时间")
+    last_login_failure_reason: Optional[str] = Field(default=None, description="最近一次登录失败原因")
+    last_page_state: Optional[str] = Field(default=None, description="最近一次登录检测时的页面状态")
     browsers: list[BrowserInfo]
 
 
@@ -68,6 +81,8 @@ def _get_selected_id() -> str:
 async def list_browsers() -> BrowserListResponse:
     browsers_raw = detect_all_browsers()
     selected_id = _get_selected_id()
+    session_info = get_browser_session_info()
+    login_info = get_login_diagnostics()
 
     browsers = [
         BrowserInfo(
@@ -86,6 +101,17 @@ async def list_browsers() -> BrowserListResponse:
         platform=_get_platform(),
         count=len(browsers),
         selected_id=selected_id,
+        session_mode=str(session_info.get("session_mode") or "unknown"),
+        effective_user_data_path=session_info.get("effective_user_data_path"),
+        crawler_profile_path=str(session_info.get("crawler_profile_path") or ""),
+        crawler_profile_exists=bool(session_info.get("crawler_profile_exists")),
+        crawler_profile_initialized=bool(session_info.get("crawler_profile_initialized")),
+        browser_alive=bool(session_info.get("browser_alive")),
+        headless=bool(session_info.get("headless")),
+        last_login_check_at=login_info.get("last_login_check_at"),
+        last_login_success_at=login_info.get("last_login_success_at"),
+        last_login_failure_reason=login_info.get("last_login_failure_reason"),
+        last_page_state=login_info.get("last_page_state"),
         browsers=browsers,
     )
 

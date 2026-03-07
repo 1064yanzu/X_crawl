@@ -63,6 +63,8 @@ class CrawlerConfig(BaseModel):
     )
     # 浏览器配置
     browser_headless: Optional[bool] = Field(default=None, description="是否无头模式")
+    browser_background_tabs: Optional[bool] = Field(default=None, description="是否在后台创建新标签页")
+    browser_foreground_on_login: Optional[bool] = Field(default=None, description="登录失效或风控时是否自动前台唤起浏览器")
     browser_proxy: Optional[str] = Field(default=None, description="代理配置，格式：http://ip:port")
     browser_load_mode: Optional[str] = Field(default=None, description="页面加载模式：normal 或 eager")
     browser_block_images: Optional[bool] = Field(default=None, description="是否禁用图片加载")
@@ -116,6 +118,8 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_cpu_pressure_critical_pct=settings.crawler_cpu_pressure_critical_pct,
         crawler_resource_throttle_max_factor=settings.crawler_resource_throttle_max_factor,
         browser_headless=settings.browser_headless,
+        browser_background_tabs=settings.browser_background_tabs,
+        browser_foreground_on_login=settings.browser_foreground_on_login,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
@@ -229,6 +233,12 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     if config.browser_headless is not None:
         settings.browser_headless = config.browser_headless
         persist["browser_headless"] = config.browser_headless
+    if config.browser_background_tabs is not None:
+        settings.browser_background_tabs = config.browser_background_tabs
+        persist["browser_background_tabs"] = config.browser_background_tabs
+    if config.browser_foreground_on_login is not None:
+        settings.browser_foreground_on_login = config.browser_foreground_on_login
+        persist["browser_foreground_on_login"] = config.browser_foreground_on_login
 
     if config.browser_proxy is not None:
         settings.browser_proxy = config.browser_proxy
@@ -281,6 +291,8 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         crawler_cpu_pressure_critical_pct=settings.crawler_cpu_pressure_critical_pct,
         crawler_resource_throttle_max_factor=settings.crawler_resource_throttle_max_factor,
         browser_headless=settings.browser_headless,
+        browser_background_tabs=settings.browser_background_tabs,
+        browser_foreground_on_login=settings.browser_foreground_on_login,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,

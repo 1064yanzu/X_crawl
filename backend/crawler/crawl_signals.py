@@ -18,3 +18,21 @@ class ChallengeSignal(Exception):
     def __init__(self, message: str, risk_state: RiskState = "challenge"):
         super().__init__(message)
         self.risk_state = risk_state
+
+
+class LoginRequiredPause(Exception):
+    """检测到登录态失效且无法自动恢复时抛出，用于让任务进入暂停态。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str = "login_required",
+        session_mode: str = "unknown",
+        effective_user_data_path: str | None = None,
+    ):
+        super().__init__(message)
+        self.risk_state: RiskState = "login_required"
+        self.reason = reason
+        self.session_mode = session_mode
+        self.effective_user_data_path = effective_user_data_path

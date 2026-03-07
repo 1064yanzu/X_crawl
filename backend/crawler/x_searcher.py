@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 from crawler.browser import get_new_tab
 from crawler.human_scroll import human_like_scroll, simulate_reading, idle_scroll
-from crawler.auth import ensure_login, ensure_login_with_pool
+from crawler.auth import ensure_login_detailed, ensure_login_with_pool_detailed
 from crawler.parser import parse_search_response
 from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
 from crawler.checkpoint_buffer import (
@@ -28,7 +28,7 @@ from crawler.page_health import navigate_with_retry
 from crawler.page_state import detect_page_state, PageState
 from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
-from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
+from crawler.crawl_signals import StopSignal, ChallengeSignal, LoginRequiredPause, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
 from crawler.runtime_metrics import bump_metric
 from crawler.rate_tracker import get_tracker, extract_rate_headers
@@ -126,6 +126,27 @@ def _extract_base_keyword(keyword: str) -> str:
 
     if base_words:
         return " ".join(base_words)
+
+
+def _build_login_pause_message(result) -> str:
+    profile_path = result.effective_user_data_path
+    if result.session_mode == "crawler_profile":
+        target = "当前爬虫专用浏览器会话"
+        if profile_path:
+            target += f"（profile: {profile_path}）"
+    elif result.session_mode == "attached_browser":
+        target = "当前已接管的 Chrome 会话"
+    else:
+        target = "当前浏览器会话"
+
+    if result.reason == "challenge_required":
+        action = f"请在{target}中完成安全验证后继续任务。"
+    elif result.reason == "profile_missing_login":
+        action = f"请先在{target}中登录 X 账号后继续任务。"
+    else:
+        action = f"已尝试注入持久化 Cookie，但未能恢复 {target} 的 X 登录态，请重新登录后继续任务。"
+
+    return f"未检测到可用的 X 登录状态（reason={result.reason}）。{action}"
 
     # 如果没有普通词（全是操作符），尝试提取 from: 的账号名作为搜索词
     for token in tokens:
@@ -718,9 +739,11 @@ def search(
         if account_pool_enabled and pool.get_active_account_count() > 0:
             current_account = pool.pick_next_account()
             if current_account:
-                if not ensure_login_with_pool(tab, current_account):
+                account_login = ensure_login_with_pool_detailed(tab, current_account)
+                if not account_login.ok:
                     logger.warning(
-                        f"账号池首账号 {current_account.alias!r} 登录失败，回退至默认登录"
+                        f"账号池首账号 {current_account.alias!r} 登录失败，"
+                        f"reason={account_login.reason}，回退至默认登录"
                     )
                     current_account = None
                 else:
@@ -731,11 +754,13 @@ def search(
 
         # 账号池未启用或账号池为空，走原有 ensure_login
         if current_account is None:
-            if not ensure_login(tab):
-                raise RuntimeError(
-                    "未检测到 X 登录状态。"
-                    "请先在浏览器中登录 X 账号，"
-                    "程序会自动检测已登录的 Chrome 用户数据目录。"
+            login_result = ensure_login_detailed(tab)
+            if not login_result.ok:
+                raise LoginRequiredPause(
+                    _build_login_pause_message(login_result),
+                    reason=login_result.reason,
+                    session_mode=login_result.session_mode,
+                    effective_user_data_path=login_result.effective_user_data_path,
                 )
 
         search_url = _build_search_url(keyword, product)
