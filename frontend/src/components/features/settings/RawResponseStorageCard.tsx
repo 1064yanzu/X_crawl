@@ -41,8 +41,8 @@ export function RawResponseStorageCard() {
             .finally(() => setLoading(false));
     }, [refreshStorage]);
 
-    const totalBytes = storage?.tasks.reduce((s, t) => s + t.total_bytes, 0) ?? 0;
-    const totalPages = storage?.tasks.reduce((s, t) => s + t.page_count, 0) ?? 0;
+    const totalBytes = storage?.tasks.reduce((sum, task) => sum + task.total_bytes, 0) ?? 0;
+    const totalPages = storage?.tasks.reduce((sum, task) => sum + task.page_count, 0) ?? 0;
     const isConfigDirty = saveEnabled !== Boolean(storage?.save_enabled)
         || maxPages !== Number(storage?.max_pages_per_task ?? 0);
 
@@ -58,11 +58,7 @@ export function RawResponseStorageCard() {
             await refreshStorage();
             push({ type: "success", title: "原始响应配置已更新" });
         } catch (err) {
-            push({
-                type: "error",
-                title: "保存失败",
-                description: err instanceof Error ? err.message : String(err),
-            });
+            push({ type: "error", title: "保存失败", description: err instanceof Error ? err.message : String(err) });
         } finally {
             setSavingConfig(false);
         }
@@ -75,11 +71,7 @@ export function RawResponseStorageCard() {
             await refreshStorage();
             push({ type: "success", title: "任务归档已清理" });
         } catch (err) {
-            push({
-                type: "error",
-                title: "清理失败",
-                description: err instanceof Error ? err.message : String(err),
-            });
+            push({ type: "error", title: "清理失败", description: err instanceof Error ? err.message : String(err) });
         } finally {
             setDeletingTaskId(null);
         }
@@ -92,21 +84,17 @@ export function RawResponseStorageCard() {
             await refreshStorage();
             push({ type: "success", title: "全部原始响应已清理" });
         } catch (err) {
-            push({
-                type: "error",
-                title: "清理失败",
-                description: err instanceof Error ? err.message : String(err),
-            });
+            push({ type: "error", title: "清理失败", description: err instanceof Error ? err.message : String(err) });
         } finally {
             setClearingAll(false);
         }
     };
 
     return (
-        <Card>
+        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
             <CardHeader>
-                <CardTitle className="flex items-center gap-2"><DatabaseBackup className="h-5 w-5 text-green-600" /> 原始响应存储</CardTitle>
-                <CardDescription>搜索与回复原始 JSON 的本地归档信息。</CardDescription>
+                <CardTitle className="flex items-center gap-2 text-xl"><DatabaseBackup className="h-5 w-5 text-green-600" /> 原始响应存储</CardTitle>
+                <CardDescription>管理搜索与回复原始 JSON 的本地归档配置、容量占用和历史清理。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
                 {loading ? (
@@ -115,79 +103,65 @@ export function RawResponseStorageCard() {
                     </div>
                 ) : storage ? (
                     <>
-                        <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
-                            <div className="flex items-center justify-between gap-3">
+                        <div className="space-y-4 rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+                            <ToggleSetting
+                                label="保存原始响应"
+                                description="关闭后不再写入新的 raw JSON，只保留已有归档。"
+                                checked={saveEnabled}
+                                onChange={setSaveEnabled}
+                            />
+
+                            <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                                 <div>
-                                    <p className="text-sm font-medium">保存原始响应</p>
-                                    <p className="text-xs text-muted-foreground">关闭后不再写入新的 raw JSON。</p>
+                                    <p className="text-sm font-medium text-foreground">每任务最大保存页数</p>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">输入 0 表示不限制；建议仅在排查问题时拉高该值。</p>
                                 </div>
-                                <input
-                                    type="checkbox"
-                                    checked={saveEnabled}
-                                    onChange={(e) => setSaveEnabled(e.target.checked)}
-                                />
-                            </div>
-                            <div className="flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-sm font-medium">每任务最大保存页数</p>
-                                    <p className="text-xs text-muted-foreground">0 表示不限制。</p>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={1}
+                                        value={maxPages}
+                                        onChange={(e) => setMaxPages(Math.max(0, Number(e.target.value) || 0))}
+                                        className="h-11 w-28 rounded-xl border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    />
+                                    <span className="text-xs text-muted-foreground">页</span>
                                 </div>
-                                <input
-                                    type="number"
-                                    min={0}
-                                    step={1}
-                                    value={maxPages}
-                                    onChange={(e) => setMaxPages(Math.max(0, Number(e.target.value) || 0))}
-                                    className="h-8 w-28 rounded border bg-background px-2 text-sm"
-                                />
                             </div>
-                            <div className="flex justify-end">
-                                <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig || !isConfigDirty}>
+
+                            <div className="flex justify-end rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                                <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig || !isConfigDirty} className="rounded-xl">
                                     {savingConfig ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                                     保存归档配置
                                 </Button>
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                            <div className="space-y-1 rounded-lg border bg-muted/30 p-4">
-                                <p className="text-xs text-muted-foreground">存储开关</p>
-                                <p className={`text-sm font-semibold ${saveEnabled ? "text-green-600" : "text-muted-foreground"}`}>
-                                    {saveEnabled ? "已启用" : "已禁用"}
-                                </p>
-                            </div>
-                            <div className="space-y-1 rounded-lg border bg-muted/30 p-4">
-                                <p className="text-xs text-muted-foreground">已存文件</p>
-                                <p className="text-sm font-semibold">{totalPages} 个 JSON</p>
-                            </div>
-                            <div className="space-y-1 rounded-lg border bg-muted/30 p-4">
-                                <p className="text-xs text-muted-foreground">占用磁盘</p>
-                                <p className="text-sm font-semibold">{formatBytes(totalBytes)}</p>
-                            </div>
-                            <div className="space-y-1 rounded-lg border bg-muted/30 p-4">
-                                <p className="text-xs text-muted-foreground">页数上限</p>
-                                <p className="text-sm font-semibold">{maxPages === 0 ? "不限制" : `${maxPages} 页`}</p>
-                            </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                            <StatItem label="存储开关" value={saveEnabled ? "已启用" : "已禁用"} accent={saveEnabled ? "text-emerald-600" : undefined} />
+                            <StatItem label="已存文件" value={`${totalPages} 个 JSON`} />
+                            <StatItem label="占用磁盘" value={formatBytes(totalBytes)} />
+                            <StatItem label="页数上限" value={maxPages === 0 ? "不限制" : `${maxPages} 页`} />
                         </div>
 
-                        <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-muted/20 p-4">
+                        <div className="flex items-start gap-3 rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
                             <HardDrive className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                            <div className="space-y-0.5">
+                            <div className="space-y-1">
                                 <p className="text-xs text-muted-foreground">存储目录</p>
-                                <p className="break-all font-mono text-sm">{storage.storage_dir}</p>
+                                <p className="break-all font-mono text-sm text-foreground">{storage.storage_dir}</p>
                             </div>
                         </div>
 
-                        {storage.tasks.length > 0 && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <p className="flex items-center gap-1.5 text-sm font-medium">
+                        {storage.tasks.length > 0 ? (
+                            <div className="space-y-3 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                                         <FileText className="h-4 w-4 text-muted-foreground" /> 已归档任务 ({storage.tasks.length})
                                     </p>
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        className="h-7 text-xs text-red-600"
+                                        className="rounded-xl text-red-600"
                                         onClick={() => setConfirmClearAll(true)}
                                         disabled={clearingAll}
                                     >
@@ -195,30 +169,30 @@ export function RawResponseStorageCard() {
                                         清理全部
                                     </Button>
                                 </div>
-                                <div className="max-h-48 space-y-0 divide-y overflow-y-auto rounded-lg border">
-                                    {storage.tasks.map((t) => (
-                                        <div key={t.task_id} className="flex items-center justify-between gap-2 px-3 py-2.5 text-xs transition-colors hover:bg-muted/30">
-                                            <span className="max-w-[55%] truncate font-mono text-foreground/80">{t.task_id}</span>
-                                            <div className="ml-2 flex shrink-0 items-center gap-2">
-                                                <span className="text-muted-foreground">{t.page_count} 页 · {formatBytes(t.total_bytes)}</span>
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    className="h-6 px-2 text-[11px] text-red-600"
-                                                    disabled={deletingTaskId === t.task_id}
-                                                    onClick={() => setConfirmDeleteTaskId(t.task_id)}
-                                                >
-                                                    {deletingTaskId === t.task_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "清理"}
-                                                </Button>
+                                <div className="max-h-56 divide-y overflow-y-auto rounded-2xl border border-border/60 bg-card/80">
+                                    {storage.tasks.map((task) => (
+                                        <div key={task.task_id} className="flex items-center justify-between gap-3 px-4 py-3 text-xs transition-colors hover:bg-muted/20">
+                                            <div className="min-w-0">
+                                                <p className="truncate font-mono text-foreground">{task.task_id}</p>
+                                                <p className="mt-1 text-muted-foreground">{task.page_count} 页 · {formatBytes(task.total_bytes)}</p>
                                             </div>
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="rounded-xl text-red-600"
+                                                disabled={deletingTaskId === task.task_id}
+                                                onClick={() => setConfirmDeleteTaskId(task.task_id)}
+                                            >
+                                                {deletingTaskId === task.task_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "清理"}
+                                            </Button>
                                         </div>
                                     ))}
                                 </div>
                             </div>
-                        )}
+                        ) : null}
                     </>
                 ) : (
-                    <div className="rounded-lg border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
+                    <div className="rounded-2xl border border-dashed border-border/80 bg-muted/20 p-4 text-sm text-muted-foreground">
                         无法连接后端服务，请确认服务已启动。
                     </div>
                 )}
@@ -250,5 +224,40 @@ export function RawResponseStorageCard() {
                 }}
             />
         </Card>
+    );
+}
+
+function ToggleSetting({
+    label,
+    description,
+    checked,
+    onChange,
+}: {
+    label: string;
+    description: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+}) {
+    return (
+        <label className="flex items-start justify-between gap-3 rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm">
+            <div>
+                <p className="text-sm font-medium text-foreground">{label}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+            </div>
+            <span className="relative mt-0.5 inline-flex cursor-pointer items-center">
+                <input type="checkbox" className="peer sr-only" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+                <span className="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-primary" />
+                <span className="absolute left-[2px] top-[2px] h-5 w-5 rounded-full border bg-white transition-transform peer-checked:translate-x-full" />
+            </span>
+        </label>
+    );
+}
+
+function StatItem({ label, value, accent }: { label: string; value: string; accent?: string }) {
+    return (
+        <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 shadow-sm">
+            <p className="text-xs text-muted-foreground">{label}</p>
+            <p className={`mt-1 text-sm font-semibold ${accent ?? "text-foreground"}`}>{value}</p>
+        </div>
     );
 }

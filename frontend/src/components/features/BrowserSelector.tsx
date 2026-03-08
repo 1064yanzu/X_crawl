@@ -1,13 +1,13 @@
 "use client";
 import * as React from "react";
 import {
-    Monitor, Check, Loader2, AlertTriangle, RefreshCw, Sparkles,
+    Monitor, Check, Loader2, AlertTriangle, RefreshCw, Sparkles, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/toast";
 import { api, BrowserInfo, BrowserListResponse } from "@/services/api";
 import { cn } from "@/lib/utils";
 
-// ── 浏览器图标映射（使用 emoji 作为轻量方案）─────────────────────────────────
 const BROWSER_ICONS: Record<string, string> = {
     chrome: "🌐",
     chrome_canary: "🐤",
@@ -27,13 +27,12 @@ function getBrowserIcon(id: string): string {
     return BROWSER_ICONS[id] || "🌐";
 }
 
-function getSessionModeLabel(mode: string): string {
+function getSessionModeLabel(mode: string) {
     if (mode === "attached_browser") return "接管真实浏览器";
     if (mode === "crawler_profile") return "爬虫专用 Profile";
     return "尚未建立会话";
 }
 
-// ── 浏览器卡片 ──────────────────────────────────────────────────────────────
 function BrowserCard({
     browser,
     isSelected,
@@ -49,80 +48,61 @@ function BrowserCard({
 
     return (
         <button
+            type="button"
             onClick={() => !isIncompatible && onSelect(browser.id)}
             disabled={isIncompatible || isSelecting}
             className={cn(
-                "group relative w-full text-left p-4 rounded-xl border-2 transition-all duration-300",
-                "hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                "group relative w-full rounded-[1.25rem] border-2 p-4 text-left transition-all duration-200",
+                "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:shadow-sm",
                 isSelected
-                    ? "border-primary bg-primary/5 shadow-sm"
+                    ? "border-primary bg-primary/6 shadow-sm"
                     : isIncompatible
-                        ? "border-border/30 bg-muted/20 opacity-60 cursor-not-allowed"
-                        : "border-border/50 bg-card hover:border-primary/40 hover:bg-primary/[0.02] cursor-pointer",
+                        ? "cursor-not-allowed border-border/40 bg-muted/20 opacity-60"
+                        : "cursor-pointer border-border/60 bg-card hover:border-primary/30 hover:bg-primary/[0.02]",
             )}
         >
-            {/* 选中指示器 */}
-            {isSelected && (
-                <div className="absolute top-3 right-3">
-                    <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground">
-                        <Check className="w-3.5 h-3.5" />
-                    </div>
+            {isSelected ? (
+                <div className="absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <Check className="h-3.5 w-3.5" />
                 </div>
-            )}
+            ) : null}
 
             <div className="flex items-start gap-3">
-                {/* 浏览器图标 */}
-                <span className="text-2xl shrink-0 mt-0.5" role="img" aria-label={browser.name}>
+                <span className="mt-0.5 text-2xl" role="img" aria-label={browser.name}>
                     {getBrowserIcon(browser.id)}
                 </span>
-
-                <div className="flex-1 min-w-0">
-                    {/* 名称 + 标签 */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <h4 className="font-semibold text-sm text-foreground">{browser.name}</h4>
-                        {isIncompatible && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-amber-500/10 text-amber-600 px-1.5 py-0.5 rounded-full border border-amber-500/20">
-                                <AlertTriangle className="w-2.5 h-2.5" />
+                <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="text-sm font-semibold text-foreground">{browser.name}</h4>
+                        {isSelected ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">当前使用</span> : null}
+                        {isIncompatible ? (
+                            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                                <AlertTriangle className="h-2.5 w-2.5" />
                                 不兼容
                             </span>
-                        )}
-                        {isSelected && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
-                                当前使用
-                            </span>
-                        )}
+                        ) : null}
                     </div>
-
-                    {/* 内核信息 */}
-                    <p className="text-xs text-muted-foreground mt-1">
-                        {browser.engine === "chromium" ? "Chromium 内核" :
-                            browser.engine === "firefox" ? "Gecko 内核" : browser.engine} 引擎
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        {browser.engine === "chromium" ? "Chromium 内核" : browser.engine === "firefox" ? "Gecko 内核" : browser.engine} 引擎
                     </p>
-
-                    {/* 路径 */}
-                    <p className="text-[11px] text-muted-foreground/60 mt-1.5 font-mono truncate" title={browser.path}>
+                    <p className="mt-1.5 truncate font-mono text-[11px] text-muted-foreground/70" title={browser.path}>
                         {browser.path}
                     </p>
+                    {isIncompatible ? (
+                        <p className="mt-2 text-[11px] text-amber-600/90">仅 Chromium 内核浏览器可被 DrissionPage 接管。</p>
+                    ) : null}
                 </div>
             </div>
-
-            {/* 不兼容提示 */}
-            {isIncompatible && (
-                <p className="text-[11px] text-amber-600/80 mt-2 pl-9">
-                    DrissionPage 仅支持 Chromium 内核浏览器，{browser.name} 不可用于爬取。
-                </p>
-            )}
         </button>
     );
 }
 
-// ── 主组件 ──────────────────────────────────────────────────────────────────
 export function BrowserSelector() {
+    const { push } = useToast();
     const [data, setData] = React.useState<BrowserListResponse | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [selecting, setSelecting] = React.useState(false);
     const [selectedId, setSelectedId] = React.useState<string>("");
-    const [message, setMessage] = React.useState<{ text: string; type: "success" | "error" } | null>(null);
 
     const fetchBrowsers = React.useCallback(async () => {
         setLoading(true);
@@ -132,177 +112,127 @@ export function BrowserSelector() {
             setSelectedId(result.selected_id);
         } catch (err) {
             console.error("获取浏览器列表失败:", err);
+            push({ type: "error", title: "获取浏览器列表失败" });
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [push]);
 
     React.useEffect(() => {
-        fetchBrowsers();
+        void fetchBrowsers();
     }, [fetchBrowsers]);
 
     const handleSelect = async (browserId: string) => {
         if (selecting) return;
-
-        // 点击已选中的 → 取消选择（恢复自动检测）
         const newId = browserId === selectedId ? "" : browserId;
-
         setSelecting(true);
-        setMessage(null);
         try {
             const result = await api.browsers.select(newId);
             setSelectedId(newId);
-            setMessage({
-                text: result.message,
-                type: "success",
-            });
-            // 3 秒后清除消息
-            setTimeout(() => setMessage(null), 4000);
+            push({ type: "success", title: result.message });
         } catch (err) {
-            setMessage({
-                text: `选择失败：${err instanceof Error ? err.message : String(err)}`,
-                type: "error",
-            });
+            push({ type: "error", title: "切换浏览器失败", description: err instanceof Error ? err.message : String(err) });
         } finally {
             setSelecting(false);
         }
     };
 
-    // ── 加载状态 ──
     if (loading) {
         return (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
-                <Loader2 className="w-4 h-4 animate-spin" />
+            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
                 正在检测系统已安装的浏览器...
             </div>
         );
     }
 
-    // ── 无数据 ──
     if (!data || data.browsers.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center py-8 text-center">
-                <Monitor className="w-10 h-10 text-muted-foreground/30 mb-3" />
-                <p className="text-sm text-muted-foreground">未检测到任何浏览器</p>
-                <p className="text-xs text-muted-foreground/60 mt-1">请确认已安装 Chrome、Edge 或其他 Chromium 内核浏览器</p>
-                <Button variant="outline" size="sm" className="mt-4" onClick={fetchBrowsers}>
-                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+            <div className="flex flex-col items-center justify-center rounded-[1.25rem] border border-dashed border-border/80 bg-muted/20 py-10 text-center">
+                <Monitor className="mb-3 h-10 w-10 text-muted-foreground/30" />
+                <p className="text-sm font-medium text-foreground">未检测到任何浏览器</p>
+                <p className="mt-1 text-xs text-muted-foreground">请确认已安装 Chrome、Edge 或其它 Chromium 内核浏览器。</p>
+                <Button variant="outline" size="sm" className="mt-4 rounded-xl" onClick={() => void fetchBrowsers()}>
+                    <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                     重新检测
                 </Button>
             </div>
         );
     }
 
-    const compatibleCount = data.browsers.filter((b) => b.compatible).length;
+    const compatibleCount = data.browsers.filter((browser) => browser.compatible).length;
 
     return (
         <div className="space-y-4">
-            <div className="rounded-xl border border-border/60 bg-muted/20 p-4 space-y-2">
-                <div className="flex items-center justify-between gap-3">
+            <div className="rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                         <h4 className="text-sm font-semibold text-foreground">当前浏览器会话</h4>
-                        <p className="text-xs text-muted-foreground mt-1">
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
                             {getSessionModeLabel(data.session_mode)}
                             {data.headless ? " · Headless" : " · 有界面"}
                             {data.browser_alive ? " · 运行中" : " · 未启动"}
                         </p>
                     </div>
                     {data.last_login_failure_reason ? (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-amber-500/10 text-amber-600 px-2 py-1 rounded-full border border-amber-500/20">
-                            <AlertTriangle className="w-3 h-3" />
-                            最近登录失败
+                        <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-600">
+                            <AlertTriangle className="h-3 w-3" /> 最近登录失败
                         </span>
                     ) : (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-green-500/10 text-green-700 dark:text-green-400 px-2 py-1 rounded-full border border-green-500/20">
-                            <Check className="w-3 h-3" />
-                            最近登录正常
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                            <ShieldCheck className="h-3 w-3" /> 最近登录正常
                         </span>
                     )}
                 </div>
 
-                <div className="space-y-1.5 text-xs text-muted-foreground">
-                    <p>
-                        实际用户目录：
-                        <span className="font-mono text-[11px] text-foreground/80 ml-1 break-all">
-                            {data.effective_user_data_path || "未启动后端浏览器时暂不可见"}
-                        </span>
-                    </p>
-                    <p>
-                        爬虫专用目录：
-                        <span className="font-mono text-[11px] text-foreground/80 ml-1 break-all">
-                            {data.crawler_profile_path}
-                        </span>
-                        <span className="ml-2">
-                            {data.crawler_profile_initialized ? "已初始化" : data.crawler_profile_exists ? "目录已创建" : "目录未创建"}
-                        </span>
-                    </p>
-                    <p>
-                        最近登录检测：
-                        <span className="ml-1 text-foreground/80">
-                            {data.last_login_check_at || "暂无"}
-                        </span>
-                        {data.last_page_state && (
-                            <span className="ml-2">页面状态：{data.last_page_state}</span>
-                        )}
-                    </p>
-                    {data.last_login_failure_reason && (
-                        <p className="text-amber-600 dark:text-amber-400">
-                            最近失败原因：{data.last_login_failure_reason}
-                        </p>
-                    )}
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <InfoTile label="实际用户目录" value={data.effective_user_data_path || "未启动后端浏览器时暂不可见"} mono />
+                    <InfoTile label="爬虫专用目录" value={data.crawler_profile_path} mono />
+                    <InfoTile label="最近检查时间" value={data.last_login_check_at || data.last_login_success_at || "暂无"} />
+                    <InfoTile label="页面状态" value={data.last_page_state || "暂无"} />
                 </div>
+
+                {data.last_login_failure_reason ? (
+                    <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                        最近失败原因：{data.last_login_failure_reason}
+                    </div>
+                ) : null}
             </div>
 
-            {/* 自动检测选项 */}
             <button
-                onClick={() => handleSelect("")}
+                type="button"
+                onClick={() => void handleSelect("")}
                 disabled={selecting}
                 className={cn(
-                    "group relative w-full text-left p-4 rounded-xl border-2 transition-all duration-300",
-                    "hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                    !selectedId
-                        ? "border-primary bg-primary/5 shadow-sm"
-                        : "border-border/50 bg-card hover:border-primary/40 cursor-pointer",
+                    "group relative w-full rounded-[1.25rem] border-2 p-4 text-left transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:shadow-sm",
+                    !selectedId ? "border-primary bg-primary/6 shadow-sm" : "border-border/60 bg-card hover:border-primary/30",
                 )}
             >
                 <div className="flex items-center gap-3">
-                    <div className={cn(
-                        "flex items-center justify-center w-10 h-10 rounded-xl transition-colors",
-                        !selectedId ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground"
-                    )}>
-                        <Sparkles className="w-5 h-5" />
+                    <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", !selectedId ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
+                        <Sparkles className="h-5 w-5" />
                     </div>
                     <div className="flex-1">
                         <div className="flex items-center gap-2">
-                            <h4 className="font-semibold text-sm text-foreground">自动检测</h4>
-                            {!selectedId && (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-primary/10 text-primary px-1.5 py-0.5 rounded-full">
-                                    当前模式
-                                </span>
-                            )}
+                            <h4 className="text-sm font-semibold text-foreground">自动检测</h4>
+                            {!selectedId ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">当前模式</span> : null}
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                            自动选择系统中首个可用的 Chromium 内核浏览器
-                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">自动选择系统中首个可用的 Chromium 内核浏览器。</p>
                     </div>
-                    {!selectedId && (
-                        <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary text-primary-foreground shrink-0">
-                            <Check className="w-3.5 h-3.5" />
+                    {!selectedId ? (
+                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                            <Check className="h-3.5 w-3.5" />
                         </div>
-                    )}
+                    ) : null}
                 </div>
             </button>
 
-            {/* 分隔线 + 统计 */}
             <div className="flex items-center gap-3 px-1">
-                <div className="flex-1 h-px bg-border/50" />
-                <span className="text-xs text-muted-foreground shrink-0">
-                    检测到 {data.browsers.length} 个浏览器，{compatibleCount} 个兼容
-                </span>
-                <div className="flex-1 h-px bg-border/50" />
+                <div className="h-px flex-1 bg-border/50" />
+                <span className="shrink-0 text-xs text-muted-foreground">检测到 {data.browsers.length} 个浏览器，其中 {compatibleCount} 个兼容</span>
+                <div className="h-px flex-1 bg-border/50" />
             </div>
 
-            {/* 浏览器列表 */}
             <div className="grid gap-3">
                 {data.browsers.map((browser) => (
                     <BrowserCard
@@ -315,41 +245,22 @@ export function BrowserSelector() {
                 ))}
             </div>
 
-            {/* 操作反馈消息 */}
-            {message && (
-                <div
-                    className={cn(
-                        "flex items-center gap-2 px-4 py-3 rounded-lg text-sm transition-all animate-in fade-in slide-in-from-top-2 duration-300",
-                        message.type === "success"
-                            ? "bg-green-500/10 text-green-700 dark:text-green-400 border border-green-500/20"
-                            : "bg-red-500/10 text-red-700 dark:text-red-400 border border-red-500/20",
-                    )}
-                >
-                    {message.type === "success" ? (
-                        <Check className="w-4 h-4 shrink-0" />
-                    ) : (
-                        <AlertTriangle className="w-4 h-4 shrink-0" />
-                    )}
-                    <span>{message.text}</span>
-                </div>
-            )}
-
-            {/* 刷新按钮 */}
-            <div className="flex items-center justify-between pt-1">
-                <p className="text-xs text-muted-foreground">
-                    切换浏览器后需重新启动爬虫服务才能生效
-                </p>
-                <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={fetchBrowsers}
-                    disabled={loading}
-                    className="h-8 text-xs text-muted-foreground"
-                >
-                    <RefreshCw className={cn("w-3 h-3 mr-1", loading && "animate-spin")} />
+            <div className="flex items-center justify-between rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                <p className="text-xs leading-5 text-muted-foreground">切换浏览器路径后，建议重启爬虫服务再发起新任务。</p>
+                <Button variant="ghost" size="sm" onClick={() => void fetchBrowsers()} disabled={loading} className="rounded-xl text-muted-foreground">
+                    <RefreshCw className={cn("mr-1 h-3 w-3", loading && "animate-spin")} />
                     刷新
                 </Button>
             </div>
+        </div>
+    );
+}
+
+function InfoTile({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+    return (
+        <div className="rounded-xl border border-border/60 bg-background/70 p-3 shadow-sm">
+            <p className="text-[11px] text-muted-foreground">{label}</p>
+            <p className={cn("mt-1 break-all text-sm text-foreground", mono && "font-mono text-[12px]")}>{value}</p>
         </div>
     );
 }

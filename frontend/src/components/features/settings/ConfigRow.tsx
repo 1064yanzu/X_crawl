@@ -20,10 +20,11 @@ export function ConfigRow({
     unit?: string;
 }) {
     return (
-        <div className="flex items-center justify-between gap-4 border-b py-3 last:border-0">
+        <div className="flex flex-col gap-3 border-b border-border/50 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{label}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+                <p className="text-sm font-medium text-foreground">{label}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground/80">范围 {min} - {max} {unit}</p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
                 <input
@@ -33,11 +34,10 @@ export function ConfigRow({
                     step={step}
                     value={value}
                     onChange={(e) => onChange(parseFloat(e.target.value) || min)}
-                    className="h-8 w-24 rounded-md border border-input bg-background px-2 text-right font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="h-11 w-28 rounded-xl border border-input bg-background px-3 text-right font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
-                <span className="w-10 text-xs text-muted-foreground">{unit}</span>
+                <span className="min-w-10 text-xs text-muted-foreground">{unit}</span>
             </div>
         </div>
     );
 }
-

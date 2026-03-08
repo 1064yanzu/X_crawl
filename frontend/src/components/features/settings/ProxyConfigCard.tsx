@@ -43,7 +43,7 @@ export function ProxyConfigCard() {
     };
 
     return (
-        <Card>
+        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
             <CardHeader>
                 <CardTitle className="flex items-center gap-2"><Globe className="h-5 w-5" /> 网络与代理</CardTitle>
                 <CardDescription>管理数据抓取过程的代理路由。</CardDescription>
@@ -59,7 +59,7 @@ export function ProxyConfigCard() {
                         <input
                             type="text"
                             placeholder="http://127.0.0.1:7890"
-                            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                             value={proxy}
                             onChange={(e) => setProxy(e.target.value)}
                         />

@@ -11,46 +11,54 @@ type Props = {
 
 export function TaskAlerts({ error, isRiskPaused, debugScreenshot }: Props) {
     return (
-        <>
-            {error && (
-                <div className="bg-red-50 dark:bg-red-950/20 text-red-600 dark:text-red-400 p-4 rounded-xl border border-red-200 dark:border-red-900/50 flex flex-col gap-3 shadow-sm">
-                    <div className="flex gap-3">
-                        <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
-                        <div>
-                            <p className="font-bold">后台爬虫异常中断</p>
-                            <p className="text-sm mt-1 font-mono bg-white/50 dark:bg-black/20 px-2 py-1 rounded mt-2">{error}</p>
-                        </div>
-                    </div>
-                    {debugScreenshot && (
-                        <div className="mt-2 border-t border-red-200 dark:border-red-900/50 pt-3">
-                            <p className="font-bold mb-2 flex items-center gap-2">
-                                📸 错误现场抓拍:
-                                <a href={API_BASE_URL + debugScreenshot} target="_blank" rel="noreferrer" className="text-primary hover:underline text-xs font-normal">
-                                    [点击放大查看]
-                                </a>
+        <div className="space-y-3">
+            {error ? (
+                <div className="rounded-2xl border border-red-200 bg-red-50/90 p-4 text-red-800 shadow-sm dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
+                    <div className="flex items-start gap-3">
+                        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                            <p className="font-semibold">任务执行中断</p>
+                            <p className="mt-1 text-sm leading-6 text-red-700/90 dark:text-red-200/90">
+                                后端已返回错误信息。你可以先查看下方动作流和结果，再决定是否继续爬取。
                             </p>
-                            <Image
-                                src={API_BASE_URL + debugScreenshot}
-                                alt="Debug Screenshot"
-                                width={1600}
-                                height={900}
-                                className="max-w-2xl w-full h-auto rounded border border-red-200 dark:border-red-900/50 object-contain max-h-[600px] bg-white dark:bg-black"
-                                unoptimized
-                            />
+                            <pre className="mt-3 overflow-x-auto rounded-xl border border-red-200/80 bg-white/70 px-3 py-3 text-xs text-red-900 dark:border-red-500/10 dark:bg-black/20 dark:text-red-100">{error}</pre>
                         </div>
-                    )}
-                </div>
-            )}
+                    </div>
 
-            {isRiskPaused && (
-                <div className="bg-orange-50 dark:bg-orange-950/20 text-orange-700 dark:text-orange-400 p-4 rounded-xl border border-orange-200 dark:border-orange-900/50 flex gap-3 shadow-sm">
-                    <ShieldAlert className="w-5 h-5 shrink-0 mt-0.5" />
-                    <div>
-                        <p className="font-bold">检测到风控挑战，任务已自动暂停</p>
-                        <p className="text-sm mt-1">请在浏览器完成验证后，点击右上角「继续」恢复采集。</p>
+                    {debugScreenshot ? (
+                        <details className="mt-4 rounded-xl border border-red-200/80 bg-white/60 p-3 dark:border-red-500/10 dark:bg-black/10">
+                            <summary className="cursor-pointer text-sm font-medium">查看错误截图</summary>
+                            <div className="mt-3 space-y-3">
+                                <a href={API_BASE_URL + debugScreenshot} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
+                                    在新窗口打开原图
+                                </a>
+                                <Image
+                                    src={API_BASE_URL + debugScreenshot}
+                                    alt="Debug Screenshot"
+                                    width={1600}
+                                    height={900}
+                                    className="h-auto max-h-[600px] w-full rounded-xl border border-red-200 bg-white object-contain dark:border-red-500/10 dark:bg-black"
+                                    unoptimized
+                                />
+                            </div>
+                        </details>
+                    ) : null}
+                </div>
+            ) : null}
+
+            {isRiskPaused ? (
+                <div className="rounded-2xl border border-orange-200 bg-orange-50/90 p-4 text-orange-900 shadow-sm dark:border-orange-500/20 dark:bg-orange-500/10 dark:text-orange-100">
+                    <div className="flex items-start gap-3">
+                        <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
+                        <div>
+                            <p className="font-semibold">检测到风控挑战</p>
+                            <p className="mt-1 text-sm leading-6 text-orange-800/90 dark:text-orange-100/90">
+                                请先回到浏览器完成验证，然后使用页面右上角的“继续”按钮恢复任务。
+                            </p>
+                        </div>
                     </div>
                 </div>
-            )}
-        </>
+            ) : null}
+        </div>
     );
 }

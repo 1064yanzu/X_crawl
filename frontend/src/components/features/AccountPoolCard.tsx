@@ -1,11 +1,8 @@
 "use client";
 import * as React from "react";
 import {
-    AlertCircle,
-    CheckCircle2,
     ChevronDown,
     ChevronUp,
-    Clock,
     Info,
     Loader2,
     RefreshCw,
@@ -16,61 +13,50 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { useToast } from "@/components/ui/toast";
 import { api, AccountOut, IntervalSuggestion } from "@/services/api";
-
-type ToastType = "success" | "error" | "info";
-type Toast = { type: ToastType; message: string };
+import { cn } from "@/lib/utils";
 
 export function AccountPoolCard() {
+    const { push } = useToast();
     const [accounts, setAccounts] = React.useState<AccountOut[]>([]);
     const [intervalSuggestion, setIntervalSuggestion] = React.useState<IntervalSuggestion | null>(null);
     const [loading, setLoading] = React.useState(true);
-    const [toast, setToast] = React.useState<Toast | null>(null);
-
-    // 验证状态
     const [validatingId, setValidatingId] = React.useState<string | null>(null);
-
-    // 删除确认
     const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
     const [deleting, setDeleting] = React.useState(false);
 
-    const showToast = (type: ToastType, message: string) => {
-        setToast({ type, message });
-        setTimeout(() => setToast(null), 4000);
-    };
+    const showToast = React.useCallback((type: "success" | "error" | "info", title: string, description?: string) => {
+        push({ type, title, description });
+    }, [push]);
 
     const fetchData = React.useCallback(async () => {
         setLoading(true);
         try {
-            const [accs, interval] = await Promise.all([
+            const [accountList, interval] = await Promise.all([
                 api.accounts.list(),
                 api.accounts.intervalSuggestion(),
             ]);
-            setAccounts(accs);
+            setAccounts(accountList);
             setIntervalSuggestion(interval);
-        } catch (e) {
-            showToast("error", `加载失败: ${e instanceof Error ? e.message : String(e)}`);
+        } catch (error) {
+            showToast("error", "加载账号池失败", error instanceof Error ? error.message : String(error));
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [showToast]);
 
     React.useEffect(() => {
-        fetchData();
+        void fetchData();
     }, [fetchData]);
 
-
-    const handleToggleEnabled = async (acc: AccountOut) => {
+    const handleToggleEnabled = async (account: AccountOut) => {
         try {
-            await api.accounts.update(acc.account_id, { enabled: !acc.enabled });
-            setAccounts((prev) =>
-                prev.map((a) =>
-                    a.account_id === acc.account_id ? { ...a, enabled: !a.enabled } : a
-                )
-            );
-            showToast("info", `账号 "${acc.alias}" 已${!acc.enabled ? "启用" : "停用"}`);
-        } catch (e) {
-            showToast("error", `操作失败: ${e instanceof Error ? e.message : String(e)}`);
+            await api.accounts.update(account.account_id, { enabled: !account.enabled });
+            setAccounts((prev) => prev.map((item) => item.account_id === account.account_id ? { ...item, enabled: !item.enabled } : item));
+            showToast("info", `账号“${account.alias}”已${!account.enabled ? "启用" : "停用"}`);
+        } catch (error) {
+            showToast("error", "切换账号状态失败", error instanceof Error ? error.message : String(error));
         }
     };
 
@@ -78,15 +64,11 @@ export function AccountPoolCard() {
         setValidatingId(accountId);
         try {
             const updated = await api.accounts.validate(accountId);
-            setAccounts((prev) =>
-                prev.map((a) => (a.account_id === accountId ? updated : a))
+            setAccounts((prev) => prev.map((item) => item.account_id === accountId ? updated : item));
+            showToast(updated.is_valid ? "success" : "error", updated.is_valid ? "账号验证通过" : "账号验证失败", updated.is_valid ? "当前 Cookie 可继续使用。" : "Cookie 可能已过期，建议重新录入。"
             );
-            showToast(
-                updated.is_valid ? "success" : "error",
-                updated.is_valid ? `账号验证通过` : `账号验证失败（Cookie 可能已过期）`
-            );
-        } catch (e) {
-            showToast("error", `验证失败: ${e instanceof Error ? e.message : String(e)}`);
+        } catch (error) {
+            showToast("error", "验证失败", error instanceof Error ? error.message : String(error));
         } finally {
             setValidatingId(null);
         }
@@ -97,20 +79,20 @@ export function AccountPoolCard() {
         setDeleting(true);
         try {
             await api.accounts.delete(confirmDeleteId);
-            setAccounts((prev) => prev.filter((a) => a.account_id !== confirmDeleteId));
-            showToast("info", "账号已删除");
+            setAccounts((prev) => prev.filter((item) => item.account_id !== confirmDeleteId));
+            showToast("success", "账号已删除");
             await fetchData();
-        } catch (e) {
-            showToast("error", `删除失败: ${e instanceof Error ? e.message : String(e)}`);
+        } catch (error) {
+            showToast("error", "删除失败", error instanceof Error ? error.message : String(error));
         } finally {
             setDeleting(false);
             setConfirmDeleteId(null);
         }
     };
 
-    const formatTime = (ts: number) => {
-        if (!ts) return "从未";
-        return new Date(ts * 1000).toLocaleString("zh-CN", {
+    const formatTime = (timestamp: number) => {
+        if (!timestamp) return "从未";
+        return new Date(timestamp * 1000).toLocaleString("zh-CN", {
             month: "2-digit",
             day: "2-digit",
             hour: "2-digit",
@@ -120,190 +102,110 @@ export function AccountPoolCard() {
 
     return (
         <div className="space-y-4">
-            {/* Toast */}
-            {toast && (
-                <div
-                    className={`flex items-center gap-2 rounded-lg border px-4 py-3 text-sm ${toast.type === "success"
-                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                            : toast.type === "error"
-                                ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                                : "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300"
-                        }`}
-                >
-                    {toast.type === "success" ? (
-                        <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    ) : (
-                        <AlertCircle className="h-4 w-4 shrink-0" />
-                    )}
-                    {toast.message}
-                </div>
-            )}
-
-            {/* 间隔建议区域 */}
-            {intervalSuggestion && (
-                <div className="rounded-lg border border-dashed bg-muted/30 p-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm font-medium">
+            {intervalSuggestion ? (
+                <div className="rounded-[1.25rem] border border-dashed border-border/70 bg-muted/25 p-4 shadow-sm">
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                             <Zap className="h-4 w-4 text-amber-500" />
-                            <span>当前动态间隔建议</span>
+                            当前动态间隔建议
                         </div>
                         <span className="flex items-center gap-1 text-xs text-muted-foreground">
                             <Users className="h-3 w-3" />
                             {intervalSuggestion.active_account_count}/{intervalSuggestion.total_account_count} 活跃
                         </span>
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                        <div className="rounded bg-background px-2 py-1.5">
-                            <span className="font-medium text-foreground">搜索接口</span>
-                            <br />约 {intervalSuggestion.search_safe_interval}s（{intervalSuggestion.search_interval_min}~{intervalSuggestion.search_interval_max}s）
-                        </div>
-                        <div className="rounded bg-background px-2 py-1.5">
-                            <span className="font-medium text-foreground">评论接口</span>
-                            <br />约 {intervalSuggestion.tweet_detail_safe_interval}s（{intervalSuggestion.tweet_detail_interval_min}~{intervalSuggestion.tweet_detail_interval_max}s）
-                        </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                        <SuggestionItem label="搜索安全间隔" value={`${intervalSuggestion.search_safe_interval}s`} />
+                        <SuggestionItem label="搜索区间" value={`${intervalSuggestion.search_interval_min}s - ${intervalSuggestion.search_interval_max}s`} />
+                        <SuggestionItem label="详情安全间隔" value={`${intervalSuggestion.tweet_detail_safe_interval}s`} />
+                        <SuggestionItem label="详情区间" value={`${intervalSuggestion.tweet_detail_interval_min}s - ${intervalSuggestion.tweet_detail_interval_max}s`} />
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">{intervalSuggestion.note}</p>
+                    <p className="mt-3 text-xs leading-5 text-muted-foreground">{intervalSuggestion.note}</p>
                 </div>
-            )}
+            ) : null}
 
-            {/* 账号列表 */}
-            <div className="space-y-2">
+            <div className="space-y-3">
                 {loading ? (
-                    <div className="flex items-center justify-center py-8 text-muted-foreground">
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                        <span className="ml-2 text-sm">加载中...</span>
+                    <div className="flex items-center gap-2 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground shadow-sm">
+                        <Loader2 className="h-4 w-4 animate-spin" /> 正在加载账号池...
                     </div>
                 ) : accounts.length === 0 ? (
-                    <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-                        暂无账号，添加第一个账号以开启多账号协作模式
+                    <div className="flex items-start gap-2.5 rounded-[1.25rem] border border-blue-500/20 bg-blue-500/5 px-4 py-4 text-sm text-blue-700 shadow-sm dark:text-blue-400">
+                        <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                        <p>在上方「Cookie 管理」中保存 X Cookie 后，账号会自动同步到这里，无需手动添加。</p>
                     </div>
                 ) : (
-                    accounts.map((acc) => (
-                        <div
-                            key={acc.account_id}
-                            className={`rounded-lg border p-3 transition-colors ${acc.enabled && acc.is_valid
-                                    ? "bg-background"
-                                    : "bg-muted/30 opacity-60"
-                                }`}
-                        >
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                    {/* 状态指示点 */}
-                                    <div
-                                        className={`h-2 w-2 rounded-full ${acc.is_rate_limited
-                                                ? "bg-amber-500"
-                                                : acc.is_valid && acc.enabled
-                                                    ? "bg-emerald-500"
-                                                    : "bg-slate-300 dark:bg-slate-600"
-                                            }`}
-                                        title={
-                                            acc.is_rate_limited
-                                                ? "速率限制中"
-                                                : acc.is_valid && acc.enabled
-                                                    ? "活跃"
-                                                    : "未启用/无效"
-                                        }
-                                    />
-                                    <span className="text-sm font-medium">{acc.alias}</span>
-                                    <span className="text-xs text-muted-foreground">
-                                        {acc.cookie_count} 条 Cookie
-                                        {acc.cookie_domains.length > 0 && ` · ${acc.cookie_domains.join(", ")}`}
-                                    </span>
+                    accounts.map((account) => (
+                        <div key={account.account_id} className="rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-sm font-semibold text-foreground">{account.alias}</span>
+                                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", account.enabled ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground")}>
+                                            {account.enabled ? "已启用" : "已停用"}
+                                        </span>
+                                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", account.is_valid ? "bg-blue-500/10 text-blue-600" : "bg-red-500/10 text-red-600")}>
+                                            {account.is_valid ? "凭证有效" : "凭证失效"}
+                                        </span>
+                                        {account.is_rate_limited ? <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-600">限速中</span> : null}
+                                    </div>
+                                    <p className="mt-1 text-xs text-muted-foreground">{account.cookie_count} 条 Cookie{account.cookie_domains.length > 0 ? ` · ${account.cookie_domains.join(", ")}` : ""}</p>
+
+                                    <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                                        <MiniStat label="使用次数" value={`${account.use_count}`} />
+                                        <MiniStat label="失败次数" value={`${account.fail_count}`} accent={account.fail_count > 0 ? "text-amber-600" : undefined} />
+                                        <MiniStat label="上次使用" value={formatTime(account.last_used_at)} />
+                                        <MiniStat label="上次验证" value={formatTime(account.last_validated_at)} />
+                                    </div>
+
+                                    {account.is_rate_limited ? (
+                                        <p className="mt-2 text-xs text-amber-600">限速恢复时间：{formatTime(account.rate_reset_at)}</p>
+                                    ) : null}
                                 </div>
 
-                                <div className="flex items-center gap-1">
-                                    {/* 验证按钮 */}
+                                <div className="flex items-center gap-2 lg:ml-4">
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-7 px-2 text-xs"
-                                        onClick={() => handleValidate(acc.account_id)}
-                                        disabled={validatingId === acc.account_id}
+                                        className="rounded-xl"
+                                        onClick={() => void handleValidate(account.account_id)}
+                                        disabled={validatingId === account.account_id}
                                         title="验证账号登录状态"
                                     >
-                                        {validatingId === acc.account_id ? (
-                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                        ) : (
-                                            <ShieldCheck className="h-3.5 w-3.5" />
-                                        )}
+                                        {validatingId === account.account_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
                                     </Button>
-
-                                    {/* 启用/停用 */}
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-7 px-2 text-xs"
-                                        onClick={() => handleToggleEnabled(acc)}
-                                        title={acc.enabled ? "停用账号" : "启用账号"}
+                                        className="rounded-xl"
+                                        onClick={() => void handleToggleEnabled(account)}
+                                        title={account.enabled ? "停用账号" : "启用账号"}
                                     >
-                                        {acc.enabled ? (
-                                            <ChevronUp className="h-3.5 w-3.5 text-emerald-500" />
-                                        ) : (
-                                            <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
-                                        )}
+                                        {account.enabled ? <ChevronUp className="h-3.5 w-3.5 text-emerald-500" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-400" />}
                                     </Button>
-
-                                    {/* 删除 */}
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-7 px-2 text-xs text-red-500 hover:text-red-600"
-                                        onClick={() => setConfirmDeleteId(acc.account_id)}
+                                        className="rounded-xl text-red-500 hover:text-red-600"
+                                        onClick={() => setConfirmDeleteId(account.account_id)}
                                         title="删除账号"
                                     >
                                         <Trash2 className="h-3.5 w-3.5" />
                                     </Button>
                                 </div>
                             </div>
-
-                            {/* 账号统计 */}
-                            <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-                                <span>使用 {acc.use_count} 次</span>
-                                {acc.fail_count > 0 && (
-                                    <span className="text-amber-600">失败 {acc.fail_count} 次</span>
-                                )}
-                                {acc.last_used_at > 0 && (
-                                    <span className="flex items-center gap-1">
-                                        <Clock className="h-3 w-3" />
-                                        上次使用 {formatTime(acc.last_used_at)}
-                                    </span>
-                                )}
-                                {acc.is_rate_limited && (
-                                    <span className="text-amber-600">
-                                        限速中（至 {formatTime(acc.rate_reset_at)}）
-                                    </span>
-                                )}
-                                {!acc.is_valid && (
-                                    <span className="text-red-500">Cookie 无效</span>
-                                )}
-                            </div>
                         </div>
                     ))
                 )}
             </div>
-            {/* 自动同步提示 */}
-            {accounts.length === 0 && !loading && (
-                <div className="flex items-start gap-2.5 rounded-lg border border-blue-500/20 bg-blue-500/5 px-4 py-3 text-xs text-blue-700 dark:text-blue-400">
-                    <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                    <p>在上方「Cookie 管理」中保存 Cookie 后，账号会自动同步到此处。无需手动添加。</p>
-                </div>
-            )}
 
-            {/* 底部操作栏 */}
             <div className="flex items-center justify-end">
-                <Button
-                    size="sm"
-                    variant="ghost"
-                    className="gap-1.5 text-muted-foreground"
-                    onClick={fetchData}
-                    disabled={loading}
-                >
-                    <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                <Button size="sm" variant="ghost" className="gap-1.5 rounded-xl text-muted-foreground" onClick={() => void fetchData()} disabled={loading}>
+                    <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
                     刷新
                 </Button>
             </div>
 
-            {/* 删除确认对话框 */}
             <ConfirmDialog
                 open={confirmDeleteId !== null}
                 title="删除账号"
@@ -313,6 +215,24 @@ export function AccountPoolCard() {
                 onConfirm={handleDelete}
                 onCancel={() => setConfirmDeleteId(null)}
             />
+        </div>
+    );
+}
+
+function SuggestionItem({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-xl border border-border/60 bg-background/70 p-3 shadow-sm">
+            <p className="text-[11px] text-muted-foreground">{label}</p>
+            <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
+        </div>
+    );
+}
+
+function MiniStat({ label, value, accent }: { label: string; value: string; accent?: string }) {
+    return (
+        <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2 shadow-sm">
+            <p className="text-[11px] text-muted-foreground">{label}</p>
+            <p className={cn("mt-1 text-sm font-medium text-foreground", accent)}>{value}</p>
         </div>
     );
 }

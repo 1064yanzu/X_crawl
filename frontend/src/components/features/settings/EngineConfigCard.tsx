@@ -67,159 +67,161 @@ export function EngineConfigCard() {
     };
 
     return (
-        <Card>
+        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
             <CardHeader>
-                <CardTitle className="flex items-center gap-2"><Cpu className="h-5 w-5" /> 爬虫引擎核心</CardTitle>
-                <CardDescription>配置无头运行、平衡档伪装与 Linux 服务器稳定性参数。</CardDescription>
+                <CardTitle className="flex items-center gap-2 text-xl"><Cpu className="h-5 w-5" /> 爬虫引擎核心</CardTitle>
+                <CardDescription>统一管理浏览器模式、实时推送和资源压力收敛策略。</CardDescription>
             </CardHeader>
             <CardContent>
-                <div className="space-y-3">
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">无头模式</h4>
-                            <p className="text-sm text-muted-foreground">开启后浏览器在后台静默运行。</p>
+                {loading ? (
+                    <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" /> 正在读取引擎配置...
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        <div className="grid gap-3 md:grid-cols-2">
+                            <ToggleField label="无头模式" description="浏览器在后台静默运行，适合服务器环境。" checked={headless} onChange={setHeadless} disabled={saving} />
+                            <ToggleField label="后台标签页" description="任务创建的新标签页保持在后台，减少前台打断。" checked={backgroundTabs} onChange={setBackgroundTabs} disabled={saving} />
+                            <ToggleField label="登录时切回前台" description="遇到登录或风控时主动唤起浏览器，便于人工介入。" checked={foregroundOnLogin} onChange={setForegroundOnLogin} disabled={saving} />
+                            <ToggleField label="Stealth 伪装" description="增强浏览器伪装配置，优先提高平台兼容性。" checked={stealth} onChange={setStealth} disabled={saving} />
+                            <ToggleField label="Linux 加固" description="针对 Linux 服务器启用更稳妥的浏览器运行参数。" checked={linuxHardening} onChange={setLinuxHardening} disabled={saving} />
+                            <ToggleField label="资源压力自动节流" description="内存或 CPU 逼近阈值时自动放慢翻页节奏。" checked={autoThrottle} onChange={setAutoThrottle} disabled={saving} />
+                            <ToggleField label="动态并发收敛" description="资源压力高时自动降低有效并发上限。" checked={dynamicConcurrency} onChange={setDynamicConcurrency} disabled={saving} />
                         </div>
-                        {loading ? (
-                            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                        ) : (
-                            <label className="relative inline-flex cursor-pointer items-center">
-                                <input type="checkbox" className="peer sr-only" checked={headless} onChange={(e) => setHeadless(e.target.checked)} disabled={saving} />
-                                <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                            </label>
-                        )}
-                    </div>
 
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">后台创建标签页</h4>
-                            <p className="text-sm text-muted-foreground">macOS 推荐开启，尽量避免 Edge/Chrome 每次开新标签都抢占系统焦点。</p>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                            <input type="checkbox" className="peer sr-only" checked={backgroundTabs} onChange={(e) => setBackgroundTabs(e.target.checked)} disabled={saving || loading} />
-                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                        </label>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">登录时前台唤起浏览器</h4>
-                            <p className="text-sm text-muted-foreground">抓取阶段保持后台；只有登录失效或风控需要人工处理时，才自动把浏览器切到前台。</p>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                            <input type="checkbox" className="peer sr-only" checked={foregroundOnLogin} onChange={(e) => setForegroundOnLogin(e.target.checked)} disabled={saving || loading} />
-                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                        </label>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">Stealth 平衡档</h4>
-                            <p className="text-sm text-muted-foreground">注入基础指纹修补（不伪造核心鉴权头）。</p>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                            <input type="checkbox" className="peer sr-only" checked={stealth} onChange={(e) => setStealth(e.target.checked)} disabled={saving || loading} />
-                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                        </label>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">Linux 无头加固</h4>
-                            <p className="text-sm text-muted-foreground">自动补充 no-sandbox / dev-shm 等服务器稳定参数。</p>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                            <input type="checkbox" className="peer sr-only" checked={linuxHardening} onChange={(e) => setLinuxHardening(e.target.checked)} disabled={saving || loading} />
-                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                        </label>
-                    </div>
-
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                        <h4 className="font-medium">实时推送间隔（ms）</h4>
-                        <p className="text-sm text-muted-foreground mt-1">推荐 800ms，范围 200~5000。</p>
-                        <input
-                            type="number"
-                            min={200}
-                            max={5000}
-                            step={50}
-                            value={pushIntervalMs}
-                            onChange={(e) => setPushIntervalMs(Number(e.target.value) || 800)}
-                            disabled={saving || loading}
-                            className="mt-3 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm"
-                        />
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">资源压力自动节流</h4>
-                            <p className="text-sm text-muted-foreground">内存/CPU 逼近阈值时自动放慢翻页节奏，防止服务器卡死。</p>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                            <input type="checkbox" className="peer sr-only" checked={autoThrottle} onChange={(e) => setAutoThrottle(e.target.checked)} disabled={saving || loading} />
-                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                        </label>
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-lg border bg-muted/20 p-4">
-                        <div>
-                            <h4 className="font-medium">动态并发收敛</h4>
-                            <p className="text-sm text-muted-foreground">资源压力高时自动降低有效并发上限（仅在并发大于 1 时生效）。</p>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                            <input type="checkbox" className="peer sr-only" checked={dynamicConcurrency} onChange={(e) => setDynamicConcurrency(e.target.checked)} disabled={saving || loading} />
-                            <div className="h-6 w-11 rounded-full bg-muted peer-checked:bg-primary after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:bg-white after:transition-all peer-checked:after:translate-x-full" />
-                        </label>
-                    </div>
-
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                        <h4 className="font-medium">内存压力阈值（%）</h4>
-                        <p className="text-sm text-muted-foreground mt-1">推荐 告警 80 / 临界 90。临界必须大于告警。</p>
-                        <div className="mt-3 grid grid-cols-2 gap-3">
-                            <input
-                                type="number"
+                        <div className="grid gap-3 md:grid-cols-3">
+                            <NumberField
+                                label="实时推送间隔"
+                                description="详情页刷新频率，推荐 800ms。"
+                                value={pushIntervalMs}
+                                min={200}
+                                max={5000}
+                                step={50}
+                                unit="ms"
+                                onChange={setPushIntervalMs}
+                                disabled={saving || loading}
+                            />
+                            <NumberField
+                                label="内存告警阈值"
+                                description="推荐 80%，临界值需高于它。"
+                                value={memWarnPct}
                                 min={50}
                                 max={95}
                                 step={1}
-                                value={memWarnPct}
-                                onChange={(e) => setMemWarnPct(Number(e.target.value) || 80)}
+                                unit="%"
+                                onChange={setMemWarnPct}
                                 disabled={saving || loading}
-                                className="w-full rounded-md border bg-background px-3 py-2 font-mono text-sm"
                             />
-                            <input
-                                type="number"
+                            <NumberField
+                                label="内存临界阈值"
+                                description="推荐 90%，超过后更强烈收敛。"
+                                value={memCriticalPct}
                                 min={55}
                                 max={99}
                                 step={1}
-                                value={memCriticalPct}
-                                onChange={(e) => setMemCriticalPct(Number(e.target.value) || 90)}
+                                unit="%"
+                                onChange={setMemCriticalPct}
                                 disabled={saving || loading}
-                                className="w-full rounded-md border bg-background px-3 py-2 font-mono text-sm"
                             />
                         </div>
-                    </div>
 
-                    <div className="rounded-lg border bg-muted/20 p-4">
-                        <h4 className="font-medium">最大节流倍数</h4>
-                        <p className="text-sm text-muted-foreground mt-1">推荐 3.0，范围 1.1~6.0。</p>
-                        <input
-                            type="number"
-                            min={1.1}
-                            max={6}
-                            step={0.1}
-                            value={throttleMaxFactor}
-                            onChange={(e) => setThrottleMaxFactor(Number(e.target.value) || 3)}
-                            disabled={saving || loading}
-                            className="mt-3 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm"
-                        />
-                    </div>
+                        <div className="rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+                            <p className="text-sm font-medium text-foreground">最大节流倍数</p>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">推荐值 3.0，范围 1.1 - 6.0，数值越高说明高压时减速越明显。</p>
+                            <div className="mt-3 flex items-center gap-3">
+                                <input
+                                    type="number"
+                                    min={1.1}
+                                    max={6}
+                                    step={0.1}
+                                    value={throttleMaxFactor}
+                                    onChange={(e) => setThrottleMaxFactor(Number(e.target.value) || 3)}
+                                    disabled={saving || loading}
+                                    className="h-11 w-32 rounded-xl border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                />
+                                <span className="text-xs text-muted-foreground">倍</span>
+                            </div>
+                        </div>
 
-                    <div className="flex justify-end">
-                        <Button size="sm" onClick={handleSave} disabled={saving || loading} className="min-w-[112px]">
-                            {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
-                            保存引擎设置
-                        </Button>
+                        <div className="flex justify-end rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                            <Button size="sm" onClick={handleSave} disabled={saving || loading} className="min-w-[112px] rounded-xl">
+                                {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
+                                保存引擎设置
+                            </Button>
+                        </div>
                     </div>
-                </div>
+                )}
             </CardContent>
         </Card>
+    );
+}
+
+function ToggleField({
+    label,
+    description,
+    checked,
+    onChange,
+    disabled,
+}: {
+    label: string;
+    description: string;
+    checked: boolean;
+    onChange: (checked: boolean) => void;
+    disabled?: boolean;
+}) {
+    return (
+        <label className="flex items-start justify-between gap-3 rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+            <div>
+                <p className="text-sm font-medium text-foreground">{label}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+            </div>
+            <span className="relative mt-0.5 inline-flex cursor-pointer items-center">
+                <input type="checkbox" className="peer sr-only" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
+                <span className="h-6 w-11 rounded-full bg-muted transition-colors peer-checked:bg-primary peer-disabled:opacity-50" />
+                <span className="absolute left-[2px] top-[2px] h-5 w-5 rounded-full border bg-white transition-transform peer-checked:translate-x-full peer-disabled:opacity-50" />
+            </span>
+        </label>
+    );
+}
+
+function NumberField({
+    label,
+    description,
+    value,
+    min,
+    max,
+    step,
+    unit,
+    onChange,
+    disabled,
+}: {
+    label: string;
+    description: string;
+    value: number;
+    min: number;
+    max: number;
+    step: number;
+    unit: string;
+    onChange: (value: number) => void;
+    disabled?: boolean;
+}) {
+    return (
+        <div className="rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+            <p className="text-sm font-medium text-foreground">{label}</p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+            <div className="mt-3 flex items-center gap-2">
+                <input
+                    type="number"
+                    min={min}
+                    max={max}
+                    step={step}
+                    value={value}
+                    onChange={(e) => onChange(Number(e.target.value) || min)}
+                    disabled={disabled}
+                    className="h-11 w-full rounded-xl border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+                <span className="text-xs text-muted-foreground">{unit}</span>
+            </div>
+        </div>
     );
 }
