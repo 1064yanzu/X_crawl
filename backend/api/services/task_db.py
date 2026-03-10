@@ -2,26 +2,36 @@
 任务持久化层（SQLite）
 
 职责：
-- init_db()       : 建库建表
-- save_task()     : 写入/更新任务（INSERT OR REPLACE）
-- load_all_tasks(): 启动时加载全部历史任务到内存
-- delete_task()   : 删除任务
+- init_db()            : 建库建表
+- save_task()          : 写入/更新任务摘要，并持久化完整结果到独立表
+- save_task_summary()  : 仅更新高频摘要字段
+- load_all_tasks()     : 启动时只加载摘要，避免将历史全量 tweets 读入内存
+- load_task_result()   : 按需读取单任务完整结果
+- delete_task()        : 删除任务与结果记录
 
 设计原则：
 - 内存层（_tasks dict）维持运行时高频读写，本模块只做 I/O 持久化
-- 推文数据以 JSON 字符串存储在 tweets_json / preview_json 列
-- update_task_phase 极频繁（每页多次），不持久化，避免写入风暴
+- 完整 tweets 结果从 tasks 主表拆出，避免轮询/启动路径反复处理大 JSON
+- 对旧版数据库里的 tasks.tweets_json 做懒迁移兼容
 """
+from __future__ import annotations
+
 import json
-import sqlite3
 import logging
+import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _DB_PATH: Path | None = None
 _local = threading.local()  # 线程本地存储，缓存连接
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -45,7 +55,8 @@ def init_db(db_path: str | Path) -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with _get_conn() as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS tasks (
                 task_id               TEXT PRIMARY KEY,
                 status                TEXT NOT NULL,
@@ -72,10 +83,22 @@ def init_db(db_path: str | Path) -> None:
                 tweets_json           TEXT DEFAULT '[]',
                 preview_json          TEXT DEFAULT '[]'
             )
-        """)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_results (
+                task_id      TEXT PRIMARY KEY,
+                tweets_json  TEXT NOT NULL DEFAULT '[]',
+                updated_at   TEXT NOT NULL
+            )
+            """
+        )
 
         # 失败评论记录表
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS failed_replies (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 task_id         TEXT NOT NULL,
@@ -88,23 +111,29 @@ def init_db(db_path: str | Path) -> None:
                 created_at      TEXT NOT NULL,
                 retried_at      TEXT
             )
-        """)
-        conn.execute("""
+            """
+        )
+        conn.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_failed_replies_task
             ON failed_replies(task_id)
-        """)
+            """
+        )
 
         # 用户设置持久化表
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS user_settings (
                 key         TEXT PRIMARY KEY,
                 value       TEXT NOT NULL,
                 updated_at  TEXT NOT NULL
             )
-        """)
+            """
+        )
 
         # 推文指纹表（跨任务去重用）
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS tweet_fingerprints (
                 tweet_id       TEXT PRIMARY KEY,
                 fingerprint    TEXT NOT NULL,
@@ -112,16 +141,17 @@ def init_db(db_path: str | Path) -> None:
                 replies_json   TEXT DEFAULT '[]',
                 updated_at     TEXT NOT NULL
             )
-        """)
+            """
+        )
 
         _ensure_column(conn, "tasks", "risk_state", "TEXT DEFAULT 'none'")
         _ensure_column(conn, "tasks", "quality_state", "TEXT DEFAULT 'complete'")
         _ensure_column(conn, "tasks", "runtime_metrics_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "time_coverage_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "last_event_at", "TEXT")
-        _ensure_column(conn, "tasks", "platform",   "TEXT DEFAULT 'x'")
+        _ensure_column(conn, "tasks", "platform", "TEXT DEFAULT 'x'")
         _ensure_column(conn, "tasks", "start_date", "TEXT")
-        _ensure_column(conn, "tasks", "end_date",   "TEXT")
+        _ensure_column(conn, "tasks", "end_date", "TEXT")
         _ensure_column(conn, "tasks", "segment_progress_json", "TEXT DEFAULT '{}'")
 
         conn.commit()
@@ -136,69 +166,99 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
+def _summary_params(task: dict) -> dict:
+    return {
+        "task_id": task["task_id"],
+        "status": task["status"],
+        "keyword": task["keyword"],
+        "product": task["product"],
+        "max_count": task["max_count"],
+        "result_count": task.get("result_count", 0),
+        "current_page": task.get("current_page", 0),
+        "created_at": task["created_at"],
+        "finished_at": task.get("finished_at"),
+        "error": task.get("error"),
+        "risk_state": task.get("risk_state", "none"),
+        "quality_state": task.get("quality_state", "complete"),
+        "runtime_metrics_json": json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False),
+        "time_coverage_json": json.dumps(task.get("time_coverage", {}), ensure_ascii=False),
+        "last_event_at": task.get("last_event_at"),
+        "resumed": int(task.get("resumed", False)),
+        "fetch_replies": int(task.get("fetch_replies", False)),
+        "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
+        "crawl_strategy": task.get("crawl_strategy", "dfs"),
+        "replies_fetched": task.get("replies_fetched", 0),
+        "crawl_phase": task.get("crawl_phase", ""),
+        "segment_progress_json": json.dumps(task.get("segment_progress", {}), ensure_ascii=False),
+        "preview_json": json.dumps(task.get("preview_tweets", []), ensure_ascii=False),
+        "platform": task.get("platform", "x"),
+        "start_date": task.get("start_date"),
+        "end_date": task.get("end_date"),
+    }
+
+
+def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
+    params = _summary_params(task)
+    conn.execute(
+        """
+        INSERT INTO tasks (
+            task_id, status, keyword, product, max_count,
+            result_count, current_page, created_at, finished_at,
+            error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
+            resumed, fetch_replies, max_replies_per_tweet,
+            crawl_strategy, replies_fetched, crawl_phase,
+            segment_progress_json, preview_json,
+            platform, start_date, end_date
+        ) VALUES (
+            :task_id, :status, :keyword, :product, :max_count,
+            :result_count, :current_page, :created_at, :finished_at,
+            :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
+            :resumed, :fetch_replies, :max_replies_per_tweet,
+            :crawl_strategy, :replies_fetched, :crawl_phase,
+            :segment_progress_json, :preview_json,
+            :platform, :start_date, :end_date
+        )
+        ON CONFLICT(task_id) DO UPDATE SET
+            status = excluded.status,
+            keyword = excluded.keyword,
+            product = excluded.product,
+            max_count = excluded.max_count,
+            result_count = excluded.result_count,
+            current_page = excluded.current_page,
+            created_at = excluded.created_at,
+            finished_at = excluded.finished_at,
+            error = excluded.error,
+            risk_state = excluded.risk_state,
+            quality_state = excluded.quality_state,
+            runtime_metrics_json = excluded.runtime_metrics_json,
+            time_coverage_json = excluded.time_coverage_json,
+            last_event_at = excluded.last_event_at,
+            resumed = excluded.resumed,
+            fetch_replies = excluded.fetch_replies,
+            max_replies_per_tweet = excluded.max_replies_per_tweet,
+            crawl_strategy = excluded.crawl_strategy,
+            replies_fetched = excluded.replies_fetched,
+            crawl_phase = excluded.crawl_phase,
+            segment_progress_json = excluded.segment_progress_json,
+            preview_json = excluded.preview_json,
+            platform = excluded.platform,
+            start_date = excluded.start_date,
+            end_date = excluded.end_date
+        """,
+        params,
+    )
+
+
 def save_task(task: dict) -> None:
     """
-    写入或更新一条任务记录（INSERT OR REPLACE）。
-    传入 task_manager 中的完整 task dict。
+    写入或更新一条任务记录，并将完整 tweets 保存到独立结果表。
     """
     if _DB_PATH is None:
         return
     try:
-        tweets_json = json.dumps(task.get("tweets", []), ensure_ascii=False)
-        preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
-        runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
-        time_coverage_json = json.dumps(task.get("time_coverage", {}), ensure_ascii=False)
-        segment_progress_json = json.dumps(task.get("segment_progress", {}), ensure_ascii=False)
         with _get_conn() as conn:
-            conn.execute("""
-                INSERT OR REPLACE INTO tasks (
-                    task_id, status, keyword, product, max_count,
-                    result_count, current_page, created_at, finished_at,
-                    error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
-                    resumed, fetch_replies, max_replies_per_tweet,
-                    crawl_strategy, replies_fetched, crawl_phase,
-                    segment_progress_json,
-                    tweets_json, preview_json,
-                    platform, start_date, end_date
-                ) VALUES (
-                    :task_id, :status, :keyword, :product, :max_count,
-                    :result_count, :current_page, :created_at, :finished_at,
-                    :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
-                    :resumed, :fetch_replies, :max_replies_per_tweet,
-                    :crawl_strategy, :replies_fetched, :crawl_phase,
-                    :segment_progress_json,
-                    :tweets_json, :preview_json,
-                    :platform, :start_date, :end_date
-                )
-            """, {
-                "task_id":               task["task_id"],
-                "status":                task["status"],
-                "keyword":               task["keyword"],
-                "product":               task["product"],
-                "max_count":             task["max_count"],
-                "result_count":          task.get("result_count", 0),
-                "current_page":          task.get("current_page", 0),
-                "created_at":            task["created_at"],
-                "finished_at":           task.get("finished_at"),
-                "error":                 task.get("error"),
-                "risk_state":            task.get("risk_state", "none"),
-                "quality_state":         task.get("quality_state", "complete"),
-                "runtime_metrics_json":  runtime_metrics_json,
-                "time_coverage_json":    time_coverage_json,
-                "last_event_at":         task.get("last_event_at"),
-                "resumed":               int(task.get("resumed", False)),
-                "fetch_replies":         int(task.get("fetch_replies", False)),
-                "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
-                "crawl_strategy":        task.get("crawl_strategy", "dfs"),
-                "replies_fetched":       task.get("replies_fetched", 0),
-                "crawl_phase":           task.get("crawl_phase", ""),
-                "segment_progress_json": segment_progress_json,
-                "tweets_json":           tweets_json,
-                "preview_json":          preview_json,
-                "platform":              task.get("platform", "x"),
-                "start_date":            task.get("start_date"),
-                "end_date":              task.get("end_date"),
-            })
+            _upsert_task_summary(conn, task)
+            save_task_result(task["task_id"], task.get("tweets", []), conn=conn)
             conn.commit()
     except Exception as e:
         logger.error(f"持久化任务失败 task_id={task.get('task_id')}: {e}", exc_info=True)
@@ -206,99 +266,130 @@ def save_task(task: dict) -> None:
 
 def save_task_summary(task: dict) -> None:
     """
-    仅更新高频摘要字段，不覆盖 tweets_json。
-
-    用于运行期高频持久化，避免每次都序列化全量 tweets。
+    仅更新高频摘要字段，不覆盖完整 tweets 结果。
     """
     if _DB_PATH is None:
         return
     try:
-        preview_json = json.dumps(task.get("preview_tweets", []), ensure_ascii=False)
-        runtime_metrics_json = json.dumps(task.get("runtime_metrics", {}), ensure_ascii=False)
-        time_coverage_json = json.dumps(task.get("time_coverage", {}), ensure_ascii=False)
-        segment_progress_json = json.dumps(task.get("segment_progress", {}), ensure_ascii=False)
         with _get_conn() as conn:
-            cur = conn.execute(
-                """
-                UPDATE tasks
-                   SET status = :status,
-                       result_count = :result_count,
-                       current_page = :current_page,
-                       finished_at = :finished_at,
-                       error = :error,
-                       risk_state = :risk_state,
-                       quality_state = :quality_state,
-                       runtime_metrics_json = :runtime_metrics_json,
-                       time_coverage_json = :time_coverage_json,
-                       last_event_at = :last_event_at,
-                       resumed = :resumed,
-                       fetch_replies = :fetch_replies,
-                       max_replies_per_tweet = :max_replies_per_tweet,
-                       crawl_strategy = :crawl_strategy,
-                       replies_fetched = :replies_fetched,
-                       crawl_phase = :crawl_phase,
-                       segment_progress_json = :segment_progress_json,
-                       preview_json = :preview_json
-                 WHERE task_id = :task_id
-                """,
-                {
-                    "task_id": task["task_id"],
-                    "status": task["status"],
-                    "result_count": task.get("result_count", 0),
-                    "current_page": task.get("current_page", 0),
-                    "finished_at": task.get("finished_at"),
-                    "error": task.get("error"),
-                    "risk_state": task.get("risk_state", "none"),
-                    "quality_state": task.get("quality_state", "complete"),
-                    "runtime_metrics_json": runtime_metrics_json,
-                    "time_coverage_json": time_coverage_json,
-                    "last_event_at": task.get("last_event_at"),
-                    "resumed": int(task.get("resumed", False)),
-                    "fetch_replies": int(task.get("fetch_replies", False)),
-                    "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
-                    "crawl_strategy": task.get("crawl_strategy", "dfs"),
-                    "replies_fetched": task.get("replies_fetched", 0),
-                    "crawl_phase": task.get("crawl_phase", ""),
-                    "segment_progress_json": segment_progress_json,
-                    "preview_json": preview_json,
-                },
-            )
-            if cur.rowcount == 0:
-                # 历史极端场景回退到全量写入，确保不丢任务
-                save_task(task)
-                return
+            _upsert_task_summary(conn, task)
             conn.commit()
     except Exception as e:
         logger.error(f"摘要持久化失败 task_id={task.get('task_id')}: {e}", exc_info=True)
 
 
+def save_task_result(
+    task_id: str,
+    tweets: list[dict],
+    *,
+    conn: Optional[sqlite3.Connection] = None,
+) -> None:
+    """写入任务完整结果。"""
+    if _DB_PATH is None:
+        return
+
+    owns_conn = conn is None
+    conn = conn or _get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO task_results (task_id, tweets_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                tweets_json = excluded.tweets_json,
+                updated_at = excluded.updated_at
+            """,
+            (task_id, json.dumps(tweets, ensure_ascii=False), _now_iso()),
+        )
+        if owns_conn:
+            conn.commit()
+    except Exception:
+        if owns_conn:
+            conn.rollback()
+        raise
+
+
+def _decode_result_json(raw: object) -> list[dict]:
+    try:
+        decoded = json.loads(raw or "[]")
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return decoded if isinstance(decoded, list) else []
+
+
+def load_task_result(task_id: str) -> list[dict]:
+    """
+    按需加载任务完整结果。
+
+    优先从 task_results 读取；若不存在，则回退到旧版 tasks.tweets_json，
+    并在成功读取后懒迁移到新表。
+    """
+    if _DB_PATH is None or not _DB_PATH.exists():
+        return []
+    try:
+        with _get_conn() as conn:
+            row = conn.execute(
+                "SELECT tweets_json FROM task_results WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if row:
+                return _decode_result_json(row["tweets_json"])
+
+            legacy = conn.execute(
+                "SELECT tweets_json FROM tasks WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if not legacy:
+                return []
+
+            tweets = _decode_result_json(legacy["tweets_json"])
+            if tweets:
+                save_task_result(task_id, tweets, conn=conn)
+                conn.commit()
+            return tweets
+    except Exception as e:
+        logger.error(f"读取任务结果失败 task_id={task_id}: {e}", exc_info=True)
+        return []
+
+
 def load_all_tasks() -> list[dict]:
     """
-    从数据库加载全部历史任务（服务启动时调用一次）。
-    返回 task_manager 格式的 dict 列表。
+    从数据库加载全部历史任务摘要（服务启动时调用一次）。
+    不加载全量 tweets，避免启动时间和内存占用随历史数据放大。
     """
     if _DB_PATH is None or not _DB_PATH.exists():
         return []
     try:
         with _get_conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM tasks ORDER BY created_at DESC"
+                """
+                SELECT
+                    task_id, status, keyword, product, max_count,
+                    result_count, current_page, created_at, finished_at,
+                    error, risk_state, quality_state, runtime_metrics_json, time_coverage_json,
+                    last_event_at, resumed, fetch_replies, max_replies_per_tweet,
+                    crawl_strategy, replies_fetched, crawl_phase, segment_progress_json,
+                    preview_json, platform, start_date, end_date
+                FROM tasks
+                ORDER BY created_at DESC
+                """
             ).fetchall()
+
         tasks = []
         for row in rows:
             d = dict(row)
-            d["tweets"]        = json.loads(d.pop("tweets_json", "[]") or "[]")
-            d["preview_tweets"] = json.loads(d.pop("preview_json", "[]") or "[]")
-            d["risk_state"]     = d.get("risk_state") or "none"
-            d["quality_state"]  = d.get("quality_state") or "complete"
+            d["tweets"] = []
+            d["preview_tweets"] = _decode_result_json(d.pop("preview_json", "[]"))
+            d["risk_state"] = d.get("risk_state") or "none"
+            d["quality_state"] = d.get("quality_state") or "complete"
             d["runtime_metrics"] = json.loads(d.pop("runtime_metrics_json", "{}") or "{}")
             d["time_coverage"] = json.loads(d.pop("time_coverage_json", "{}") or "{}")
             d["segment_progress"] = json.loads(d.pop("segment_progress_json", "{}") or "{}")
-            d["resumed"]        = bool(d["resumed"])
-            d["fetch_replies"]  = bool(d["fetch_replies"])
+            d["resumed"] = bool(d["resumed"])
+            d["fetch_replies"] = bool(d["fetch_replies"])
             d.setdefault("platform", "x")
             tasks.append(d)
-        logger.info(f"已从数据库加载 {len(tasks)} 条历史任务")
+        logger.info(f"已从数据库加载 {len(tasks)} 条历史任务摘要")
         return tasks
     except Exception as e:
         logger.error(f"加载历史任务失败: {e}", exc_info=True)
@@ -306,11 +397,12 @@ def load_all_tasks() -> list[dict]:
 
 
 def delete_task(task_id: str) -> None:
-    """从数据库删除任务记录"""
+    """从数据库删除任务记录与完整结果。"""
     if _DB_PATH is None:
         return
     try:
         with _get_conn() as conn:
+            conn.execute("DELETE FROM task_results WHERE task_id = ?", (task_id,))
             conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
             conn.commit()
     except Exception as e:

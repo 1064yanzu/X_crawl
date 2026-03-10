@@ -49,10 +49,9 @@ async def list_tasks(
     ),
 ) -> list[TaskOut]:
     """获取全部任务列表（支持摘要模式）"""
-    tasks = task_manager.list_tasks()
+    tasks = task_manager.list_tasks(include_payload=include_payload)
     if not include_payload:
         for task in tasks:
-            task["tweets"] = []
             task["preview_tweets"] = []
     return [TaskOut(**t) for t in tasks]
 
@@ -63,7 +62,7 @@ async def list_tasks(
     description="通过 Server-Sent Events 持续推送任务实时快照与动作事件。",
 )
 async def stream_task(task_id: str, request: Request):
-    existing = task_manager.get_task(task_id)
+    existing = task_manager.get_task_summary(task_id)
     if not existing:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -78,7 +77,7 @@ async def stream_task(task_id: str, request: Request):
             if await request.is_disconnected():
                 break
 
-            task = task_manager.get_task(task_id)
+            task = task_manager.get_task_summary(task_id)
             if not task:
                 payload = json.dumps({"task_id": task_id, "type": "closed"}, ensure_ascii=False)
                 yield f"event: closed\ndata: {payload}\n\n"
@@ -136,7 +135,7 @@ async def pause_task(task_id: str) -> dict:
     """暂停指定任务"""
     success = task_manager.pause_task(task_id)
     if not success:
-        task = task_manager.get_task(task_id)
+        task = task_manager.get_task_summary(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
         raise HTTPException(
@@ -158,7 +157,7 @@ async def pause_task(task_id: str) -> dict:
 )
 async def resume_task(task_id: str) -> dict:
     """继续指定任务（支持已暂停和已结束的任务）"""
-    task = task_manager.get_task(task_id)
+    task = task_manager.get_task_summary(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -204,7 +203,7 @@ async def stop_task(task_id: str) -> dict:
     """主动终止指定任务"""
     success = task_manager.stop_task(task_id)
     if not success:
-        task = task_manager.get_task(task_id)
+        task = task_manager.get_task_summary(task_id)
         if not task:
             raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
         raise HTTPException(

@@ -38,7 +38,7 @@ async def create_search_task(
         start_date=req.start_date,
         end_date=req.end_date,
     )
-    task_data = task_manager.get_task(task_id)
+    task_data = task_manager.get_task_summary(task_id)
     if not task_data:
         raise HTTPException(status_code=500, detail="任务创建失败")
 
@@ -48,7 +48,7 @@ async def create_search_task(
         task=task_data,
         resume=req.resume,
     )
-    refreshed = task_manager.get_task(task_id) or task_data
+    refreshed = task_manager.get_task_summary(task_id) or task_data
     return TaskOut(**refreshed)
 
 
@@ -64,9 +64,10 @@ async def get_search_task(
         description="是否返回完整 tweets 列表。轮询建议 false，减少传输开销。",
     ),
 ) -> TaskOut:
-    task_data = task_manager.get_task(task_id)
+    if include_tweets:
+        task_data = task_manager.get_task_full(task_id)
+    else:
+        task_data = task_manager.get_task_summary(task_id)
     if not task_data:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
-    if not include_tweets:
-        task_data["tweets"] = []
     return TaskOut(**task_data)

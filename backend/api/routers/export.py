@@ -226,7 +226,7 @@ def _collect_all_rows(tweets: list[dict]) -> list[dict]:
 
 def _get_task_data(task_id: str) -> tuple[dict, list[dict]]:
     """获取任务元信息和推文列表（含回复展平），不存在则抛 404"""
-    task = task_manager.get_task(task_id)
+    task = task_manager.get_task_full(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     tweets = task.get("tweets", [])

@@ -27,7 +27,7 @@ router = APIRouter(prefix="/api/v1/failed-replies", tags=["失败评论记录"])
     description="返回指定任务中评论爬取失败或不全的帖子列表，含预期/实际数量、失败原因、状态。",
 )
 async def list_failed_replies(task_id: str) -> dict:
-    task = task_manager.get_task(task_id)
+    task = task_manager.get_task_summary(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -49,7 +49,7 @@ async def list_failed_replies(task_id: str) -> dict:
     ),
 )
 async def retry_failed_replies(task_id: str) -> dict:
-    task = task_manager.get_task(task_id)
+    task = task_manager.get_task_full(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
@@ -80,7 +80,7 @@ def _retry_worker(task_id: str, pending_records: list[dict]) -> None:
     ensure_browser_alive()
 
     resolved = 0
-    task = task_manager.get_task(task_id)
+    task = task_manager.get_task_full(task_id)
     tweets = task.get("tweets", []) if task else []
     # 建立 tweet_id → tweet 索引
     tweet_index = {t.get("id", ""): t for t in tweets}
@@ -147,7 +147,7 @@ def _retry_worker(task_id: str, pending_records: list[dict]) -> None:
     description="将失败的评论抓取记录导出为 CSV 文件。",
 )
 async def export_failed_replies(task_id: str):
-    task = task_manager.get_task(task_id)
+    task = task_manager.get_task_summary(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 

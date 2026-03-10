@@ -221,7 +221,7 @@ def run_search_task(
         )
         logger.warning(f"任务进入风控暂停: task_id={task_id}, risk={e.risk_state}, reason={e}")
     except StopSignal as e:
-        task_data = task_manager.get_task(task_id) or {}
+        task_data = task_manager.get_task_full(task_id) or {}
         tweets_so_far = task_data.get("tweets", [])
         task_manager.update_task_stopped(task_id, tweets_so_far, runtime_metrics=get_metrics(task_id))
         telemetry.record_event(
@@ -235,7 +235,7 @@ def run_search_task(
     except Exception as e:
         error_msg = str(e)
         # 先尝试保存已采集的数据（即使任务出错，已抓到的推文不应丢失）
-        task_data = task_manager.get_task(task_id) or {}
+        task_data = task_manager.get_task_full(task_id) or {}
         tweets_so_far = task_data.get("tweets", [])
         if tweets_so_far:
             task_manager.update_task_stopped(task_id, tweets_so_far, runtime_metrics=get_metrics(task_id))

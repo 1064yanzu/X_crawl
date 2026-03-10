@@ -315,7 +315,7 @@ def _search_with_time_splits(
                     current_until=segments[seg_idx + 1].until if seg_idx + 1 < total_segments else None,
                 )
                 _task_mgr.update_task_segment_progress(task_id, progress)
-                current_page = int((_task_mgr.get_task(task_id) or {}).get("current_page", 0))
+                current_page = int((_task_mgr.get_task_summary(task_id) or {}).get("current_page", 0))
                 _task_mgr.update_task_progress(task_id, current_page, aggregated)
 
                 save_checkpoint(

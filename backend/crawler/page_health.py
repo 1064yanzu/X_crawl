@@ -84,11 +84,11 @@ def _save_debug_snapshot(tab, state: PageState, reason: str, attempt: int, task_
             if task_id:
                 try:
                     from api.services import task_manager
-                    task = task_manager.get_task(task_id)
-                    if task is not None:
-                        task["debug_screenshot"] = f"/api/v1/debug/{screenshot_name}"
-                        task_manager._touch(task)
-                        task_manager._persist_force(task_id)
+                    if task_manager.get_task_summary(task_id) is not None:
+                        task_manager.update_task_debug_screenshot(
+                            task_id,
+                            f"/api/v1/debug/{screenshot_name}",
+                        )
                         task_manager.send_signal(task_id, "changed")
                 except Exception as e:
                     logger.warning(f"无法将截图 URL 同步至任务状态: {e}")

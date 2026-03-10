@@ -1,5 +1,5 @@
 """
-任务管理器（线程安全 + 节流持久化 + 质量指标字段）。
+任务管理器（线程安全 + 节流持久化 + 结果懒加载）。
 """
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from api.schemas.task import RiskState, TaskStatus
 logger = logging.getLogger(__name__)
 
 _tasks: dict[str, dict] = {}
+_task_results: dict[str, list[dict]] = {}
+_loaded_task_results: set[str] = set()
 _tasks_lock = threading.RLock()
 
 _task_signals: dict[str, str] = {}
@@ -34,6 +36,7 @@ _db_lock = threading.Lock()
 
 def _get_db():
     from api.services import task_db
+
     return task_db
 
 
@@ -56,14 +59,52 @@ def _default_segment_progress() -> dict:
     }
 
 
+def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: int) -> dict:
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "keyword": keyword,
+        "product": product,
+        "max_count": max_count,
+        "result_count": 0,
+        "current_page": 0,
+        "created_at": _now_iso(),
+        "finished_at": None,
+        "error": None,
+        "risk_state": "none",
+        "quality_state": "complete",
+        "runtime_metrics": {},
+        "live_metrics": {},
+        "time_coverage": {},
+        "latest_action": None,
+        "queue_position": None,
+        "last_event_at": _now_iso(),
+        "resumed": False,
+        "segment_progress": _default_segment_progress(),
+        "fetch_replies": False,
+        "crawl_strategy": "dfs",
+        "max_replies_per_tweet": 20,
+        "reply_depth": 2,
+        "replies_fetched": 0,
+        "preview_tweets": [],
+        "crawl_phase": "",
+        "platform": "x",
+        "start_date": None,
+        "end_date": None,
+        "debug_screenshot": None,
+    }
+
+
 def _make_preview(tweets: list[dict]) -> list[dict]:
     from config import settings
+
     n = settings.crawler_preview_count
     return tweets[-n:] if len(tweets) > n else list(tweets)
 
 
 def _get_scheduler():
     from api.services.task_scheduler import scheduler
+
     return scheduler
 
 
@@ -99,6 +140,63 @@ def _summarize_tweets(tweets: list[dict]) -> tuple[int, dict]:
         return 0, {}
 
 
+def _parse_iso(value: object) -> Optional[datetime]:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _to_iso(dt: Optional[datetime]) -> Optional[str]:
+    return dt.isoformat() if dt else None
+
+
+def _span_hours(start: Optional[datetime], end: Optional[datetime]) -> float:
+    if not start or not end:
+        return 0.0
+    seconds = (end - start).total_seconds()
+    if seconds <= 0:
+        return 0.0
+    return round(seconds / 3600.0, 2)
+
+
+def _merge_coverage(existing: Optional[dict], delta: Optional[dict]) -> dict:
+    existing = dict(existing or {})
+    delta = dict(delta or {})
+    if not existing:
+        return delta
+    if not delta:
+        return existing
+
+    def _merge_window(prefix: str) -> None:
+        start = min(
+            [dt for dt in (_parse_iso(existing.get(f"{prefix}_start_at")), _parse_iso(delta.get(f"{prefix}_start_at"))) if dt],
+            default=None,
+        )
+        end = max(
+            [dt for dt in (_parse_iso(existing.get(f"{prefix}_end_at")), _parse_iso(delta.get(f"{prefix}_end_at"))) if dt],
+            default=None,
+        )
+        existing[f"{prefix}_start_at"] = _to_iso(start)
+        existing[f"{prefix}_end_at"] = _to_iso(end)
+        existing[f"{prefix}_span_hours"] = _span_hours(start, end)
+        existing[f"{prefix}_ts_count"] = int(existing.get(f"{prefix}_ts_count", 0)) + int(
+            delta.get(f"{prefix}_ts_count", 0)
+        )
+
+    _merge_window("tweet")
+    _merge_window("reply")
+    _merge_window("combined")
+    return existing
+
+
 def _queue_positions() -> dict[str, int]:
     try:
         queued = _get_scheduler().queued_task_ids()
@@ -123,12 +221,51 @@ def _decorate_task_runtime(task: dict, *, queue_position: Optional[int]) -> dict
     except Exception:
         pass
 
-    enriched = copy.deepcopy(task)
+    enriched = dict(task)
     enriched["runtime_metrics"] = runtime_metrics
     enriched["live_metrics"] = live_metrics
     enriched["latest_action"] = telemetry.get_latest_action(task_id)
     enriched["queue_position"] = queue_position
     return enriched
+
+
+def _set_task_result_locked(task_id: str, tweets: list[dict]) -> None:
+    _task_results[task_id] = tweets
+    _loaded_task_results.add(task_id)
+
+
+def _get_task_result_snapshot(task_id: str, *, load: bool = False) -> list[dict]:
+    with _tasks_lock:
+        if task_id in _loaded_task_results:
+            return copy.deepcopy(_task_results.get(task_id, []))
+
+    if not load:
+        return []
+
+    tweets = _get_db().load_task_result(task_id)
+    with _tasks_lock:
+        if task_id not in _loaded_task_results:
+            _task_results[task_id] = tweets
+            _loaded_task_results.add(task_id)
+        return copy.deepcopy(_task_results.get(task_id, []))
+
+
+def _get_task_summary_snapshot(task_id: str) -> Optional[dict]:
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return None
+        return copy.deepcopy(task)
+
+
+def _build_task_view(task_id: str, *, include_tweets: bool) -> Optional[dict]:
+    snapshot = _get_task_summary_snapshot(task_id)
+    if not snapshot:
+        return None
+    queue_position = _queue_positions().get(task_id) if snapshot.get("status") == "pending" else None
+    view = _decorate_task_runtime(snapshot, queue_position=queue_position)
+    view["tweets"] = _get_task_result_snapshot(task_id, load=True) if include_tweets else []
+    return view
 
 
 def _ensure_db() -> None:
@@ -159,13 +296,17 @@ def _ensure_db() -> None:
                 task.setdefault("platform", "x")
                 task.setdefault("start_date", None)
                 task.setdefault("end_date", None)
+                task.setdefault("preview_tweets", [])
+                task.setdefault("replies_fetched", 0)
+                task.setdefault("reply_depth", 2)
+                task.setdefault("debug_screenshot", None)
 
                 if task["status"] in ("running", "pending", "paused"):
                     task["status"] = "stopped"
                     task["quality_state"] = "interrupted"
                     task["finished_at"] = _now_iso()
                     _touch(task)
-                    db.save_task(task)
+                    db.save_task_summary(task)
                 _tasks[tid] = task
                 telemetry.init_task(
                     tid,
@@ -175,6 +316,7 @@ def _ensure_db() -> None:
 
         _db_initialized = True
         from config import apply_user_settings
+
         apply_user_settings()
         try:
             from api.services.performance_tuner import apply_startup_performance_tuning
@@ -207,6 +349,7 @@ def _persist(task_id: str, *, force: bool = False, full: bool = False) -> None:
 
     try:
         if full:
+            snapshot["tweets"] = _get_task_result_snapshot(task_id, load=True)
             _get_db().save_task(snapshot)
         else:
             _get_db().save_task_summary(snapshot)
@@ -214,8 +357,8 @@ def _persist(task_id: str, *, force: bool = False, full: bool = False) -> None:
         logger.error(f"持久化任务失败 task_id={task_id}: {e}")
 
 
-def _persist_force(task_id: str) -> None:
-    _persist(task_id, force=True, full=True)
+def _persist_force(task_id: str, *, full: bool = True) -> None:
+    _persist(task_id, force=True, full=full)
 
 
 def send_signal(task_id: str, signal: str) -> None:
@@ -264,7 +407,7 @@ def pause_task(task_id: str) -> bool:
         _touch(task)
     send_signal(task_id, "pause")
     telemetry.record_event(task_id, "task_paused", status="paused", phase="任务已暂停，等待继续信号")
-    _persist_force(task_id)
+    _persist_force(task_id, full=True)
     return True
 
 
@@ -284,7 +427,7 @@ def resume_task(task_id: str) -> bool:
         _touch(task)
     send_signal(task_id, "run")
     telemetry.record_event(task_id, "task_resumed", status="running", phase="任务已恢复运行")
-    _persist_force(task_id)
+    _persist_force(task_id, full=False)
     return True
 
 
@@ -307,7 +450,7 @@ def resume_finished_task(task_id: str) -> bool:
         _touch(task)
     send_signal(task_id, "run")
     telemetry.record_event(task_id, "task_requeued", status="pending", phase="已加入调度队列，等待执行...")
-    _persist_force(task_id)
+    _persist_force(task_id, full=False)
     return True
 
 
@@ -319,8 +462,9 @@ def stop_task(task_id: str) -> bool:
         task = _tasks.get(task_id)
         if not task or task["status"] not in ("running", "paused", "pending"):
             return False
+        status = task.get("status")
     send_signal(task_id, "stop")
-    telemetry.record_event(task_id, "task_stop_requested", status=task.get("status"), phase="收到终止信号，等待安全退出")
+    telemetry.record_event(task_id, "task_stop_requested", status=status, phase="收到终止信号，等待安全退出")
     return True
 
 
@@ -353,23 +497,23 @@ def create_task(
         return tid
 
     with _tasks_lock:
-        existing = _tasks.get(tid, {})
+        existing = _tasks.get(tid) or _default_task_state(
+            task_id=tid,
+            keyword=keyword,
+            product=product,
+            max_count=max_count,
+        )
         _tasks[tid] = {
+            **existing,
             "task_id": tid,
             "status": "pending",
             "keyword": keyword,
             "product": product,
             "max_count": max_count,
-            "result_count": existing.get("result_count", 0),
-            "current_page": existing.get("current_page", 0),
-            "created_at": existing.get("created_at") or _now_iso(),
             "finished_at": None,
             "error": None,
             "risk_state": "none",
             "quality_state": "complete",
-            "runtime_metrics": existing.get("runtime_metrics", {}),
-            "time_coverage": existing.get("time_coverage", {}),
-            "segment_progress": existing.get("segment_progress", _default_segment_progress()),
             "last_event_at": _now_iso(),
             "resumed": False,
             "fetch_replies": fetch_replies,
@@ -379,9 +523,6 @@ def create_task(
             "platform": platform,
             "start_date": start_date,
             "end_date": end_date,
-            "replies_fetched": existing.get("replies_fetched", 0),
-            "tweets": existing.get("tweets", []),
-            "preview_tweets": existing.get("preview_tweets", []),
             "crawl_phase": "已加入调度队列，等待执行...",
         }
     send_signal(tid, "run")
@@ -398,36 +539,41 @@ def create_task(
             "crawl_strategy": crawl_strategy,
         },
     )
-    _persist_force(tid)
+    _persist_force(tid, full=False)
     logger.info(f"任务已创建/重置: task_id={tid}, strategy={crawl_strategy}, fetch_replies={fetch_replies}")
     return tid
 
 
 def get_task(task_id: str) -> Optional[dict]:
+    return get_task_summary(task_id)
+
+
+def get_task_summary(task_id: str) -> Optional[dict]:
     _ensure_db()
-    with _tasks_lock:
-        task = _tasks.get(task_id)
-        if not task:
-            return None
-        snapshot = copy.deepcopy(task)
-    queue_position = _queue_positions().get(task_id) if snapshot.get("status") == "pending" else None
-    return _decorate_task_runtime(snapshot, queue_position=queue_position)
+    return _build_task_view(task_id, include_tweets=False)
 
 
-def list_tasks() -> list[dict]:
+def get_task_full(task_id: str) -> Optional[dict]:
+    _ensure_db()
+    return _build_task_view(task_id, include_tweets=True)
+
+
+def list_tasks(*, include_payload: bool = False) -> list[dict]:
     _ensure_db()
     with _tasks_lock:
         tasks = [copy.deepcopy(t) for t in _tasks.values()]
     queue_positions = _queue_positions()
-    tasks = [
-        _decorate_task_runtime(
-            t,
-            queue_position=queue_positions.get(t.get("task_id", "")) if t.get("status") == "pending" else None,
+    views = []
+    for task in tasks:
+        tid = task.get("task_id", "")
+        view = _decorate_task_runtime(
+            task,
+            queue_position=queue_positions.get(tid) if task.get("status") == "pending" else None,
         )
-        for t in tasks
-    ]
-    tasks.sort(key=lambda t: t["created_at"], reverse=True)
-    return tasks
+        view["tweets"] = _get_task_result_snapshot(tid, load=True) if include_payload else []
+        views.append(view)
+    views.sort(key=lambda t: t["created_at"], reverse=True)
+    return views
 
 
 def get_task_events(task_id: str, *, after_id: int = 0, limit: int = 120) -> list[dict]:
@@ -453,7 +599,7 @@ def update_task_status(task_id: str, status: TaskStatus) -> None:
         phase = task.get("crawl_phase", "")
         risk_state = task.get("risk_state")
     telemetry.record_event(task_id, "task_status", status=status, phase=phase, risk_state=risk_state)
-    _persist_force(task_id)
+    _persist_force(task_id, full=status in ("done", "failed", "stopped"))
 
 
 def update_task_phase(task_id: str, phase: str) -> None:
@@ -494,7 +640,21 @@ def update_task_segment_progress(task_id: str, progress: Optional[dict]) -> None
 def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[dict]) -> None:
     from crawler import telemetry
 
-    replies_fetched, coverage = _summarize_tweets(tweets_so_far)
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        prev_result = int(task.get("result_count", 0))
+        prev_replies = int(task.get("replies_fetched", 0))
+        prev_coverage = dict(task.get("time_coverage", {}))
+
+    if len(tweets_so_far) < prev_result:
+        replies_fetched, coverage = _summarize_tweets(tweets_so_far)
+    else:
+        new_tweets = tweets_so_far[prev_result:]
+        delta_replies, delta_coverage = _summarize_tweets(new_tweets) if new_tweets else (0, {})
+        replies_fetched = prev_replies + int(delta_replies)
+        coverage = _merge_coverage(prev_coverage, delta_coverage)
 
     with _tasks_lock:
         task = _tasks.get(task_id)
@@ -502,14 +662,16 @@ def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[di
             return
         prev_result = int(task.get("result_count", 0))
         prev_replies = int(task.get("replies_fetched", 0))
-        task.update({
-            "current_page": current_page,
-            "result_count": len(tweets_so_far),
-            "replies_fetched": replies_fetched,
-            "tweets": tweets_so_far,
-            "preview_tweets": _make_preview(tweets_so_far),
-            "time_coverage": coverage,
-        })
+        task.update(
+            {
+                "current_page": current_page,
+                "result_count": len(tweets_so_far),
+                "replies_fetched": replies_fetched,
+                "preview_tweets": _make_preview(tweets_so_far),
+                "time_coverage": coverage,
+            }
+        )
+        _set_task_result_locked(task_id, tweets_so_far)
         _touch(task)
         delta_tweets = max(0, len(tweets_so_far) - prev_result)
         delta_replies = max(0, replies_fetched - prev_replies)
@@ -531,24 +693,40 @@ def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[di
 
 
 def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: list[dict]) -> None:
-    """更新预览推文 + 同步 tweets 字段并触发节流持久化，确保中断时数据不丢失。"""
+    """更新预览和内存结果；仅对新增 tweet 做增量汇总，避免回复阶段反复全量扫描。"""
     from crawler import telemetry
-
-    replies_fetched, coverage = _summarize_tweets(tweets_for_preview)
 
     with _tasks_lock:
         task = _tasks.get(task_id)
         if not task:
             return
         prev_result = int(task.get("result_count", 0))
-        task.update({
-            "current_page": current_page,
-            "result_count": len(tweets_for_preview),
-            "tweets": tweets_for_preview,
-            "preview_tweets": _make_preview(tweets_for_preview),
-            "replies_fetched": replies_fetched,
-            "time_coverage": coverage,
-        })
+        prev_replies = int(task.get("replies_fetched", 0))
+        prev_coverage = dict(task.get("time_coverage", {}))
+
+    if len(tweets_for_preview) > prev_result:
+        delta_replies, delta_coverage = _summarize_tweets(tweets_for_preview[prev_result:])
+        replies_fetched = prev_replies + int(delta_replies)
+        coverage = _merge_coverage(prev_coverage, delta_coverage)
+    else:
+        replies_fetched = prev_replies
+        coverage = prev_coverage
+
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        prev_result = int(task.get("result_count", 0))
+        task.update(
+            {
+                "current_page": current_page,
+                "result_count": len(tweets_for_preview),
+                "preview_tweets": _make_preview(tweets_for_preview),
+                "replies_fetched": replies_fetched,
+                "time_coverage": coverage,
+            }
+        )
+        _set_task_result_locked(task_id, tweets_for_preview)
         _touch(task)
         delta_tweets = max(0, len(tweets_for_preview) - prev_result)
         phase = task.get("crawl_phase", "")
@@ -610,19 +788,21 @@ def update_task_result(
         task = _tasks.get(task_id)
         if not task:
             return
-        task.update({
-            "tweets": tweets,
-            "preview_tweets": _make_preview(tweets),
-            "result_count": len(tweets),
-            "status": "done",
-            "finished_at": _now_iso(),
-            "risk_state": "none",
-            "quality_state": quality_state,
-            "runtime_metrics": runtime_metrics or {},
-            "resumed": resumed,
-            "replies_fetched": final_replies,
-            "time_coverage": coverage,
-        })
+        _set_task_result_locked(task_id, tweets)
+        task.update(
+            {
+                "preview_tweets": _make_preview(tweets),
+                "result_count": len(tweets),
+                "status": "done",
+                "finished_at": _now_iso(),
+                "risk_state": "none",
+                "quality_state": quality_state,
+                "runtime_metrics": runtime_metrics or {},
+                "resumed": resumed,
+                "replies_fetched": final_replies,
+                "time_coverage": coverage,
+            }
+        )
         _touch(task)
         phase = task.get("crawl_phase", "")
     clear_signal(task_id)
@@ -636,7 +816,7 @@ def update_task_result(
         risk_state="none",
         meta={"quality_state": quality_state},
     )
-    _persist_force(task_id)
+    _persist_force(task_id, full=True)
 
 
 def update_task_stopped(task_id: str, tweets_so_far: list[dict], runtime_metrics: Optional[dict] = None) -> None:
@@ -648,18 +828,20 @@ def update_task_stopped(task_id: str, tweets_so_far: list[dict], runtime_metrics
         task = _tasks.get(task_id)
         if not task:
             return
-        task.update({
-            "tweets": tweets_so_far,
-            "preview_tweets": _make_preview(tweets_so_far),
-            "result_count": len(tweets_so_far),
-            "status": "stopped",
-            "quality_state": "interrupted",
-            "runtime_metrics": runtime_metrics or {},
-            "finished_at": _now_iso(),
-            "risk_state": "none",
-            "replies_fetched": replies_fetched,
-            "time_coverage": coverage,
-        })
+        _set_task_result_locked(task_id, tweets_so_far)
+        task.update(
+            {
+                "preview_tweets": _make_preview(tweets_so_far),
+                "result_count": len(tweets_so_far),
+                "status": "stopped",
+                "quality_state": "interrupted",
+                "runtime_metrics": runtime_metrics or {},
+                "finished_at": _now_iso(),
+                "risk_state": "none",
+                "replies_fetched": replies_fetched,
+                "time_coverage": coverage,
+            }
+        )
         _touch(task)
         phase = task.get("crawl_phase", "")
     clear_signal(task_id)
@@ -670,7 +852,7 @@ def update_task_stopped(task_id: str, tweets_so_far: list[dict], runtime_metrics
         phase=phase,
         meta={"result_count": len(tweets_so_far)},
     )
-    _persist_force(task_id)
+    _persist_force(task_id, full=True)
 
 
 def update_task_error(task_id: str, error: str, runtime_metrics: Optional[dict] = None) -> None:
@@ -680,13 +862,16 @@ def update_task_error(task_id: str, error: str, runtime_metrics: Optional[dict] 
         task = _tasks.get(task_id)
         if not task:
             return
-        task.update({
-            "status": "failed",
-            "quality_state": "interrupted",
-            "runtime_metrics": runtime_metrics or {},
-            "error": error,
-            "finished_at": _now_iso(),
-        })
+        task.update(
+            {
+                "status": "failed",
+                "quality_state": "interrupted",
+                "runtime_metrics": runtime_metrics or {},
+                "error": error,
+                "finished_at": _now_iso(),
+            }
+        )
+        has_loaded_results = task_id in _loaded_task_results
         _touch(task)
         phase = task.get("crawl_phase", "")
     clear_signal(task_id)
@@ -697,7 +882,7 @@ def update_task_error(task_id: str, error: str, runtime_metrics: Optional[dict] 
         phase=phase,
         meta={"error": error[:240]},
     )
-    _persist_force(task_id)
+    _persist_force(task_id, full=has_loaded_results)
 
 
 def update_task_risk_paused(
@@ -712,13 +897,15 @@ def update_task_risk_paused(
         if task_id not in _tasks:
             return
         task = _tasks[task_id]
-        task.update({
-            "status": "paused",
-            "risk_state": risk_state,
-            "quality_state": "partial",
-            "runtime_metrics": runtime_metrics or task.get("runtime_metrics", {}),
-            "crawl_phase": phase,
-        })
+        task.update(
+            {
+                "status": "paused",
+                "risk_state": risk_state,
+                "quality_state": "partial",
+                "runtime_metrics": runtime_metrics or task.get("runtime_metrics", {}),
+                "crawl_phase": phase,
+            }
+        )
         _touch(task)
     send_signal(task_id, "pause")
     telemetry.record_event(
@@ -728,7 +915,17 @@ def update_task_risk_paused(
         phase=phase,
         risk_state=risk_state,
     )
-    _persist_force(task_id)
+    _persist_force(task_id, full=True)
+
+
+def update_task_debug_screenshot(task_id: str, screenshot_url: Optional[str]) -> None:
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        task["debug_screenshot"] = screenshot_url
+        _touch(task)
+    _persist(task_id)
 
 
 def delete_task(task_id: str) -> bool:
@@ -739,6 +936,8 @@ def delete_task(task_id: str) -> bool:
         if task_id in _tasks:
             del _tasks[task_id]
             removed = True
+        _task_results.pop(task_id, None)
+        _loaded_task_results.discard(task_id)
     if not removed:
         return False
 
