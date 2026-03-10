@@ -18,6 +18,8 @@ import logging
 import socket
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 from DrissionPage import Chromium, ChromiumOptions
@@ -30,6 +32,11 @@ from crawler.platform_runtime import (
 )
 from crawler.stealth import apply_stealth_to_tab
 
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None
+
 logger = logging.getLogger(__name__)
 
 _browser: Optional[Chromium] = None
@@ -37,12 +44,16 @@ _session_info: dict[str, object] = {
     "session_mode": "unknown",
     "effective_user_data_path": None,
     "debug_port": None,
+    "browser_pid": None,
     "browser_alive": False,
     "headless": False,
 }
 
 # 爬虫专用独立 Profile 目录（与系统 Chrome 完全隔离）
 _CRAWLER_PROFILE_DIR = str(Path.home() / ".xcrawl-browser-profile")
+_STALE_SWEEP_LOCK = threading.RLock()
+_last_stale_sweep_mono = 0.0
+_last_probe_available_mb: Optional[float] = None
 
 
 def _profile_has_content(user_data_path: str) -> bool:
@@ -99,6 +110,224 @@ def _pick_free_local_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
+
+
+def _extract_flag_value(cmdline: list[str], flag: str) -> Optional[str]:
+    prefix = f"{flag}="
+    for idx, arg in enumerate(cmdline):
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+        if arg == flag and idx + 1 < len(cmdline):
+            return cmdline[idx + 1]
+    return None
+
+
+def _iter_managed_browser_roots() -> list[dict[str, object]]:
+    if not sys.platform.startswith("linux") or psutil is None:
+        return []
+
+    managed_profile = os.path.abspath(_CRAWLER_PROFILE_DIR)
+    roots: list[dict[str, object]] = []
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+        try:
+            cmdline = list(proc.info.get("cmdline") or [])
+            if not cmdline:
+                continue
+
+            joined = " ".join(cmdline).lower()
+            name = str(proc.info.get("name") or "").lower()
+            if "chrome" not in joined and "chromium" not in joined and "chrome" not in name and "chromium" not in name:
+                continue
+            if any(arg.startswith("--type=") for arg in cmdline):
+                continue
+
+            user_data = _extract_flag_value(cmdline, "--user-data-dir")
+            if not user_data:
+                continue
+            if os.path.abspath(os.path.expanduser(user_data)) != managed_profile:
+                continue
+
+            roots.append({
+                "pid": int(proc.pid),
+                "create_time": float(proc.info.get("create_time") or 0.0),
+                "debug_port": _extract_flag_value(cmdline, "--remote-debugging-port"),
+                "cmdline": " ".join(cmdline),
+            })
+        except Exception:
+            continue
+
+    roots.sort(key=lambda item: float(item.get("create_time") or 0.0))
+    return roots
+
+
+def _refresh_current_browser_pid() -> Optional[int]:
+    if not sys.platform.startswith("linux"):
+        return None
+
+    current_pid = _session_info.get("browser_pid")
+    if isinstance(current_pid, int) and current_pid > 0 and psutil is not None:
+        try:
+            proc = psutil.Process(current_pid)
+            if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                return current_pid
+        except Exception:
+            pass
+
+    roots = _iter_managed_browser_roots()
+    debug_port = _session_info.get("debug_port")
+    if debug_port is not None:
+        for item in roots:
+            if str(item.get("debug_port") or "") == str(debug_port):
+                pid = int(item["pid"])
+                _update_session_info(browser_pid=pid)
+                return pid
+
+    if bool(_session_info.get("browser_alive")) and _session_info.get("session_mode") == "crawler_profile" and roots:
+        pid = int(roots[-1]["pid"])
+        _update_session_info(browser_pid=pid)
+        return pid
+
+    _update_session_info(browser_pid=None)
+    return None
+
+
+def _terminate_process_tree(pid: int) -> int:
+    if psutil is None:
+        return 0
+
+    try:
+        proc = psutil.Process(pid)
+    except Exception:
+        return 0
+
+    victims: list["psutil.Process"] = []
+    try:
+        victims.extend(proc.children(recursive=True))
+    except Exception:
+        pass
+    victims.append(proc)
+
+    seen: set[int] = set()
+    ordered: list["psutil.Process"] = []
+    for item in victims:
+        try:
+            if item.pid in seen:
+                continue
+            seen.add(item.pid)
+            ordered.append(item)
+        except Exception:
+            continue
+
+    for item in reversed(ordered):
+        try:
+            item.terminate()
+        except Exception:
+            pass
+    _, alive = psutil.wait_procs(ordered, timeout=3)
+    for item in alive:
+        try:
+            item.kill()
+        except Exception:
+            pass
+    psutil.wait_procs(alive, timeout=2)
+    return len(ordered)
+
+
+def maybe_cleanup_stale_linux_browsers(*, reason: str, force: bool = False) -> dict[str, object]:
+    global _last_stale_sweep_mono, _last_probe_available_mb
+
+    summary: dict[str, object] = {
+        "checked": False,
+        "reason": reason,
+        "killed_roots": 0,
+        "killed_processes": 0,
+        "skipped": "disabled",
+    }
+    if not sys.platform.startswith("linux"):
+        summary["skipped"] = "non_linux"
+        return summary
+    if psutil is None:
+        summary["skipped"] = "psutil_unavailable"
+        return summary
+    if not bool(getattr(settings, "browser_linux_stale_cleanup_enabled", True)):
+        return summary
+
+    from crawler.resource_guard import get_resource_sample
+
+    sample = get_resource_sample(force=force)
+    available_mb = float(sample.host_mem_available_mb)
+    used_pct = float(sample.host_mem_used_percent)
+    warn_pct = float(getattr(settings, "crawler_memory_pressure_warn_pct", 80.0))
+    low_mem_mb = max(128.0, float(getattr(settings, "browser_linux_stale_cleanup_available_mb", 1536.0)))
+    drop_mb = max(64.0, float(getattr(settings, "browser_linux_stale_cleanup_drop_mb", 512.0)))
+    cooldown_sec = max(5.0, float(getattr(settings, "browser_linux_stale_cleanup_cooldown_sec", 45.0)))
+    max_age_sec = max(60.0, float(getattr(settings, "browser_linux_stale_cleanup_max_age_sec", 900.0)))
+
+    now_mono = time.monotonic()
+    with _STALE_SWEEP_LOCK:
+        prev_available_mb = _last_probe_available_mb
+        _last_probe_available_mb = available_mb
+        sudden_drop = prev_available_mb is not None and (prev_available_mb - available_mb) >= drop_mb
+        memory_tight = used_pct >= warn_pct or (available_mb > 0 and available_mb <= low_mem_mb)
+
+        if not force and not memory_tight and not sudden_drop:
+            summary["skipped"] = "memory_ok"
+            return summary
+        if not force and (now_mono - _last_stale_sweep_mono) < cooldown_sec:
+            summary["skipped"] = "cooldown"
+            return summary
+        _last_stale_sweep_mono = now_mono
+
+    current_pid = _refresh_current_browser_pid()
+    roots = _iter_managed_browser_roots()
+    summary.update({
+        "checked": True,
+        "skipped": None,
+        "current_pid": current_pid,
+        "roots_seen": len(roots),
+        "host_mem_available_mb": round(available_mb, 2),
+        "host_mem_used_percent": round(used_pct, 2),
+        "sudden_drop": sudden_drop,
+    })
+
+    if not roots:
+        summary["skipped"] = "no_managed_roots"
+        return summary
+
+    stale_roots: list[dict[str, object]] = []
+    now_ts = time.time()
+    for item in roots:
+        pid = int(item["pid"])
+        age_sec = max(0.0, now_ts - float(item.get("create_time") or 0.0))
+        item["age_sec"] = round(age_sec, 2)
+        if current_pid and pid == current_pid:
+            continue
+        if age_sec < max_age_sec:
+            continue
+        stale_roots.append(item)
+
+    if not stale_roots:
+        summary["skipped"] = "no_stale_roots"
+        return summary
+
+    for item in stale_roots:
+        pid = int(item["pid"])
+        killed = _terminate_process_tree(pid)
+        if killed > 0:
+            summary["killed_roots"] = int(summary["killed_roots"]) + 1
+            summary["killed_processes"] = int(summary["killed_processes"]) + killed
+            logger.warning(
+                "Linux 低内存清理残留浏览器实例: pid=%s, age=%.1fs, reason=%s, mem_avail=%.1fMB, mem_used=%.1f%%",
+                pid,
+                float(item.get("age_sec") or 0.0),
+                reason,
+                available_mb,
+                used_pct,
+            )
+
+    if int(summary["killed_roots"]) > 0:
+        _cleanup_stale_singleton_locks(_CRAWLER_PROFILE_DIR)
+    return summary
 
 
 def _profile_in_use(user_data_path: str) -> bool:
@@ -190,6 +419,7 @@ def _create_browser() -> Chromium:
                 session_mode="attached_browser",
                 effective_user_data_path=settings.browser_user_data_path or None,
                 debug_port=debug_port,
+                browser_pid=None,
                 browser_alive=True,
                 headless=False,
             )
@@ -259,6 +489,7 @@ def _create_browser() -> Chromium:
         session_mode="crawler_profile",
         effective_user_data_path=user_data,
         debug_port=local_port,
+        browser_pid=None,
         browser_alive=True,
         headless=effective_headless,
     )
@@ -301,6 +532,7 @@ def _create_browser() -> Chromium:
 
     logger.info("正在初始化浏览器...")
     browser = Chromium(co)
+    _refresh_current_browser_pid()
     logger.info("浏览器初始化成功")
     return browser
 
@@ -381,14 +613,16 @@ def promote_browser_for_manual_interaction(tab, *, reason: str = "manual_interac
 def ensure_browser_alive() -> None:
     """检查浏览器单例是否可用，若已失效则重置以便下次 get_browser() 重新创建"""
     global _browser
+    maybe_cleanup_stale_linux_browsers(reason="ensure_browser_alive")
     if _browser is not None:
         try:
             _browser.latest_tab
+            _refresh_current_browser_pid()
             _update_session_info(browser_alive=True)
         except Exception:
             logger.warning("浏览器实例已失效，重置单例以便重新创建")
             _browser = None
-            _update_session_info(browser_alive=False)
+            _update_session_info(browser_alive=False, browser_pid=None)
 
 
 def reset_browser() -> None:
@@ -407,11 +641,11 @@ def reset_browser() -> None:
             _force_kill_chrome()
         finally:
             _browser = None
-            _update_session_info(browser_alive=False)
+            _update_session_info(browser_alive=False, browser_pid=None)
     else:
         # 即使 _browser 为 None，也清理可能残留的 Chrome 进程
         _force_kill_chrome()
-        _update_session_info(browser_alive=False)
+        _update_session_info(browser_alive=False, browser_pid=None)
 
 
 def _force_kill_chrome() -> None:
@@ -438,4 +672,4 @@ def close_browser():
             logger.warning(f"关闭浏览器时出错: {e}")
         finally:
             _browser = None
-            _update_session_info(browser_alive=False)
+            _update_session_info(browser_alive=False, browser_pid=None)

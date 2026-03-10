@@ -55,6 +55,21 @@ class Settings(BaseSettings):
     browser_linux_hardening: bool = Field(
         default=True, description="Linux 无头模式下是否启用稳定性启动参数"
     )
+    browser_linux_stale_cleanup_enabled: bool = Field(
+        default=True, description="Linux 内存紧张时是否自动清理爬虫残留浏览器实例"
+    )
+    browser_linux_stale_cleanup_available_mb: float = Field(
+        default=1536.0, description="Linux 残留浏览器清理触发可用内存阈值（MB）"
+    )
+    browser_linux_stale_cleanup_drop_mb: float = Field(
+        default=512.0, description="Linux 可用内存短时骤降多少 MB 时触发残留浏览器清理"
+    )
+    browser_linux_stale_cleanup_max_age_sec: float = Field(
+        default=900.0, description="Linux 残留浏览器实例判定最小存活时长（秒）"
+    )
+    browser_linux_stale_cleanup_cooldown_sec: float = Field(
+        default=45.0, description="Linux 残留浏览器清理最小冷却时间（秒）"
+    )
 
     # API 配置
     api_host: str = Field(default="0.0.0.0")

@@ -1,0 +1,43 @@
+npm warn Unknown global config "--init.module". This will stop working in the next major version of npm.
+
+> frontend@0.1.0 dev
+> next dev -p 3721 --port 3721
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3721
+- Network:       http://10.7.0.5:3721
+- Environments: .env
+
+✓ Starting...
+✓ Ready in 1765ms
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 2.8s (compile: 2.7s, render: 95ms)
+ GET /tasks/04bc8974-7a84-42d1-8394-69e1e6548b20 200 in 2.8s (compile: 2.7s, render: 97ms)
+ GET /tasks/bae0f500-4daa-421d-accc-8f31d535c9c6 200 in 2.8s (compile: 2.7s, render: 98ms)
+ GET /tasks/6cdbab50-dac2-4c67-9e21-9ba7c0080183 200 in 2.9s (compile: 2.8s, render: 99ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 636ms (compile: 535ms, render: 101ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 410ms (compile: 23ms, render: 387ms)
+⚠ Cross origin request detected from x.moyujun.tech to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+○ Compiling /_not-found/page ...
+ GET /robots.txt 404 in 4.6s (compile: 3.9s, render: 728ms)
+ GET /.git/config 404 in 1033ms (compile: 194ms, render: 838ms)
+ GET /tasks/6cdbab50-dac2-4c67-9e21-9ba7c0080183 200 in 188ms (compile: 94ms, render: 94ms)
+ GET /tasks/bae0f500-4daa-421d-accc-8f31d535c9c6 200 in 173ms (compile: 138ms, render: 35ms)
+ GET /tasks/04bc8974-7a84-42d1-8394-69e1e6548b20 200 in 41ms (compile: 13ms, render: 27ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 12ms (compile: 4ms, render: 8ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 90ms (compile: 27ms, render: 63ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 821ms (compile: 20ms, render: 801ms)
+ GET /d46e19559361254bc13997e2a7bbb824 404 in 851ms (compile: 171ms, render: 680ms)
+ GET /d46e19559361254bc13997e2a7bbb824 404 in 581ms (compile: 46ms, render: 534ms)
+ GET /tasks 200 in 2.4s (compile: 1924ms, render: 433ms)
+ GET /tasks 200 in 280ms (compile: 22ms, render: 258ms)
+ GET /tasks/04bc8974-7a84-42d1-8394-69e1e6548b20 200 in 60ms (compile: 35ms, render: 25ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 57ms (compile: 51ms, render: 6ms)
+ GET /tasks/bae0f500-4daa-421d-accc-8f31d535c9c6 200 in 66ms (compile: 51ms, render: 14ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 60ms (compile: 21ms, render: 38ms)
+ GET /tasks/2ef27170-242b-490a-a15e-519ea7c104f6 200 in 230ms (compile: 9ms, render: 221ms)
+ GET /tasks 200 in 49ms (compile: 7ms, render: 42ms)
+ GET / 200 in 439ms (compile: 398ms, render: 41ms)
+ GET /tasks/a719fc02-8ec3-4db4-9db8-749601f51356 200 in 518ms (compile: 262ms, render: 256ms)
+ GET /robots.txt 404 in 377ms (compile: 66ms, render: 311ms)
+[?25h

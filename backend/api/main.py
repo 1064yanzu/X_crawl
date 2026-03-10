@@ -20,7 +20,7 @@ from api.routers import failed_replies as failed_replies_router
 from api.routers import browser_selector as browser_selector_router
 from api.routers import accounts as accounts_router
 from api.routers import weibo_cookies as weibo_cookies_router
-from crawler.browser import close_browser
+from crawler.browser import close_browser, maybe_cleanup_stale_linux_browsers
 from crawler.browser_detector import detect_all
 from crawler.log_config import setup_logging
 from config import settings
@@ -33,6 +33,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("X_crawl API 服务启动...")
+    cleanup = maybe_cleanup_stale_linux_browsers(reason="api_startup")
+    if int(cleanup.get("killed_roots") or 0) > 0:
+        logger.warning(
+            "启动前已清理残留浏览器实例: roots=%s, processes=%s, mem_avail=%sMB",
+            cleanup.get("killed_roots"),
+            cleanup.get("killed_processes"),
+            cleanup.get("host_mem_available_mb"),
+        )
     # 启动时检测浏览器环境（仅日志，不初始化实例）
     detected = detect_all()
     logger.info(

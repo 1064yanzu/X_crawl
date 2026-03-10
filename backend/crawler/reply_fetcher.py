@@ -154,7 +154,11 @@ def _wait_reply_packet_with_recovery(
             f"退避 {wait:.1f}s"
         )
         sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.6)
-        tab.listen.stop()
+        try:
+            tab.listen.stop()
+        except Exception:
+            pass
+        tab.listen.start(TWEET_DETAIL_PATTERN)
         ok = navigate_with_retry(
             tab,
             tweet_url,
@@ -166,7 +170,6 @@ def _wait_reply_packet_with_recovery(
             raise_on_risk=True,
             task_id=task_id,
         )
-        tab.listen.start(TWEET_DETAIL_PATTERN)
         if not ok:
             continue
 

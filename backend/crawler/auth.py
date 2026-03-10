@@ -215,6 +215,19 @@ def _refresh_x_home(tab: ChromiumTab) -> None:
         logger.warning(f"刷新页面失败: {e}")
 
 
+def _ensure_x_domain_context(tab: ChromiumTab) -> None:
+    """在首次登录检查前确保标签页已进入 X 域，避免 about:blank 误判未登录。"""
+    try:
+        current_url = _current_url(tab)
+        if "x.com" in current_url or "twitter.com" in current_url:
+            return
+        logger.info("当前标签页尚未进入 X 域，先访问 x.com/home 再校验登录状态")
+        tab.get(X_HOME_URL, timeout=30)
+        time.sleep(1.0)
+    except Exception as e:
+        logger.warning(f"建立 X 域上下文失败，将继续按当前页面校验登录: {e}")
+
+
 def _finalize_login_result(
     tab: ChromiumTab,
     *,
@@ -244,6 +257,7 @@ def ensure_login_detailed(tab: ChromiumTab) -> EnsureLoginResult:
     确保 tab 已登录 X。
     优先复用当前 profile 中已有登录态；若缺失，再尝试注入持久化 Cookie 兜底。
     """
+    _ensure_x_domain_context(tab)
     current = _finalize_login_result(tab, source="profile", injected_count=0, attempted_injection=False)
     if current.ok:
         try:
@@ -316,6 +330,7 @@ def ensure_login_with_pool_detailed(tab: ChromiumTab, account: "AccountEntry") -
     """注入指定账号 cookies 并验证登录状态。"""
     from crawler.account_pool import get_pool
 
+    _ensure_x_domain_context(tab)
     current = _finalize_login_result(tab, source="account_profile", injected_count=0, attempted_injection=False)
     if current.ok:
         result = current

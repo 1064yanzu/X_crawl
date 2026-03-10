@@ -9,6 +9,7 @@ import random
 import logging
 import threading
 from typing import Optional
+from crawler.browser import maybe_cleanup_stale_linux_browsers
 from crawler.crawl_signals import StopSignal
 from crawler.resource_guard import get_throttle_multiplier
 from crawler.runtime_metrics import bump_metric
@@ -31,6 +32,7 @@ def interruptible_sleep(seconds: float, task_id: Optional[str] = None) -> None:
     while elapsed < total:
         if task_id:
             check_signal(task_id)
+        maybe_cleanup_stale_linux_browsers(reason="interruptible_sleep")
         remain = total - elapsed
         slice_s = min(step, remain)
         time.sleep(slice_s)
