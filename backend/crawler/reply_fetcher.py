@@ -17,7 +17,7 @@ from crawler.reply_parser import parse_tweet_detail_response, TWEET_DETAIL_PATTE
 from crawler.response_saver import save_reply_response
 from crawler.page_health import navigate_with_retry
 from crawler.page_state import detect_page_state, PageState
-from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body
+from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body, extract_packet_body_dict
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
@@ -350,7 +350,7 @@ def fetch_replies(
                     break
 
             try:
-                body = packet.response.body
+                body = extract_packet_body_dict(packet)
                 if not isinstance(body, dict):
                     logger.debug(f"  非 JSON 响应，跳过（url={packet.url[:80]}）")
                     continue

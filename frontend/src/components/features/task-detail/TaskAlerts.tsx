@@ -2,14 +2,18 @@
 import Image from "next/image";
 import { AlertCircle, ShieldAlert } from "lucide-react";
 import { API_BASE_URL } from "@/services/api";
+import { getRiskStateHint, getRiskStateLabel } from "@/lib/task-ui";
 
 type Props = {
     error?: string | null;
     isRiskPaused: boolean;
+    riskState?: string | null;
     debugScreenshot?: string | null;
 };
 
-export function TaskAlerts({ error, isRiskPaused, debugScreenshot }: Props) {
+export function TaskAlerts({ error, isRiskPaused, riskState, debugScreenshot }: Props) {
+    const riskLabel = getRiskStateLabel(riskState);
+    const riskHint = getRiskStateHint(riskState);
     return (
         <div className="space-y-3">
             {error ? (
@@ -51,9 +55,9 @@ export function TaskAlerts({ error, isRiskPaused, debugScreenshot }: Props) {
                     <div className="flex items-start gap-3">
                         <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" />
                         <div>
-                            <p className="font-semibold">检测到风控挑战</p>
+                            <p className="font-semibold">检测到风险状态：{riskLabel}</p>
                             <p className="mt-1 text-sm leading-6 text-orange-800/90 dark:text-orange-100/90">
-                                请先回到浏览器完成验证，然后使用页面右上角的“继续”按钮恢复任务。
+                                {riskHint}
                             </p>
                         </div>
                     </div>

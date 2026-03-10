@@ -6,6 +6,7 @@ import {
     Zap, CheckCircle2, SplitSquareVertical,
 } from "lucide-react";
 import { TweetCard } from "@/components/features/TweetCard";
+import { getRiskStateLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 import { TaskOut } from "@/services/api";
 
@@ -76,14 +77,15 @@ function CrawlingEmptyState({ currentPage, crawlPhase }: {
 /**
  * 暂停状态 Banner
  */
-function PausedBanner({ resultCount }: { resultCount: number }) {
+function PausedBanner({ resultCount, riskState }: { resultCount: number; riskState?: string | null }) {
+    const riskLabel = riskState && riskState !== "none" ? getRiskStateLabel(riskState) : "";
     return (
         <div className="flex items-center justify-center py-10 gap-4">
             <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center">
                 <Pause className="w-6 h-6 text-amber-500" />
             </div>
             <div>
-                <p className="font-semibold text-foreground">爬虫已暂停</p>
+                <p className="font-semibold text-foreground">{riskLabel ? `爬虫已暂停 · ${riskLabel}` : "爬虫已暂停"}</p>
                 <p className="text-sm text-muted-foreground mt-0.5">
                     {resultCount > 0
                         ? `已保留 ${resultCount} 条数据，点击「继续」恢复抓取`
@@ -105,6 +107,7 @@ function LiveStatusBanner({
     previewCount: number;
 }) {
     const isRunning: boolean = task.status === "running" || task.status === "pending";
+    const riskLabel = task.risk_state && task.risk_state !== "none" ? getRiskStateLabel(task.risk_state) : "";
     const displayPhase = typeof task.crawl_phase === "string" ? task.crawl_phase : "";
     const latestActionType = typeof task.latest_action?.type === "string" ? task.latest_action.type : "";
     const phaseNode =
@@ -134,7 +137,7 @@ function LiveStatusBanner({
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium">
-                        {isRunning ? "实时抓取中" : "已暂停"}
+                        {isRunning ? "实时抓取中" : (riskLabel ? `已暂停 · ${riskLabel}` : "已暂停")}
                     </span>
                     <span className="text-muted-foreground">
                         · 已获取{" "}
@@ -218,7 +221,7 @@ export function LiveCrawlPreview({ task }: LiveCrawlPreviewProps) {
 
     // 暂停中无数据：显示暂停 banner
     if (isPaused && !hasData) {
-        return <PausedBanner resultCount={task.result_count} />;
+        return <PausedBanner resultCount={task.result_count} riskState={task.risk_state} />;
     }
 
     // 有数据：状态 banner + 推文预览卡片

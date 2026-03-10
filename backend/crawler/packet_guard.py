@@ -1,18 +1,26 @@
 """监听数据包守卫：过滤无关数据包并保证响应结构可解析。"""
 from __future__ import annotations
 
+import json
 import time
 from typing import Callable, Optional, Any
 
 
 BodyPredicate = Callable[[dict], bool]
+PacketObserver = Callable[[Any, Optional[dict]], None]
 
 
-def _safe_packet_body(packet) -> Optional[dict]:
+def extract_packet_body_dict(packet) -> Optional[dict]:
     try:
         body = packet.response.body
         if isinstance(body, dict):
             return body
+        if isinstance(body, str):
+            text = body.strip()
+            if text.startswith("{") or text.startswith("["):
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
     except Exception:
         return None
     return None
@@ -24,6 +32,7 @@ def wait_for_target_packet(
     timeout: float,
     accept_body: BodyPredicate,
     max_ignored: int = 12,
+    on_packet: PacketObserver | None = None,
 ):
     """等待目标 JSON 包，忽略无关包，直到超时。"""
     deadline = time.monotonic() + max(0.5, timeout)
@@ -35,7 +44,9 @@ def wait_for_target_packet(
         if not packet:
             continue
 
-        body = _safe_packet_body(packet)
+        body = extract_packet_body_dict(packet)
+        if on_packet is not None:
+            on_packet(packet, body)
         if body is None:
             ignored += 1
             if ignored >= max_ignored:

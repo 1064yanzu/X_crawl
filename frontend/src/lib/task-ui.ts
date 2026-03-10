@@ -1,4 +1,20 @@
-import type { TaskOut, TaskStatus } from "@/services/api";
+import type { TaskOut, TaskStatus, RiskState } from "@/services/api";
+
+const RISK_STATE_LABELS: Record<RiskState, string> = {
+    none: "正常",
+    challenge: "安全验证",
+    rate_limited: "请求受限",
+    login_required: "需要重新登录",
+    search_blocked: "搜索受限",
+};
+
+const RISK_STATE_HINTS: Record<RiskState, string> = {
+    none: "当前未检测到异常风控",
+    challenge: "请在浏览器完成安全验证后继续任务",
+    rate_limited: "当前账号或 IP 请求过快，建议稍后重试",
+    login_required: "当前会话登录态已失效，需要重新登录",
+    search_blocked: "当前账号搜索接口异常，疑似被 X 限制搜索能力",
+};
 
 export function isTaskActive(status: TaskStatus) {
     return status === "running" || status === "pending" || status === "paused";
@@ -6,6 +22,16 @@ export function isTaskActive(status: TaskStatus) {
 
 export function canResumeTask(status: TaskStatus) {
     return status === "done" || status === "failed" || status === "stopped";
+}
+
+export function getRiskStateLabel(riskState?: string | null) {
+    if (!riskState || !(riskState in RISK_STATE_LABELS)) return riskState || "正常";
+    return RISK_STATE_LABELS[riskState as RiskState];
+}
+
+export function getRiskStateHint(riskState?: string | null) {
+    if (!riskState || !(riskState in RISK_STATE_HINTS)) return "可在详情页继续观察任务状态";
+    return RISK_STATE_HINTS[riskState as RiskState];
 }
 
 export function formatDateTime(value?: string | null) {

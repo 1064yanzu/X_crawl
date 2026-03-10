@@ -1,25 +1,26 @@
 "use client";
+
 import * as React from "react";
 import { Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-const STORAGE_KEY = "xcrawl-theme";
-
-type ThemeMode = "light" | "dark";
-
-function applyTheme(mode: ThemeMode) {
-    if (typeof document === "undefined") return;
-    document.documentElement.dataset.theme = mode;
-}
+import { applyTheme, THEME_STORAGE_KEY, type ThemeMode } from "@/lib/theme";
 
 export function ThemeToggle() {
     const [mounted, setMounted] = React.useState(false);
     const [theme, setTheme] = React.useState<ThemeMode>("light");
 
     React.useEffect(() => {
-        const stored = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-        const systemDark = typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
-        const nextTheme: ThemeMode = stored === "dark" || stored === "light" ? stored : systemDark ? "dark" : "light";
+        const rootTheme = document.documentElement.dataset.theme;
+        const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+        const systemDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+        const nextTheme: ThemeMode = stored === "dark" || stored === "light"
+            ? stored
+            : rootTheme === "dark"
+                ? "dark"
+                : systemDark
+                    ? "dark"
+                    : "light";
+
         setTheme(nextTheme);
         applyTheme(nextTheme);
         setMounted(true);
@@ -28,9 +29,7 @@ export function ThemeToggle() {
     const toggle = () => {
         const nextTheme: ThemeMode = theme === "dark" ? "light" : "dark";
         setTheme(nextTheme);
-        if (typeof window !== "undefined") {
-            window.localStorage.setItem(STORAGE_KEY, nextTheme);
-        }
+        window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
         applyTheme(nextTheme);
     };
 

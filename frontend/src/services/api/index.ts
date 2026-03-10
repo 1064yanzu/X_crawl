@@ -3,7 +3,7 @@ export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "/xapi").replace
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "paused" | "stopped";
 export type Platform = "x" | "weibo";
 export type CrawlStrategy = "bfs" | "dfs";
-export type RiskState = "none" | "challenge" | "rate_limited" | "login_required";
+export type RiskState = "none" | "challenge" | "rate_limited" | "login_required" | "search_blocked";
 export type QualityState = "complete" | "partial" | "interrupted";
 
 export interface SegmentProgress {

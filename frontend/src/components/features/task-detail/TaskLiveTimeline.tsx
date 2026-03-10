@@ -2,6 +2,7 @@
 import * as React from "react";
 import { ListChecks, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { getRiskStateLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 import { TaskStreamEvent } from "@/hooks/useTaskStream";
 
@@ -19,7 +20,7 @@ function describeEvent(event: TaskStreamEvent) {
     if (event.page) items.push(`第 ${event.page} 页`);
     if (event.delta_tweets) items.push(`新增推文 ${event.delta_tweets}`);
     if (event.delta_replies) items.push(`新增回复 ${event.delta_replies}`);
-    if (event.risk_state && event.risk_state !== "none") items.push(`风控 ${event.risk_state}`);
+    if (event.risk_state && event.risk_state !== "none") items.push(`风控 ${getRiskStateLabel(event.risk_state)}`);
     if (event.status) items.push(`状态 ${event.status}`);
     return items.length > 0 ? items.join(" · ") : "等待更多上下文";
 }
@@ -114,6 +115,7 @@ export function TaskLiveTimeline({ events }: { events: TaskStreamEvent[] }) {
                         const hasRisk = Boolean(event.risk_state && event.risk_state !== "none");
                         const hasPage = typeof event.page === "number" && event.page > 0;
                         const hasDelta = (event.delta_tweets ?? 0) > 0 || (event.delta_replies ?? 0) > 0;
+                        const riskLabel = hasRisk ? getRiskStateLabel(event.risk_state) : "";
 
                         return (
                             <div key={`${event.id ?? index}-${event.ts ?? ""}`} className="border-b border-border/50 px-4 py-3 last:border-b-0">
@@ -124,9 +126,14 @@ export function TaskLiveTimeline({ events }: { events: TaskStreamEvent[] }) {
                                     </span>
                                 </div>
                                 <p className="mt-1 text-sm text-muted-foreground">{describeEvent(event)}</p>
+                                {hasRisk ? (
+                                    <p className="mt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                                        当前事件命中风险状态：{riskLabel}。
+                                    </p>
+                                ) : null}
                                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
                                     <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">类型：{event.type}</span>
-                                    {hasRisk ? <span className="rounded-full bg-amber-500/10 px-2 py-1 text-amber-700 dark:text-amber-300">风控</span> : null}
+                                    {hasRisk ? <span className="rounded-full bg-amber-500/10 px-2 py-1 text-amber-700 dark:text-amber-300">风控：{riskLabel}</span> : null}
                                     {hasPage ? <span className="rounded-full bg-sky-500/10 px-2 py-1 text-sky-700 dark:text-sky-300">翻页</span> : null}
                                     {hasDelta ? <span className="rounded-full bg-emerald-500/10 px-2 py-1 text-emerald-700 dark:text-emerald-300">有增量</span> : null}
                                     {event.status ? <span className="rounded-full bg-muted px-2 py-1 text-muted-foreground">状态：{event.status}</span> : null}

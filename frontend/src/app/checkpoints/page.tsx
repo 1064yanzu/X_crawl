@@ -1,9 +1,10 @@
 "use client";
+
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertCircle, Bookmark, Play, Search, Trash2 } from "lucide-react";
-import { api, CheckpointInfo } from "@/services/api";
+import type { CheckpointInfo } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card } from "@/components/ui/card";
@@ -13,35 +14,21 @@ import { PageHeader } from "@/components/ui/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
+import { useCheckpointsQuery, useDeleteCheckpointMutation, useResumeCheckpointMutation } from "@/hooks/useCheckpoints";
 
 export default function CheckpointsPage() {
     const router = useRouter();
     const { push } = useToast();
-    const [checkpoints, setCheckpoints] = React.useState<CheckpointInfo[]>([]);
-    const [loading, setLoading] = React.useState(true);
+    const { data, isLoading } = useCheckpointsQuery();
+    const deleteCheckpointMutation = useDeleteCheckpointMutation();
+    const resumeCheckpointMutation = useResumeCheckpointMutation();
+    const checkpoints = data ?? [];
     const [resuming, setResuming] = React.useState<string | null>(null);
     const [deleteId, setDeleteId] = React.useState<string | null>(null);
 
-    const fetchCheckpoints = React.useCallback(async () => {
-        try {
-            const data = await api.checkpoints.list();
-            setCheckpoints(data);
-        } catch (err) {
-            console.error(err);
-            push({ type: "error", title: "加载断点失败" });
-        } finally {
-            setLoading(false);
-        }
-    }, [push]);
-
-    React.useEffect(() => {
-        void fetchCheckpoints();
-    }, [fetchCheckpoints]);
-
     const handleDelete = async (taskId: string) => {
         try {
-            await api.checkpoints.delete(taskId);
-            setCheckpoints((prev) => prev.filter((checkpoint) => checkpoint.task_id !== taskId));
+            await deleteCheckpointMutation.mutateAsync(taskId);
             push({ type: "success", title: "断点已删除" });
         } catch (err) {
             console.error(err);
@@ -52,14 +39,9 @@ export default function CheckpointsPage() {
     const handleResume = async (checkpoint: CheckpointInfo) => {
         if (!checkpoint.can_resume) return;
         setResuming(checkpoint.task_id);
+
         try {
-            const task = await api.search.create({
-                keyword: checkpoint.keyword,
-                max_count: 0,
-                product: checkpoint.product as "Top" | "Latest" | "Photos" | "Videos",
-                resume: true,
-                task_id: checkpoint.task_id,
-            });
+            const task = await resumeCheckpointMutation.mutateAsync(checkpoint);
             push({ type: "success", title: "已提交恢复任务" });
             router.push(`/tasks/${task.task_id}`);
         } catch (err) {
@@ -87,7 +69,7 @@ export default function CheckpointsPage() {
                 </div>
             </PageHeader>
 
-            {loading ? (
+            {isLoading ? (
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                     {[1, 2, 3].map((item) => (
                         <div key={item} className="rounded-[1.5rem] border border-border/60 bg-card/80 p-5 shadow-sm">
@@ -132,7 +114,6 @@ export default function CheckpointsPage() {
                                             <Badge variant="destructive" className="rounded-full px-3 py-1">已结束</Badge>
                                         )}
                                     </div>
-                                    
                                 </div>
 
                                 <div className="grid gap-3 sm:grid-cols-2">
@@ -157,6 +138,7 @@ export default function CheckpointsPage() {
                                         size="sm"
                                         className="rounded-xl text-muted-foreground hover:text-red-600"
                                         onClick={() => setDeleteId(checkpoint.task_id)}
+                                        disabled={deleteCheckpointMutation.isPending}
                                     >
                                         <Trash2 className="h-4 w-4" />
                                     </Button>

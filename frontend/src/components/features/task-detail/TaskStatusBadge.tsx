@@ -2,6 +2,7 @@
 import type { LucideIcon } from "lucide-react";
 import { CheckCircle2, Loader2, Pause, ShieldAlert, StopCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { getRiskStateLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -30,8 +31,9 @@ function getMeta(status: string, riskState: string): BadgeMeta {
         };
     }
     if (isRiskPaused) {
+        const riskLabel = getRiskStateLabel(riskState);
         return {
-            label: `风控暂停 · ${riskState}`,
+            label: `风控暂停 · ${riskLabel}`,
             icon: ShieldAlert,
             className: "border-0 bg-orange-500/10 text-orange-700 dark:text-orange-300",
         };

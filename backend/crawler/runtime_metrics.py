@@ -11,6 +11,7 @@ from copy import deepcopy
 
 _DEFAULT_METRICS = {
     "search_packet_timeouts": 0,
+    "search_api_blocked_hits": 0,
     "reply_packet_timeouts": 0,
     "soft_retries": 0,
     "hard_refreshes": 0,

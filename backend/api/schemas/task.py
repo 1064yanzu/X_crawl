@@ -6,7 +6,7 @@ from typing import Optional, Literal
 
 TaskStatus = Literal["pending", "running", "done", "failed", "paused", "stopped"]
 CrawlStrategy = Literal["bfs", "dfs"]
-RiskState = Literal["none", "challenge", "rate_limited", "login_required"]
+RiskState = Literal["none", "challenge", "rate_limited", "login_required", "search_blocked"]
 QualityState = Literal["complete", "partial", "interrupted"]
 
 
@@ -69,7 +69,7 @@ class TaskOut(BaseModel):
     created_at: str
     finished_at: Optional[str] = None
     error: Optional[str] = None
-    risk_state: RiskState = Field(default="none", description="风险状态：none/challenge/rate_limited/login_required")
+    risk_state: RiskState = Field(default="none", description="风险状态：none/challenge/rate_limited/login_required/search_blocked")
     quality_state: QualityState = Field(default="complete", description="任务质量：complete/partial/interrupted")
     runtime_metrics: dict = Field(default_factory=dict, description="任务运行期指标汇总")
     live_metrics: dict = Field(default_factory=dict, description="实时遥测指标（SSE/摘要模式可用）")

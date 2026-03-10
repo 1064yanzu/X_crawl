@@ -202,6 +202,8 @@ def run_search_task(
     except ChallengeSignal as e:
         if e.risk_state == "login_required":
             phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
+        elif e.risk_state == "search_blocked":
+            phase = str(e) or "检测到 X 搜索接口异常（疑似账号风控），请更换账号或稍后重试"
         else:
             phase = f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
         task_manager.update_task_risk_paused(

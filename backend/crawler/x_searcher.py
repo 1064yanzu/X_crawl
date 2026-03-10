@@ -26,7 +26,7 @@ from crawler.checkpoint_buffer import (
 from crawler.response_saver import save_raw_response
 from crawler.page_health import navigate_with_retry
 from crawler.page_state import detect_page_state, PageState
-from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body
+from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body, extract_packet_body_dict
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, LoginRequiredPause, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
@@ -376,6 +376,22 @@ def _to_risk_state(state: PageState) -> RiskState:
     return "challenge"
 
 
+def _is_search_api_blocked(packet) -> tuple[bool, str]:
+    try:
+        url = getattr(packet, "url", "") or ""
+        if SEARCH_TIMELINE_PATTERN.lower() not in url.lower():
+            return False, ""
+        response = getattr(packet, "response", None)
+        status = getattr(response, "status", None)
+        body = getattr(response, "body", None)
+        body_len = len(body) if isinstance(body, (str, bytes, bytearray)) else 0
+        if status in {401, 403, 404, 429} and body_len == 0:
+            return True, f"SearchTimeline 接口返回 {status} 且响应体为空"
+    except Exception:
+        return False, ""
+    return False, ""
+
+
 def _wait_search_packet_with_recovery(
     *,
     tab,
@@ -386,12 +402,30 @@ def _wait_search_packet_with_recovery(
 ):
     """等待搜索包：软重试失败后进入硬刷新恢复。"""
     challenge_hits = 0
+    search_api_blocked_hits = 0
+
+    def _inspect_packet(packet, body) -> None:
+        nonlocal search_api_blocked_hits
+        blocked, reason = _is_search_api_blocked(packet)
+        if not blocked:
+            return
+        search_api_blocked_hits += 1
+        bump_metric(task_id, "search_api_blocked_hits")
+        logger.warning(
+            f"第 {page_num} 页检测到搜索接口异常 {search_api_blocked_hits}/2：{reason}"
+        )
+        if search_api_blocked_hits >= 2:
+            raise ChallengeSignal(
+                f"{reason}，疑似当前账号被 X 搜索风控，请更换账号或稍后重试",
+                risk_state="search_blocked",
+            )
 
     for soft_attempt in range(policy.packet_soft_retries + 1):
         packet, ignored = wait_for_target_packet(
             tab,
             timeout=timeout,
             accept_body=is_search_timeline_body,
+            on_packet=_inspect_packet,
         )
         if packet:
             if ignored:
@@ -451,6 +485,7 @@ def _wait_search_packet_with_recovery(
             tab,
             timeout=timeout,
             accept_body=is_search_timeline_body,
+            on_packet=_inspect_packet,
         )
         if packet:
             _update_rate_tracker(packet, endpoint="search", task_id=task_id)
@@ -854,7 +889,7 @@ def search(
                 break
 
             try:
-                body = packet.response.body
+                body = extract_packet_body_dict(packet)
                 if not isinstance(body, dict):
                     logger.debug(f"非 JSON 响应，跳过（url={packet.url[:80]}）")
                     continue

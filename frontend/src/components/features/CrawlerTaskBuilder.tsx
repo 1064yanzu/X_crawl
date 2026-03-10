@@ -1,36 +1,34 @@
 "use client";
+
 import * as React from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
+    CalendarRange,
     Clock,
     Film,
     Image,
     MessageSquare,
-    Play,
     Search,
     Settings,
-    Sparkles,
     Target,
     TerminalSquare,
     TrendingUp,
-    Loader2,
-    Globe,
-    CalendarRange,
 } from "lucide-react";
-import { api, SearchRequest, CrawlStrategy, Platform } from "@/services/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { useToast } from "@/components/ui/toast";
-import {
-    AdvancedSearchPanel,
-    AdvancedSearchParams,
-    DEFAULT_ADVANCED_PARAMS,
-    buildAdvancedQuery,
-} from "@/components/features/AdvancedSearchPanel";
+import { CrawlerTaskSummary } from "@/components/features/CrawlerTaskSummary";
+import { useCrawlerTaskBuilder } from "@/hooks/useCrawlerTaskBuilder";
+import { type AdvancedSearchParams } from "@/lib/advanced-search";
+
+const AdvancedSearchPanel = dynamic(
+    () => import("@/components/features/AdvancedSearchPanel").then((module) => ({ default: module.AdvancedSearchPanel })),
+    {
+        loading: () => <BuilderPanelSkeleton title="高级筛选" />,
+    },
+);
 
 const PRODUCT_TABS = [
     { value: "Top", label: "最热", desc: "按相关性与互动量排序", icon: TrendingUp },
@@ -42,94 +40,41 @@ const PRODUCT_TABS = [
 type ProductType = (typeof PRODUCT_TABS)[number]["value"];
 
 export function CrawlerTaskBuilder() {
-    const router = useRouter();
-    const { push } = useToast();
-    const [loading, setLoading] = React.useState(false);
-    const [keyword, setKeyword] = React.useState("");
-    const [maxCount, setMaxCount] = React.useState(0);
-    const [product, setProduct] = React.useState<ProductType>("Top");
-    const [advancedParams, setAdvancedParams] = React.useState<AdvancedSearchParams>(DEFAULT_ADVANCED_PARAMS);
-    const [advancedOpen, setAdvancedOpen] = React.useState(false);
-    const [fetchReplies, setFetchReplies] = React.useState(false);
-    const strategy: CrawlStrategy = "dfs";
-    const [replyDepth, setReplyDepth] = React.useState(2);
-    const [platform, setPlatform] = React.useState<Platform>("x");
-    const [startDate, setStartDate] = React.useState("");
-    const [endDate, setEndDate] = React.useState("");
-    const [splitTriggerDays, setSplitTriggerDays] = React.useState(30);
+    const {
+        loading,
+        keyword,
+        setKeyword,
+        maxCount,
+        setMaxCount,
+        product,
+        setProduct,
+        advancedParams,
+        setAdvancedParams,
+        advancedOpen,
+        setAdvancedOpen,
+        fetchReplies,
+        setFetchReplies,
+        replyDepth,
+        setReplyDepth,
+        platform,
+        setPlatform,
+        startDate,
+        setStartDate,
+        endDate,
+        setEndDate,
+        finalKeyword,
+        xSplitNotice,
+        canSubmit,
+        submit,
+    } = useCrawlerTaskBuilder();
 
-    React.useEffect(() => {
-        api.crawlerConfig.get()
-            .then((cfg) => setSplitTriggerDays(cfg.x_time_split_trigger_days ?? 30))
-            .catch(() => undefined);
-    }, []);
-
-    const buildFinalKeyword = React.useCallback(() => {
-        let query = keyword.trim();
-        const advancedQuery = buildAdvancedQuery(advancedParams);
-        if (advancedQuery) {
-            query = query ? `${query} ${advancedQuery}` : advancedQuery;
-        }
-        return query;
-    }, [advancedParams, keyword]);
-
-    const finalKeyword = buildFinalKeyword();
-    const canSubmit = Boolean(finalKeyword);
     const selectedTab = PRODUCT_TABS.find((item) => item.value === product) ?? PRODUCT_TABS[0];
-
-    const xSplitNotice = React.useMemo(() => {
-        if (platform !== "x" || !advancedParams.since || !advancedParams.until) return null;
-        const start = new Date(`${advancedParams.since}T00:00:00`);
-        const end = new Date(`${advancedParams.until}T00:00:00`);
-        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
-        const days = Math.floor((end.getTime() - start.getTime()) / 86400000);
-        if (days < splitTriggerDays) return null;
-        if (days >= 90) {
-            return `检测到 ${days} 天跨度，将自动按月拆分任务以提升稳定性。`;
-        }
-        return `检测到 ${days} 天跨度，将按时间窗口自动切片，提升覆盖率与稳定性。`;
-    }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays]);
-
-    const submit = async () => {
-        if (!finalKeyword) {
-            push({ type: "error", title: "请输入检索关键词或高级筛选条件" });
-            return;
-        }
-        if (platform === "weibo" && startDate && endDate && startDate > endDate) {
-            push({ type: "error", title: "微博时间范围无效", description: "结束日期需要晚于开始日期。" });
-            return;
-        }
-
-        setLoading(true);
-        try {
-            const payload: SearchRequest = {
-                keyword: finalKeyword,
-                max_count: maxCount,
-                product,
-                resume: true,
-                fetch_replies: fetchReplies,
-                max_replies_per_tweet: 0,
-                reply_depth: replyDepth,
-                crawl_strategy: strategy,
-                platform,
-                start_date: platform === "weibo" && startDate ? startDate : undefined,
-                end_date: platform === "weibo" && endDate ? endDate : undefined,
-            };
-            const task = await api.search.create(payload);
-            push({ type: "success", title: "采集任务已提交", description: "正在跳转到任务详情。" });
-            router.push(`/tasks/${task.task_id}`);
-        } catch (error) {
-            console.error(error);
-            const msg = error instanceof Error ? error.message : String(error);
-            if (msg.includes("409")) {
-                push({ type: "error", title: "当前并发任务已达上限", description: "请等待正在运行任务结束后再创建新任务。" });
-            } else {
-                push({ type: "error", title: "启动采集任务失败", description: msg });
-            }
-        } finally {
-            setLoading(false);
-        }
-    };
+    const summaryRows = [
+        { label: "采集平台", value: platform === "x" ? "𝕏 Twitter" : "微博" },
+        { label: "内容模式", value: selectedTab.label },
+        { label: "目标数量", value: maxCount > 0 ? `${maxCount} 条` : "不限数量" },
+        { label: "评论抓取", value: fetchReplies ? `开启 · ${replyDepth} 层` : "关闭" },
+    ];
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
         if (event.key === "Enter") {
@@ -137,13 +82,6 @@ export function CrawlerTaskBuilder() {
             void submit();
         }
     };
-
-    const summaryRows = [
-        { label: "采集平台", value: platform === "x" ? "𝕏 Twitter" : "微博" },
-        { label: "内容模式", value: selectedTab.label },
-        { label: "目标数量", value: maxCount > 0 ? `${maxCount} 条` : "不限数量" },
-        { label: "评论抓取", value: fetchReplies ? `开启 · ${replyDepth} 层` : "关闭" },
-    ];
 
     return (
         <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
@@ -175,18 +113,8 @@ export function CrawlerTaskBuilder() {
                             <SectionTitle title="基础信息" description="先确定平台、关键词与基础采集目标。" />
 
                             <div className="flex flex-wrap gap-2">
-                                <PlatformButton
-                                    active={platform === "x"}
-                                    label="𝕏 Twitter"
-                                    description="支持高级搜索与时间切片"
-                                    onClick={() => setPlatform("x")}
-                                />
-                                <PlatformButton
-                                    active={platform === "weibo"}
-                                    label="微博"
-                                    description="适合指定时间范围批量回采"
-                                    onClick={() => setPlatform("weibo")}
-                                />
+                                <PlatformButton active={platform === "x"} label="𝕏 Twitter" description="支持高级搜索与时间切片" onClick={() => setPlatform("x")} />
+                                <PlatformButton active={platform === "weibo"} label="微博" description="适合指定时间范围批量回采" onClick={() => setPlatform("weibo")} />
                             </div>
 
                             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
@@ -225,15 +153,13 @@ export function CrawlerTaskBuilder() {
                                 <div className="grid gap-4 rounded-2xl border border-border/60 bg-muted/20 p-4 md:grid-cols-2">
                                     <div className="space-y-2">
                                         <label className="flex items-center gap-2 text-sm font-medium">
-                                            <CalendarRange className="h-4 w-4 text-primary" />
-                                            开始日期
+                                            <CalendarRange className="h-4 w-4 text-primary" />开始日期
                                         </label>
                                         <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="h-11 rounded-xl bg-background" />
                                     </div>
                                     <div className="space-y-2">
                                         <label className="flex items-center gap-2 text-sm font-medium">
-                                            <CalendarRange className="h-4 w-4 text-primary" />
-                                            结束日期
+                                            <CalendarRange className="h-4 w-4 text-primary" />结束日期
                                         </label>
                                         <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="h-11 rounded-xl bg-background" />
                                     </div>
@@ -250,12 +176,10 @@ export function CrawlerTaskBuilder() {
                                         <button
                                             key={value}
                                             type="button"
-                                            onClick={() => setProduct(value)}
+                                            onClick={() => setProduct(value as ProductType)}
                                             className={cn(
                                                 "rounded-2xl border px-4 py-4 text-left transition-all duration-200",
-                                                active
-                                                    ? "border-primary/30 bg-primary/8 text-foreground shadow-sm"
-                                                    : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
+                                                active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
                                             )}
                                         >
                                             <div className="flex items-center gap-2">
@@ -276,7 +200,7 @@ export function CrawlerTaskBuilder() {
                                 <SectionTitle title="高级筛选" description="需要时再展开，把复杂查询收纳到二级区域。" />
                                 <AdvancedSearchPanel
                                     params={advancedParams}
-                                    onChange={setAdvancedParams}
+                                    onChange={setAdvancedParams as (params: AdvancedSearchParams) => void}
                                     isOpen={advancedOpen}
                                     onToggle={() => setAdvancedOpen((open) => !open)}
                                 />
@@ -309,9 +233,7 @@ export function CrawlerTaskBuilder() {
                                         onClick={() => setFetchReplies((value) => !value)}
                                         className={cn(
                                             "inline-flex h-11 items-center rounded-full border px-4 text-sm font-medium transition-all",
-                                            fetchReplies
-                                                ? "border-primary/20 bg-primary text-primary-foreground"
-                                                : "border-border/70 bg-background text-muted-foreground hover:text-foreground",
+                                            fetchReplies ? "border-primary/20 bg-primary text-primary-foreground" : "border-border/70 bg-background text-muted-foreground hover:text-foreground",
                                         )}
                                     >
                                         {fetchReplies ? "已开启" : "保持关闭"}
@@ -332,9 +254,7 @@ export function CrawlerTaskBuilder() {
                                                     onClick={() => setReplyDepth(option.value)}
                                                     className={cn(
                                                         "rounded-2xl border px-4 py-4 text-left transition-all duration-200",
-                                                        active
-                                                            ? "border-primary/30 bg-primary/8 text-foreground shadow-sm"
-                                                            : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
+                                                        active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
                                                     )}
                                                 >
                                                     <p className="font-medium">{option.title}</p>
@@ -349,64 +269,16 @@ export function CrawlerTaskBuilder() {
                     </div>
 
                     <aside className="border-t border-border/50 bg-muted/15 p-6 xl:border-l xl:border-t-0 xl:p-7">
-                        <div className="xl:sticky xl:top-24 space-y-4">
-                            <div className="rounded-[1.25rem] border border-border/60 bg-card p-5 shadow-sm">
-                                <div className="flex items-center gap-2 text-primary">
-                                    <Sparkles className="h-4 w-4" />
-                                    <span className="text-xs font-semibold uppercase tracking-[0.18em]">Ready Check</span>
-                                </div>
-                                <h3 className="mt-3 text-lg font-semibold">提交前摘要</h3>
-                                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                                    这里展示最终执行形态，帮助你在提交前快速检查平台、范围与成本。
-                                </p>
-
-                                <div className="mt-5 space-y-3">
-                                    {summaryRows.map((item) => (
-                                        <div key={item.label} className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-background/70 px-3 py-3 text-sm">
-                                            <span className="text-muted-foreground">{item.label}</span>
-                                            <span className="font-medium text-foreground">{item.value}</span>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                <div className="mt-4 rounded-2xl border border-dashed border-border/70 bg-muted/20 p-4">
-                                    <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                                        <Target className="h-3.5 w-3.5" />
-                                        最终查询
-                                    </div>
-                                    {canSubmit ? (
-                                        <code className="mt-3 block whitespace-pre-wrap break-words rounded-xl bg-background px-3 py-3 text-sm font-medium text-foreground">
-                                            {finalKeyword}
-                                        </code>
-                                    ) : (
-                                        <p className="mt-3 text-sm text-muted-foreground">输入关键词或高级筛选后，这里会显示最终提交到后端的查询。</p>
-                                    )}
-                                </div>
-
-                                <div className="mt-4 flex flex-wrap gap-2">
-                                    <Badge variant="secondary" className="h-7 rounded-full px-3">{selectedTab.label}</Badge>
-                                    <Badge variant="secondary" className="h-7 rounded-full px-3">{platform === "x" ? "X 平台" : "微博平台"}</Badge>
-                                    {fetchReplies ? <Badge variant="secondary" className="h-7 rounded-full px-3">评论深抓</Badge> : null}
-                                </div>
-
-                                <Button onClick={() => void submit()} disabled={!canSubmit || loading} className="mt-6 h-11 w-full rounded-xl">
-                                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-                                    {loading ? "提交中..." : "启动采集任务"}
-                                </Button>
-                            </div>
-
-                            <div className="rounded-[1.25rem] border border-border/60 bg-card p-5 shadow-sm">
-                                <div className="flex items-center gap-2 text-primary">
-                                    <Globe className="h-4 w-4" />
-                                    <span className="text-xs font-semibold uppercase tracking-[0.18em]">Tips</span>
-                                </div>
-                                <ul className="mt-3 space-y-3 text-sm leading-6 text-muted-foreground">
-                                    <li>默认推荐从“最新”开始，可更快验证关键词是否命中真实数据。</li>
-                                    <li>只有需要做传播分析或问答链路分析时，再开启评论抓取。</li>
-                                    <li>跨月或超长时间范围建议使用高级筛选里的日期条件，配合自动切片稳定运行。</li>
-                                </ul>
-                            </div>
-                        </div>
+                        <CrawlerTaskSummary
+                            summaryRows={summaryRows}
+                            canSubmit={canSubmit}
+                            finalKeyword={finalKeyword}
+                            selectedTabLabel={selectedTab.label}
+                            platformLabel={platform === "x" ? "X 平台" : "微博平台"}
+                            fetchReplies={fetchReplies}
+                            loading={loading}
+                            onSubmit={() => void submit()}
+                        />
                     </aside>
                 </div>
             </CardContent>
@@ -440,13 +312,24 @@ function PlatformButton({
             onClick={onClick}
             className={cn(
                 "min-w-[210px] rounded-2xl border px-4 py-3 text-left transition-all duration-200",
-                active
-                    ? "border-primary/30 bg-primary/8 text-foreground shadow-sm"
-                    : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
+                active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
             )}
         >
             <p className="font-medium">{label}</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
         </button>
+    );
+}
+
+function BuilderPanelSkeleton({ title }: { title: string }) {
+    return (
+        <div className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
+            <div className="space-y-3 animate-pulse">
+                <div className="h-5 w-28 rounded bg-muted" />
+                <div className="h-9 w-full rounded-xl bg-muted/80" />
+                <div className="h-9 w-full rounded-xl bg-muted/80" />
+                <p className="text-xs text-muted-foreground">正在加载{title}...</p>
+            </div>
+        </div>
     );
 }

@@ -1,7 +1,7 @@
 """爬虫通用信号定义，避免模块间循环依赖。"""
 from typing import Literal
 
-RiskState = Literal["none", "challenge", "rate_limited", "login_required"]
+RiskState = Literal["none", "challenge", "rate_limited", "login_required", "search_blocked"]
 
 
 class StopSignal(Exception):
