@@ -171,11 +171,17 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
             platform=payload.get("platform", "x"),
             start_date=payload.get("start_date"),
             end_date=payload.get("end_date"),
+            task_kind=payload.get("task_kind", "search"),
+            source_file_name=payload.get("source_file_name"),
             queue_id=queue_id,
             queue_name=queue_name,
             queue_order=index,
             queue_total=total,
+            comment_backfill_progress=payload.get("comment_backfill_progress"),
         )
+        seed_tweets = payload.get("seed_tweets")
+        if isinstance(seed_tweets, list) and seed_tweets:
+            task_manager.update_preview_tweets(task_id, 0, copy.deepcopy(seed_tweets))
         phase = (
             "队列首个任务已创建，正在进入调度队列..."
             if index == 1

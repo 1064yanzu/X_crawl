@@ -3,8 +3,9 @@ import { ExternalLink, Loader2, RefreshCcw, Trash2, X } from "lucide-react";
 import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskCommentBackfillButton";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
-import { canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
 
@@ -21,12 +22,16 @@ function PreviewStat({ label, value, hint }: { label: string; value: string; hin
 function TaskPreviewBody({
     task,
     resumingId,
+    backfillingId,
     onResume,
+    onCommentBackfill,
     onDelete,
 }: {
     task: TaskOut;
     resumingId: string | null;
+    backfillingId: string | null;
     onResume: (taskId: string) => void;
+    onCommentBackfill: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     const platformMeta = getPlatformMeta(task.platform);
@@ -34,6 +39,7 @@ function TaskPreviewBody({
     const coverage = getCoverageSummary(task.time_coverage as Record<string, unknown> | undefined);
     const active = isTaskActive(task.status);
     const backfillSummary = getCommentBackfillSummary(task);
+    const canBackfill = canCreateCommentBackfillFromTask(task);
 
     return (
         <>
@@ -102,6 +108,15 @@ function TaskPreviewBody({
                         </Button>
                     ) : null}
 
+                    {canBackfill ? (
+                        <TaskCommentBackfillButton
+                            variant="outline"
+                            className="rounded-xl"
+                            loading={backfillingId === task.task_id}
+                            onClick={() => onCommentBackfill(task.task_id)}
+                        />
+                    ) : null}
+
                     <Button variant="outline" className="rounded-xl text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10" onClick={() => onDelete(task.task_id)}>
                         <Trash2 className="mr-1.5 h-4 w-4" />
                         删除
@@ -115,12 +130,16 @@ function TaskPreviewBody({
 export function TaskPreviewPanel({
     task,
     resumingId,
+    backfillingId,
     onResume,
+    onCommentBackfill,
     onDelete,
 }: {
     task: TaskOut | null;
     resumingId: string | null;
+    backfillingId: string | null;
     onResume: (taskId: string) => void;
+    onCommentBackfill: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     if (!task) {
@@ -147,7 +166,7 @@ export function TaskPreviewPanel({
                 <h2 className="mt-1 text-xl font-semibold text-foreground">右侧任务预览</h2>
                 <p className="mt-1 text-sm text-muted-foreground">当前任务概览。</p>
             </div>
-            <TaskPreviewBody task={task} resumingId={resumingId} onResume={onResume} onDelete={onDelete} />
+            <TaskPreviewBody task={task} resumingId={resumingId} backfillingId={backfillingId} onResume={onResume} onCommentBackfill={onCommentBackfill} onDelete={onDelete} />
         </Card>
     );
 }
@@ -155,14 +174,18 @@ export function TaskPreviewPanel({
 export function TaskPreviewDrawer({
     task,
     resumingId,
+    backfillingId,
     onClose,
     onResume,
+    onCommentBackfill,
     onDelete,
 }: {
     task: TaskOut | null;
     resumingId: string | null;
+    backfillingId: string | null;
     onClose: () => void;
     onResume: (taskId: string) => void;
+    onCommentBackfill: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     if (!task) return null;
@@ -181,7 +204,7 @@ export function TaskPreviewDrawer({
                 </div>
 
                 <div className="max-h-[calc(92vh-84px)] overflow-y-auto">
-                    <TaskPreviewBody task={task} resumingId={resumingId} onResume={onResume} onDelete={onDelete} />
+                    <TaskPreviewBody task={task} resumingId={resumingId} backfillingId={backfillingId} onResume={onResume} onCommentBackfill={onCommentBackfill} onDelete={onDelete} />
                 </div>
             </div>
         </div>

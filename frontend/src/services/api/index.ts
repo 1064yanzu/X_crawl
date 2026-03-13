@@ -147,6 +147,31 @@ export interface CommentBackfillImportResponse {
     summary: CommentBackfillAnalyzeResponse;
 }
 
+export interface CommentBackfillTaskSourceSummary {
+    source_task_id: string;
+    source_keyword: string;
+    platform: Platform;
+    task_status: string;
+    result_count: number;
+    unique_post_count: number;
+    eligible_posts: number;
+    skipped_zero_comment_posts: number;
+    skipped_invalid_posts: number;
+    skipped_existing_comment_posts: number;
+    deduplicated_posts: number;
+    status: "created" | "skipped";
+    reason?: string | null;
+    created_task_id?: string | null;
+}
+
+export interface CommentBackfillFromTasksResponse {
+    created_count: number;
+    queued: boolean;
+    queue?: TaskQueueOut | null;
+    tasks: TaskOut[];
+    sources: CommentBackfillTaskSourceSummary[];
+}
+
 export interface HealthResponse {
     status: string;
     browser_detected: boolean;
@@ -472,6 +497,21 @@ export const api = {
             formData.append("max_replies_per_tweet", String(params.maxRepliesPerTweet));
             return fetchFormApi<CommentBackfillImportResponse>("/api/v1/comment-backfill/import", formData);
         },
+        fromTasks: (params: {
+            taskIds: string[];
+            replyDepth?: number;
+            maxRepliesPerTweet?: number;
+            queueName?: string;
+        }) =>
+            fetchApi<CommentBackfillFromTasksResponse>("/api/v1/comment-backfill/from-tasks", {
+                method: "POST",
+                body: JSON.stringify({
+                    task_ids: params.taskIds,
+                    reply_depth: params.replyDepth ?? 2,
+                    max_replies_per_tweet: params.maxRepliesPerTweet ?? 0,
+                    queue_name: params.queueName,
+                }),
+            }),
     },
     taskQueues: {
         create: (data: TaskQueueCreateRequest) =>

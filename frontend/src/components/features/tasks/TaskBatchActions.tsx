@@ -1,25 +1,29 @@
-import { Loader2, RefreshCcw, Trash2 } from "lucide-react";
+import { Loader2, MessageCircleMore, RefreshCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function TaskBatchActions({
     searchedCount,
     selectedCount,
     resumableSelectedCount,
+    backfillableSelectedCount,
     allVisibleSelected,
     busyAction,
     onToggleSelectAll,
     onClearSelection,
     onBatchResume,
+    onBatchCommentBackfill,
     onBatchDelete,
 }: {
     searchedCount: number;
     selectedCount: number;
     resumableSelectedCount: number;
+    backfillableSelectedCount: number;
     allVisibleSelected: boolean;
-    busyAction: "resume" | "delete" | null;
+    busyAction: "resume" | "backfill" | "delete" | null;
     onToggleSelectAll: () => void;
     onClearSelection: () => void;
     onBatchResume: () => void;
+    onBatchCommentBackfill: () => void;
     onBatchDelete: () => void;
 }) {
     if (searchedCount === 0) return null;
@@ -30,7 +34,7 @@ export function TaskBatchActions({
                 <div>
                     <h2 className="text-lg font-semibold text-foreground">批量操作</h2>
                     <p className="text-sm text-muted-foreground">
-                        当前筛出 {searchedCount} 个任务，已选择 {selectedCount} 个；其中可继续 {resumableSelectedCount} 个。
+                        当前筛出 {searchedCount} 个任务，已选择 {selectedCount} 个；其中可继续 {resumableSelectedCount} 个，可补采评论 {backfillableSelectedCount} 个。
                     </p>
                 </div>
 
@@ -49,6 +53,15 @@ export function TaskBatchActions({
                     >
                         {busyAction === "resume" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />}
                         批量继续
+                    </Button>
+                    <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={onBatchCommentBackfill}
+                        disabled={backfillableSelectedCount === 0 || busyAction !== null}
+                    >
+                        {busyAction === "backfill" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <MessageCircleMore className="mr-1.5 h-3.5 w-3.5" />}
+                        批量补采评论
                     </Button>
                     <Button
                         variant="outline"

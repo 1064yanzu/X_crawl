@@ -83,6 +83,15 @@ export function getTaskKindLabel(task: Pick<TaskOut, "task_kind">) {
     return task.task_kind === "comment_backfill" ? "评论补采" : "帖子采集";
 }
 
+export function canCreateCommentBackfillFromTask(
+    task: Pick<TaskOut, "task_kind" | "status" | "result_count" | "fetch_replies" | "replies_fetched">,
+) {
+    if (task.task_kind === "comment_backfill") return false;
+    if (task.status !== "done") return false;
+    if (task.result_count <= 0) return false;
+    return !task.fetch_replies || (task.replies_fetched ?? 0) <= 0;
+}
+
 export function getTaskModeLabel(task: Pick<TaskOut, "task_kind" | "product">) {
     if (task.task_kind === "comment_backfill") return "评论补采";
     return task.product || "采集任务";

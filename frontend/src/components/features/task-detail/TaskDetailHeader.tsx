@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { TaskOut } from "@/services/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskCommentBackfillButton";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,8 @@ export function TaskDetailHeader({
     hasLimit,
     progressPct,
     exportReady,
+    canBackfill,
+    backfilling,
     connected,
     lastMessageAt,
     controlling,
@@ -67,6 +70,7 @@ export function TaskDetailHeader({
     onCopyTaskId,
     onCopyKeyword,
     onScrollResults,
+    onBackfill,
     onPause,
     onResume,
     onStop,
@@ -79,6 +83,8 @@ export function TaskDetailHeader({
     hasLimit: boolean;
     progressPct: number;
     exportReady: boolean;
+    canBackfill: boolean;
+    backfilling: boolean;
     connected: boolean;
     lastMessageAt: number | null;
     controlling: "pause" | "resume" | "stop" | null;
@@ -86,6 +92,7 @@ export function TaskDetailHeader({
     onCopyTaskId: () => void;
     onCopyKeyword: () => void;
     onScrollResults: () => void;
+    onBackfill: () => void;
     onPause: () => void;
     onResume: () => void;
     onStop: () => void;
@@ -160,10 +167,21 @@ export function TaskDetailHeader({
                                 </Button>
                             </>
                         ) : (
-                            <Button variant="outline" onClick={onResume} disabled={controlling !== null} className="rounded-xl">
-                                {controlling === "resume" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
-                                继续爬取
-                            </Button>
+                            <>
+                                {canBackfill ? (
+                                    <TaskCommentBackfillButton
+                                        variant="outline"
+                                        className="rounded-xl"
+                                        disabled={controlling !== null}
+                                        loading={backfilling}
+                                        onClick={onBackfill}
+                                    />
+                                ) : null}
+                                <Button variant="outline" onClick={onResume} disabled={controlling !== null || backfilling} className="rounded-xl">
+                                    {controlling === "resume" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
+                                    继续爬取
+                                </Button>
+                            </>
                         )}
                     </div>
                     {exportReady ? <TaskExportPanel resultCount={task.result_count} active={active} exporting={exporting} onExport={onExport} /> : null}

@@ -4,9 +4,10 @@ import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
+import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskCommentBackfillButton";
 import { TaskMetaBlock } from "@/components/features/tasks/TaskMetaBlock";
 import { getPlatformMeta } from "@/lib/platformRegistry";
-import { canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 import type { DensityMode } from "@/hooks/useTaskListState";
 
@@ -17,22 +18,26 @@ export function TaskListCard({
     focused,
     busyAction,
     resumingId,
+    backfillingId,
     onHover,
     onSelect,
     onPreview,
     onResume,
+    onCommentBackfill,
     onDelete,
 }: {
     task: TaskOut;
     density: DensityMode;
     selected: boolean;
     focused: boolean;
-    busyAction: "resume" | "delete" | null;
+    busyAction: "resume" | "backfill" | "delete" | null;
     resumingId: string | null;
+    backfillingId: string | null;
     onHover: (taskId: string) => void;
     onSelect: (taskId: string, checked: boolean) => void;
     onPreview: (taskId: string) => void;
     onResume: (taskId: string) => void;
+    onCommentBackfill: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     const platformMeta = getPlatformMeta(task.platform);
@@ -42,6 +47,7 @@ export function TaskListCard({
     const isBackfill = task.task_kind === "comment_backfill";
     const progressSummary = getCommentBackfillSummary(task);
     const queueLabel = getTaskQueueLabel(task);
+    const canBackfill = canCreateCommentBackfillFromTask(task);
 
     return (
         <Card
@@ -65,6 +71,7 @@ export function TaskListCard({
                             <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
                                 {getTaskKindLabel(task)}
                             </span>
+                            {canBackfill ? <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-700 dark:text-emerald-300">可补采评论</span> : null}
                             {queueLabel ? <span className="rounded-full bg-primary/8 px-2.5 py-1 text-[11px] font-medium text-primary">队列 {queueLabel}</span> : null}
                             <TaskStatusBadge status={task.status} riskState={task.risk_state} size="sm" />
                             <code className="rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">{task.task_id.slice(0, 8)}</code>
@@ -111,6 +118,17 @@ export function TaskListCard({
                                 <Eye className="mr-1.5 h-3.5 w-3.5" />
                                 快速预览
                             </Button>
+
+                            {canBackfill ? (
+                                <TaskCommentBackfillButton
+                                    variant="outline"
+                                    size="sm"
+                                    className="justify-start rounded-xl"
+                                    disabled={busyAction !== null}
+                                    loading={backfillingId === task.task_id}
+                                    onClick={() => onCommentBackfill(task.task_id)}
+                                />
+                            ) : null}
 
                             {canResumeTask(task.status) ? (
                                 <Button

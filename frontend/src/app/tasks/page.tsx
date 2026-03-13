@@ -20,6 +20,7 @@ import { useTasksQuery } from "@/hooks/useTasks";
 import { useTaskListState } from "@/hooks/useTaskListState";
 import { useToast } from "@/components/ui/toast";
 import { getPlatformMeta } from "@/lib/platformRegistry";
+import { canCreateCommentBackfillFromTask } from "@/lib/task-ui";
 
 export default function TasksPage() {
     const { data, isLoading, refetch } = useTasksQuery(5000);
@@ -27,8 +28,9 @@ export default function TasksPage() {
     const { push } = useToast();
     const router = useRouter();
     const [resumingId, setResumingId] = React.useState<string | null>(null);
+    const [backfillingId, setBackfillingId] = React.useState<string | null>(null);
     const [deleteId, setDeleteId] = React.useState<string | null>(null);
-    const [batchAction, setBatchAction] = React.useState<"resume" | "delete" | null>(null);
+    const [batchAction, setBatchAction] = React.useState<"resume" | "backfill" | "delete" | null>(null);
     const [confirmBatchDelete, setConfirmBatchDelete] = React.useState(false);
 
     const {
@@ -52,6 +54,7 @@ export default function TasksPage() {
         setActiveTaskId,
         activePreviewTask,
         selectedSet,
+        selectedTasks,
         selectedCount,
         resumableSelectedTasks,
         resumableSelectedCount,
@@ -62,6 +65,12 @@ export default function TasksPage() {
         openPreview,
         closePreview,
     } = useTaskListState(tasks, (taskId) => router.push(`/tasks/${taskId}`));
+
+    const backfillableSelectedTasks = React.useMemo(
+        () => selectedTasks.filter((task) => canCreateCommentBackfillFromTask(task)),
+        [selectedTasks],
+    );
+    const backfillableSelectedCount = backfillableSelectedTasks.length;
 
     const handleDelete = async (taskId: string) => {
         try {
@@ -92,6 +101,57 @@ export default function TasksPage() {
             });
         } finally {
             setResumingId(null);
+        }
+    };
+
+    const handleCreateCommentBackfill = async (taskIds: string[], options?: { openFirst?: boolean }) => {
+        if (taskIds.length === 0) {
+            push({ type: "info", title: "当前没有可补采评论的任务" });
+            return;
+        }
+
+        const openFirst = options?.openFirst ?? false;
+        const loadingTaskId = taskIds.length === 1 ? taskIds[0] : null;
+        setBackfillingId(loadingTaskId);
+        if (taskIds.length > 1) {
+            setBatchAction("backfill");
+        }
+
+        try {
+            const result = await api.commentBackfill.fromTasks({
+                taskIds,
+                replyDepth: 2,
+                maxRepliesPerTweet: 0,
+                queueName: taskIds.length > 1 ? "评论补采批次" : undefined,
+            });
+
+            const skippedCount = result.sources.filter((item) => item.status === "skipped").length;
+            const description = result.queued
+                ? `已创建 ${result.created_count} 个评论补采任务，并自动进入顺序队列。`
+                : "已创建评论补采任务，默认补采到二级评论。";
+
+            push({
+                type: "success",
+                title: result.queued ? "评论补采队列已创建" : "评论补采任务已创建",
+                description: skippedCount > 0 ? `${description} 另有 ${skippedCount} 个任务因不符合条件被跳过。` : description,
+            });
+
+            clearSelection();
+            await refetch();
+
+            if (openFirst && result.tasks[0]) {
+                router.push(`/tasks/${result.tasks[0].task_id}`);
+            }
+        } catch (err) {
+            console.error(err);
+            push({
+                type: "error",
+                title: "创建评论补采任务失败",
+                description: err instanceof Error ? err.message : String(err),
+            });
+        } finally {
+            setBackfillingId(null);
+            setBatchAction((current) => (current === "backfill" ? null : current));
         }
     };
 
@@ -210,11 +270,13 @@ export default function TasksPage() {
                     searchedCount={searchedTasks.length}
                     selectedCount={selectedCount}
                     resumableSelectedCount={resumableSelectedCount}
+                    backfillableSelectedCount={backfillableSelectedCount}
                     allVisibleSelected={allVisibleSelected}
                     busyAction={batchAction}
                     onToggleSelectAll={toggleSelectAllVisible}
                     onClearSelection={clearSelection}
                     onBatchResume={() => void handleBatchResume()}
+                    onBatchCommentBackfill={() => void handleCreateCommentBackfill(backfillableSelectedTasks.map((task) => task.task_id))}
                     onBatchDelete={() => setConfirmBatchDelete(true)}
                 />
 
@@ -254,10 +316,12 @@ export default function TasksPage() {
                                         focused={activeTaskId === task.task_id}
                                         busyAction={batchAction}
                                         resumingId={resumingId}
+                                        backfillingId={backfillingId}
                                         onHover={setActiveTaskId}
                                         onSelect={toggleSelectTask}
                                         onPreview={openPreview}
                                         onResume={(taskId) => void handleResume(taskId)}
+                                        onCommentBackfill={(taskId) => void handleCreateCommentBackfill([taskId], { openFirst: true })}
                                         onDelete={setDeleteId}
                                     />
                                 ))}
@@ -270,7 +334,9 @@ export default function TasksPage() {
                             <TaskPreviewPanel
                                 task={activePreviewTask}
                                 resumingId={resumingId}
+                                backfillingId={backfillingId}
                                 onResume={(taskId) => void handleResume(taskId)}
+                                onCommentBackfill={(taskId) => void handleCreateCommentBackfill([taskId], { openFirst: true })}
                                 onDelete={setDeleteId}
                             />
                         </div>
@@ -309,8 +375,10 @@ export default function TasksPage() {
             <TaskPreviewDrawer
                 task={previewTask}
                 resumingId={resumingId}
+                backfillingId={backfillingId}
                 onClose={closePreview}
                 onResume={(taskId) => void handleResume(taskId)}
+                onCommentBackfill={(taskId) => void handleCreateCommentBackfill([taskId], { openFirst: true })}
                 onDelete={setDeleteId}
             />
         </>

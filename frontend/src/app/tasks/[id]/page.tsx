@@ -3,7 +3,7 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Database, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -11,10 +11,11 @@ import { useToast } from "@/components/ui/toast";
 import { TaskDetailHeader } from "@/components/features/task-detail/TaskDetailHeader";
 import { TaskDetailOverview } from "@/components/features/task-detail/TaskDetailOverview";
 import { EmptyState } from "@/components/ui/empty-state";
+import { api } from "@/services/api";
 import { useTaskLiveData } from "@/hooks/useTaskLiveData";
 import { useTaskResultState } from "@/hooks/useTaskResultState";
 import { useTaskControls } from "@/hooks/useTaskControls";
-import { isTaskActive } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, isTaskActive } from "@/lib/task-ui";
 import { type TweetRecord } from "@/lib/task-results";
 
 const FailedRepliesPanel = dynamic(
@@ -33,8 +34,10 @@ const TaskResultsSectionLazy = dynamic(
 
 export default function TaskResultPage() {
     const { id } = useParams() as { id: string };
+    const router = useRouter();
     const { push } = useToast();
     const [liveControlState, setLiveControlState] = React.useState<"pause" | "resume" | "stop" | null>(null);
+    const [backfilling, setBackfilling] = React.useState(false);
     const { stream, task, isLoading, refetch, latestActionEvent } = useTaskLiveData(id, liveControlState);
     const { exporting, controlling, confirmStop, setConfirmStop, handleExport, handleControl } = useTaskControls(
         task,
@@ -65,6 +68,37 @@ export default function TaskResultPage() {
         if (!element) return;
         element.scrollIntoView({ behavior: "smooth", block: "start" });
     }, []);
+
+    const handleCreateCommentBackfill = React.useCallback(async () => {
+        if (!task) return;
+        setBackfilling(true);
+        try {
+            const result = await api.commentBackfill.fromTasks({
+                taskIds: [task.task_id],
+                replyDepth: 2,
+                maxRepliesPerTweet: 0,
+            });
+            const created = result.tasks[0];
+            if (!created) {
+                throw new Error("评论补采任务创建失败");
+            }
+            push({
+                type: "success",
+                title: "评论补采任务已创建",
+                description: "默认已开启二级评论补采，正在跳转新任务详情。",
+            });
+            router.push(`/tasks/${created.task_id}`);
+        } catch (err) {
+            console.error(err);
+            push({
+                type: "error",
+                title: "创建评论补采任务失败",
+                description: err instanceof Error ? err.message : String(err),
+            });
+        } finally {
+            setBackfilling(false);
+        }
+    }, [push, router, task]);
 
     if (isLoading && !task) {
         return (
@@ -97,6 +131,7 @@ export default function TaskResultPage() {
     const hasLimit = task.max_count > 0;
     const progressPct = hasLimit ? Math.min(100, Math.round((task.result_count / task.max_count) * 100)) : 0;
     const exportReady = task.result_count > 0;
+    const canBackfill = canCreateCommentBackfillFromTask(task);
 
     return (
         <div className="mx-auto max-w-6xl space-y-6 pb-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
@@ -108,6 +143,8 @@ export default function TaskResultPage() {
                 hasLimit={hasLimit}
                 progressPct={progressPct}
                 exportReady={exportReady}
+                canBackfill={canBackfill}
+                backfilling={backfilling}
                 connected={stream.connected}
                 lastMessageAt={stream.lastMessageAt}
                 controlling={controlling}
@@ -115,6 +152,7 @@ export default function TaskResultPage() {
                 onCopyTaskId={() => void copyText("任务 ID", task.task_id)}
                 onCopyKeyword={() => void copyText("关键词", task.keyword)}
                 onScrollResults={scrollToResults}
+                onBackfill={() => void handleCreateCommentBackfill()}
                 onPause={() => void handleControl("pause")}
                 onResume={() => void handleControl("resume")}
                 onStop={() => setConfirmStop(true)}

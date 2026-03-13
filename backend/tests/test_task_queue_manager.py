@@ -96,3 +96,64 @@ def test_queue_advances_to_next_task_after_terminal(queue_modules, monkeypatch):
     assert refreshed is not None
     assert refreshed["current_task_id"] == second_task_id
     assert refreshed["status"] == "running"
+
+
+def test_create_comment_backfill_queue_preserves_seed_tweets(queue_modules, monkeypatch):
+    manager, queue_manager, _db_module = queue_modules
+    from api.services import crawl_service
+
+    started: list[str] = []
+
+    monkeypatch.setattr(
+        crawl_service,
+        "start_crawler_thread",
+        lambda task_id, task, force_new_browser=False, resume=True: started.append(task_id),
+    )
+
+    seed_tweets = [
+        {
+            "id": "1001",
+            "text": "hello",
+            "url": "https://x.com/openai/status/1001",
+            "author": {"screen_name": "openai", "name": "OpenAI"},
+            "metrics": {"replies": 8},
+        }
+    ]
+    queue = queue_manager.create_queue(
+        name="评论补采批次",
+        task_payloads=[
+            {
+                "keyword": "X 评论补采 · OpenAI",
+                "max_count": 1,
+                "product": "Comments",
+                "platform": "x",
+                "task_kind": "comment_backfill",
+                "comment_backfill_progress": {
+                    "total_posts": 1,
+                    "eligible_posts": 1,
+                },
+                "seed_tweets": seed_tweets,
+            },
+            {
+                "keyword": "X 评论补采 · Anthropic",
+                "max_count": 1,
+                "product": "Comments",
+                "platform": "x",
+                "task_kind": "comment_backfill",
+                "comment_backfill_progress": {
+                    "total_posts": 1,
+                    "eligible_posts": 1,
+                },
+                "seed_tweets": seed_tweets,
+            },
+        ],
+    )
+
+    first_task_id = queue["tasks"][0]["task_id"]
+    first_full = manager.get_task_full(first_task_id)
+
+    assert started == [first_task_id]
+    assert first_full is not None
+    assert first_full["task_kind"] == "comment_backfill"
+    assert first_full["result_count"] == 1
+    assert first_full["tweets"][0]["id"] == "1001"
