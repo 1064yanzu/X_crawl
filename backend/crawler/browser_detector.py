@@ -327,6 +327,18 @@ def detect_all_browsers() -> list[dict]:
     return result
 
 
+def detect_preferred_browser() -> Optional[dict[str, object]]:
+    """返回自动模式下首个兼容的 Chromium 浏览器及其探测到的用户目录。"""
+    browsers = detect_all_browsers()
+    for browser in browsers:
+        if browser["compatible"]:
+            logger.info(f"自动选择兼容浏览器: {browser['name']} → {browser['path']}")
+            return browser
+
+    logger.warning("未自动检测到 Chromium 内核浏览器，请手动配置 BROWSER_EXEC_PATH")
+    return None
+
+
 # ── 向后兼容函数 ──────────────────────────────────────────────────────────────
 
 def detect_browser_path() -> Optional[str]:
@@ -336,13 +348,9 @@ def detect_browser_path() -> Optional[str]:
     Returns:
         浏览器可执行文件的绝对路径，未找到返回 None
     """
-    browsers = detect_all_browsers()
-    for b in browsers:
-        if b["compatible"]:
-            logger.info(f"自动选择兼容浏览器: {b['name']} → {b['path']}")
-            return b["path"]
-
-    logger.warning("未自动检测到 Chromium 内核浏览器，请手动配置 BROWSER_EXEC_PATH")
+    browser = detect_preferred_browser()
+    if browser:
+        return str(browser["path"])
     return None
 
 
@@ -353,14 +361,13 @@ def detect_user_data_path() -> Optional[str]:
     Returns:
         用户数据目录的绝对路径，未找到返回 None
     """
-    browsers = detect_all_browsers()
-    for b in browsers:
-        if b["compatible"] and b["user_data_path"]:
-            # 需要包含 Default Profile
-            default_profile = os.path.join(b["user_data_path"], "Default")
-            if os.path.isdir(default_profile):
-                logger.info(f"找到浏览器用户数据目录: {b['user_data_path']}")
-                return b["user_data_path"]
+    browser = detect_preferred_browser()
+    if browser and browser.get("user_data_path"):
+        user_data_path = str(browser["user_data_path"])
+        default_profile = os.path.join(user_data_path, "Default")
+        if os.path.isdir(default_profile) or os.path.isdir(user_data_path):
+            logger.info(f"找到浏览器用户数据目录: {user_data_path}")
+            return user_data_path
 
     logger.warning("未自动检测到用户数据目录")
     return None

@@ -14,7 +14,7 @@ import time
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from api.schemas.task import TaskOut
-from api.services import task_manager, crawl_service
+from api.services import task_manager, crawl_service, task_queue_manager
 from config import settings
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
@@ -142,6 +142,7 @@ async def pause_task(task_id: str) -> dict:
             status_code=409,
             detail=f"任务当前状态为 '{task['status']}'，无法暂停（仅运行中任务可暂停）",
         )
+    task_queue_manager.mark_task_paused(task_id)
     return {"message": f"任务 {task_id} 暂停信号已发送", "status": "paused"}
 
 
@@ -162,12 +163,16 @@ async def resume_task(task_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
     status = task["status"]
+    can_resume, reason = task_queue_manager.can_resume_task(task_id)
+    if not can_resume:
+        raise HTTPException(status_code=409, detail=reason or "当前任务不允许继续")
 
     # ── 已结束的任务：重启爬虫线程从断点恢复 ──
     if status in ("done", "stopped", "failed"):
         success = task_manager.resume_finished_task(task_id)
         if not success:
             raise HTTPException(status_code=409, detail=f"任务恢复失败: {task_id}")
+        task_queue_manager.mark_task_resuming(task_id)
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
         return {"message": f"任务 {task_id} 已恢复并加入调度队列", "status": "pending"}
 
@@ -182,10 +187,12 @@ async def resume_task(task_id: str) -> dict:
     if task_manager.is_thread_alive(task_id):
         # 爬虫线程还活着，只需发送 run 信号即可唤醒轮询
         task_manager.resume_task(task_id)
+        task_queue_manager.mark_task_resuming(task_id)
         return {"message": f"任务 {task_id} 继续信号已发送", "status": "running"}
     else:
         # 爬虫线程已死（浏览器被关闭等），重新入队从断点恢复
         task_manager.resume_task(task_id)
+        task_queue_manager.mark_task_resuming(task_id)
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
         return {"message": f"任务 {task_id} 已重新加入调度队列，从断点恢复", "status": "pending"}
 

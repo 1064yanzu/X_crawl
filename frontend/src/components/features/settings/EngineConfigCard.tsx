@@ -11,6 +11,7 @@ export function EngineConfigCard() {
     const [headless, setHeadless] = React.useState(false);
     const [backgroundTabs, setBackgroundTabs] = React.useState(false);
     const [foregroundOnLogin, setForegroundOnLogin] = React.useState(true);
+    const [preferUserDataDir, setPreferUserDataDir] = React.useState(true);
     const [stealth, setStealth] = React.useState(true);
     const [linuxHardening, setLinuxHardening] = React.useState(true);
     const [pushIntervalMs, setPushIntervalMs] = React.useState(800);
@@ -28,6 +29,7 @@ export function EngineConfigCard() {
                 setHeadless(Boolean(data.browser_headless));
                 setBackgroundTabs(Boolean(data.browser_background_tabs ?? false));
                 setForegroundOnLogin(Boolean(data.browser_foreground_on_login ?? true));
+                setPreferUserDataDir(Boolean(data.browser_prefer_user_data_dir ?? true));
                 setStealth(Boolean(data.browser_stealth_enabled ?? true));
                 setLinuxHardening(Boolean(data.browser_linux_hardening ?? true));
                 setPushIntervalMs(Number(data.crawler_live_push_interval_ms ?? 800));
@@ -49,6 +51,7 @@ export function EngineConfigCard() {
                 browser_headless: headless,
                 browser_background_tabs: backgroundTabs,
                 browser_foreground_on_login: foregroundOnLogin,
+                browser_prefer_user_data_dir: preferUserDataDir,
                 browser_stealth_enabled: stealth,
                 browser_linux_hardening: linuxHardening,
                 crawler_live_push_interval_ms: Math.min(5000, Math.max(200, pushIntervalMs)),
@@ -83,6 +86,7 @@ export function EngineConfigCard() {
                             <ToggleField label="无头模式" description="浏览器在后台静默运行，适合服务器环境。" checked={headless} onChange={setHeadless} disabled={saving} />
                             <ToggleField label="后台标签页" description="任务创建的新标签页保持在后台，减少前台打断。" checked={backgroundTabs} onChange={setBackgroundTabs} disabled={saving} />
                             <ToggleField label="登录时切回前台" description="遇到登录或风控时主动唤起浏览器，便于人工介入。" checked={foregroundOnLogin} onChange={setForegroundOnLogin} disabled={saving} />
+                            <ToggleField label="优先复用用户目录" description="启动新浏览器时优先使用真实用户数据目录；若目录正被占用，会自动回退到隔离 Profile。" checked={preferUserDataDir} onChange={setPreferUserDataDir} disabled={saving} />
                             <ToggleField label="Stealth 伪装" description="增强浏览器伪装配置，优先提高平台兼容性。" checked={stealth} onChange={setStealth} disabled={saving} />
                             <ToggleField label="Linux 加固" description="针对 Linux 服务器启用更稳妥的浏览器运行参数。" checked={linuxHardening} onChange={setLinuxHardening} disabled={saving} />
                             <ToggleField label="资源压力自动节流" description="内存或 CPU 逼近阈值时自动放慢翻页节奏。" checked={autoThrottle} onChange={setAutoThrottle} disabled={saving} />

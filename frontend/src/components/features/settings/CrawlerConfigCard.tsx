@@ -76,6 +76,12 @@ export function CrawlerConfigCard() {
                                 onChange={(checked) => setConfig((prev) => ({ ...prev, crawler_dedup_enabled: checked }))}
                             />
                             <ToggleField
+                                label="微博 OR 自动拆分"
+                                description="关闭时保留关键词里的 OR/括号原样；开启后仅把简单 A OR B 拆成多个子查询。"
+                                checked={Boolean(config.weibo_auto_split_or_keywords)}
+                                onChange={(checked) => setConfig((prev) => ({ ...prev, weibo_auto_split_or_keywords: checked }))}
+                            />
+                            <ToggleField
                                 label="X 自动时间分割"
                                 description="跨度较大时自动拆分搜索窗口，提高稳定性。"
                                 checked={Boolean(config.x_auto_time_split_enabled)}

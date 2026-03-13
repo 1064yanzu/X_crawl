@@ -6,7 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useTasksQuery } from "@/hooks/useTasks";
 import { getPlatformMeta } from "@/lib/platformRegistry";
-import { formatDateTime, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
+import { formatDateTime, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel, isTaskActive } from "@/lib/task-ui";
 import type { TaskOut } from "@/services/api";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ function TaskCompactCard({ task }: { task: TaskOut }) {
     const platformMeta = getPlatformMeta(task.platform);
     const lastUpdated = formatDateTime(getTaskLastUpdated(task));
     const phase = getTaskPhase(task);
+    const queueLabel = getTaskQueueLabel(task);
 
     return (
         <Link
@@ -27,6 +28,10 @@ function TaskCompactCard({ task }: { task: TaskOut }) {
                         <span className={cn("inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium", platformMeta.badgeClass)}>
                             {platformMeta.label}
                         </span>
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                            {getTaskKindLabel(task)}
+                        </span>
+                        {queueLabel ? <span className="rounded-full bg-primary/8 px-2 py-0.5 text-[11px] font-medium text-primary">队列 {queueLabel}</span> : null}
                         <TaskStatusBadge status={task.status} riskState={task.risk_state} size="sm" />
                     </div>
                     <h4 className="line-clamp-2 text-sm font-semibold text-foreground">{task.keyword}</h4>

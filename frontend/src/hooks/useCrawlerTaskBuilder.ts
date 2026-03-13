@@ -32,12 +32,12 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
 
     const finalKeyword = React.useMemo(() => {
         let query = keyword.trim();
-        const advancedQuery = buildAdvancedQuery(advancedParams);
+        const advancedQuery = platform === "x" ? buildAdvancedQuery(advancedParams) : "";
         if (advancedQuery) {
             query = query ? `${query} ${advancedQuery}` : advancedQuery;
         }
         return query;
-    }, [advancedParams, keyword]);
+    }, [advancedParams, keyword, platform]);
 
     const xSplitNotice = React.useMemo(() => {
         if (platform !== "x" || !advancedParams.since || !advancedParams.until) return null;
@@ -52,31 +52,45 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         return `检测到 ${days} 天跨度，将按时间窗口自动切片，提升覆盖率与稳定性。`;
     }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays]);
 
-    const submit = React.useCallback(async () => {
+    const buildPayload = React.useCallback((): SearchRequest => {
         if (!finalKeyword) {
-            push({ type: "error", title: "请输入检索关键词或高级筛选条件" });
-            return;
+            throw new Error("请输入检索关键词或高级筛选条件");
         }
         if (platform === "weibo" && startDate && endDate && startDate > endDate) {
-            push({ type: "error", title: "微博时间范围无效", description: "结束日期需要晚于开始日期。" });
-            return;
+            throw new Error("微博时间范围无效，结束日期需要晚于开始日期。");
         }
 
+        return {
+            keyword: finalKeyword,
+            max_count: maxCount,
+            product,
+            resume: true,
+            fetch_replies: fetchReplies,
+            max_replies_per_tweet: 0,
+            reply_depth: replyDepth,
+            crawl_strategy: STRATEGY,
+            platform,
+            start_date: platform === "weibo" && startDate ? startDate : undefined,
+            end_date: platform === "weibo" && endDate ? endDate : undefined,
+        };
+    }, [endDate, fetchReplies, finalKeyword, maxCount, platform, product, replyDepth, startDate]);
+
+    const resetDraft = React.useCallback(() => {
+        setKeyword("");
+        setAdvancedParams(DEFAULT_ADVANCED_PARAMS);
+        setAdvancedOpen(false);
+        setFetchReplies(false);
+        setReplyDepth(2);
+        setMaxCount(0);
+        setProduct(productDefault);
+        setStartDate("");
+        setEndDate("");
+    }, [productDefault]);
+
+    const submit = React.useCallback(async () => {
         setLoading(true);
         try {
-            const payload: SearchRequest = {
-                keyword: finalKeyword,
-                max_count: maxCount,
-                product,
-                resume: true,
-                fetch_replies: fetchReplies,
-                max_replies_per_tweet: 0,
-                reply_depth: replyDepth,
-                crawl_strategy: STRATEGY,
-                platform,
-                start_date: platform === "weibo" && startDate ? startDate : undefined,
-                end_date: platform === "weibo" && endDate ? endDate : undefined,
-            };
+            const payload = buildPayload();
             const task = await api.search.create(payload);
             push({ type: "success", title: "采集任务已提交", description: "正在跳转到任务详情。" });
             router.push(`/tasks/${task.task_id}`);
@@ -91,7 +105,7 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         } finally {
             setLoading(false);
         }
-    }, [endDate, fetchReplies, finalKeyword, maxCount, platform, product, push, replyDepth, router, startDate]);
+    }, [buildPayload, push, router]);
 
     return {
         loading,
@@ -118,6 +132,8 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         finalKeyword,
         xSplitNotice,
         canSubmit: Boolean(finalKeyword),
+        buildPayload,
+        resetDraft,
         submit,
     };
 }

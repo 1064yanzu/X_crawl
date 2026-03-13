@@ -7,11 +7,12 @@ import logging
 import threading
 from typing import Optional
 
-from api.services import task_manager
+from api.services import task_manager, task_queue_manager
 from api.services.failed_replies_db import record_failed_replies_batch
 from api.services.task_scheduler import scheduler
 from crawler.browser import ensure_browser_alive, reset_browser
 from crawler.crawl_signals import ChallengeSignal, LoginRequiredPause, StopSignal
+from crawler.comment_backfill_runner import run_comment_backfill_task
 from crawler import telemetry
 from crawler.runtime_metrics import clear_metrics, get_metrics, start_task_metrics
 from crawler.x_searcher import search
@@ -55,6 +56,8 @@ def _build_worker_payload(
         platform=task.get("platform", "x"),
         start_date=task.get("start_date"),
         end_date=task.get("end_date"),
+        task_kind=task.get("task_kind", "search"),
+        source_file_name=task.get("source_file_name"),
     )
 
 
@@ -93,7 +96,10 @@ def run_search_task(
     platform: str = "x",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    task_kind: str = "search",
+    source_file_name: Optional[str] = None,
 ) -> None:
+    final_status = "failed"
     task_manager.update_task_status(task_id, "running")
     task_manager.update_task_phase(task_id, "任务开始执行，正在初始化浏览器...")
     telemetry.record_event(task_id, "crawler_started", status="running", phase="任务开始执行，正在初始化浏览器...")
@@ -101,7 +107,8 @@ def run_search_task(
 
     logger.info(
         f"任务开始: task_id={task_id}, keyword='{keyword}', "
-        f"strategy={crawl_strategy}, fetch_replies={fetch_replies}, resume={resume}"
+        f"strategy={crawl_strategy}, fetch_replies={fetch_replies}, "
+        f"resume={resume}, task_kind={task_kind}"
     )
 
     if force_new_browser:
@@ -109,12 +116,60 @@ def run_search_task(
     ensure_browser_alive()
 
     try:
-        if platform == "weibo":
+        if task_kind == "comment_backfill":
+            task_manager.update_task_phase(task_id, "已读取导入文件，开始补采评论...")
+            result = run_comment_backfill_task(
+                task_id=task_id,
+                platform=platform,
+                max_replies_per_tweet=max_replies_per_tweet,
+                reply_depth=reply_depth,
+            )
+            runtime_metrics = get_metrics(task_id)
+            quality_state = "partial" if result.failed_records else "complete"
+            task_manager.update_task_phase(
+                task_id,
+                f"评论补采完成，累计处理 {result.progress.get('processed_posts', 0)} 条帖子，"
+                f"评论 {result.replies_fetched} 条",
+            )
+            task_manager.update_comment_backfill_progress(task_id, result.progress)
+            task_manager.update_task_result(
+                task_id=task_id,
+                tweets=result.tweets,
+                resumed=resume,
+                replies_fetched=result.replies_fetched,
+                quality_state=quality_state,
+                runtime_metrics=runtime_metrics,
+            )
+            if result.failed_records:
+                _persist_failed_records(task_id, result.failed_records)
+            telemetry.record_event(
+                task_id,
+                "comment_backfill_finished",
+                status="done",
+                phase="评论补采完成",
+                delta_tweets=len(result.tweets),
+                delta_replies=result.replies_fetched,
+                meta={
+                    "failed_posts": result.progress.get("failed_posts", 0),
+                    "source_file_name": source_file_name,
+                },
+            )
+            logger.info(
+                "评论补采完成: task_id=%s, 平台=%s, 帖子=%s, 评论=%s, 失败=%s",
+                task_id,
+                platform,
+                len(result.tweets),
+                result.replies_fetched,
+                result.progress.get("failed_posts", 0),
+            )
+            final_status = "done"
+        elif platform == "weibo":
             result = _run_weibo_task(
                 task_id=task_id,
                 keyword=keyword,
                 max_count=max_count,
                 task_id_param=task_id,
+                resume=resume,
                 start_date=start_date,
                 end_date=end_date,
                 fetch_replies=fetch_replies,
@@ -123,6 +178,10 @@ def run_search_task(
             replies_fetched = sum(
                 int((tweet.get("comment_stats") or {}).get("fetched_total_count", 0))
                 for tweet in tweets
+            )
+            task_manager.update_task_phase(
+                task_id,
+                f"微博任务执行完成，累计 {len(tweets)} 条微博，评论 {replies_fetched} 条"
             )
             task_manager.update_task_result(
                 task_id=task_id,
@@ -138,6 +197,13 @@ def run_search_task(
                 delta_tweets=len(tweets),
                 delta_replies=replies_fetched,
             )
+            logger.info(
+                "微博任务完成: task_id=%s, 微博=%s, 评论=%s",
+                task_id,
+                len(tweets),
+                replies_fetched,
+            )
+            final_status = "done"
         else:
             result = search(
                 keyword=keyword,
@@ -175,7 +241,9 @@ def run_search_task(
                 f"任务完成: task_id={task_id}, 推文={len(result.tweets)}, "
                 f"回复={result.replies_fetched}, 失败评论={len(result.failed_replies)}"
             )
+            final_status = "done"
     except LoginRequiredPause as e:
+        final_status = "paused"
         phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
         task_manager.update_task_risk_paused(
             task_id,
@@ -200,6 +268,7 @@ def run_search_task(
             f"session_mode={e.session_mode}, profile={e.effective_user_data_path}"
         )
     except ChallengeSignal as e:
+        final_status = "paused"
         if e.risk_state == "login_required":
             phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
         elif e.risk_state == "search_blocked":
@@ -232,6 +301,7 @@ def run_search_task(
             meta={"saved_tweets": len(tweets_so_far)},
         )
         logger.info(f"任务主动终止: task_id={task_id}, 已保存 {len(tweets_so_far)} 条数据, reason={e}")
+        final_status = "stopped"
     except Exception as e:
         error_msg = str(e)
         # 先尝试保存已采集的数据（即使任务出错，已抓到的推文不应丢失）
@@ -258,9 +328,12 @@ def run_search_task(
                 meta={"error": error_msg[:240]},
             )
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
+        final_status = "failed"
     finally:
         task_manager.clear_thread(task_id)
         scheduler.mark_done(task_id)
+        if final_status in ("done", "failed", "stopped"):
+            task_queue_manager.notify_task_terminal(task_id, final_status)
         clear_metrics(task_id)
 
 
@@ -269,6 +342,7 @@ def _run_weibo_task(
     keyword: str,
     max_count: int,
     task_id_param: str,
+    resume: bool = True,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     fetch_replies: bool = False,
@@ -281,7 +355,7 @@ def _run_weibo_task(
         keyword=keyword,
         max_count=max_count,
         task_id=task_id_param,
-        resume=True,
+        resume=resume,
         fetch_comments=fetch_replies,
         start_date=start_date,
         end_date=end_date,

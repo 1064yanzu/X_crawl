@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/v1/export", tags=["数据导出"])
 # 导出字段定义（顺序即为列顺序）
 EXPORT_FIELDS = [
     # 基础
+    ("platform", "平台"),
     ("id", "推文ID"),
     ("conversation_id", "对话ID"),
     ("created_at", "发布时间"),
@@ -159,6 +160,7 @@ def _flatten_tweet(tweet: dict) -> dict:
 def _collect_replies(
     replies: list[dict],
     parent_id: str,
+    platform: str,
     parent_author_name: str = "",
 ) -> list[dict]:
     """递归收集回复/评论，标注数据类型、所属推文ID、回复目标用户。
@@ -171,6 +173,7 @@ def _collect_replies(
         reply_copy = dict(reply)
         reply_copy["row_type"] = "评论"
         reply_copy["parent_tweet_id"] = parent_id
+        reply_copy.setdefault("platform", platform)
 
         # 如果评论自身没有 reply_to 信息（一级评论）,
         # 自动填充为原帖/父级作者
@@ -191,18 +194,20 @@ def _collect_replies(
             all_replies.extend(_collect_replies(
                 nested,
                 parent_id=parent_id,
+                platform=platform,
                 parent_author_name=current_author or parent_author_name,
             ))
     return all_replies
 
 
-def _collect_all_rows(tweets: list[dict]) -> list[dict]:
+def _collect_all_rows(tweets: list[dict], platform: str) -> list[dict]:
     """递归收集所有推文及其嵌套评论/回复，展平为独立行，并标注数据类型"""
     all_rows = []
     for tweet in tweets:
         tweet_copy = dict(tweet)
         tweet_copy["row_type"] = "原帖"
         tweet_copy["parent_tweet_id"] = ""
+        tweet_copy.setdefault("platform", platform)
         all_rows.append(tweet_copy)
 
         # 提取原帖作者名称，供一级评论自动填充 reply_to
@@ -219,6 +224,7 @@ def _collect_all_rows(tweets: list[dict]) -> list[dict]:
             all_rows.extend(_collect_replies(
                 replies,
                 parent_id=tweet.get("id", ""),
+                platform=platform,
                 parent_author_name=parent_author_name,
             ))
     return all_rows
@@ -234,7 +240,7 @@ def _get_task_data(task_id: str) -> tuple[dict, list[dict]]:
         raise HTTPException(status_code=204, detail="该任务暂无数据可供导出")
 
     # 递归展平：将每条推文的 replies（及嵌套 replies）加入导出列表
-    all_rows = _collect_all_rows(tweets)
+    all_rows = _collect_all_rows(tweets, task.get("platform", "x"))
 
     tweet_count = len(tweets)
     reply_count = len(all_rows) - tweet_count
@@ -327,6 +333,7 @@ def _build_excel(tweets: list[dict]) -> bytes:
 
     # 自动列宽（与 EXPORT_FIELDS 一一对应）
     col_widths = [
+        10,  # 平台
         20,  # 推文ID
         20,  # 对话ID
         20,  # 发布时间

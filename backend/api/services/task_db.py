@@ -76,9 +76,17 @@ def init_db(db_path: str | Path) -> None:
                 resumed               INTEGER DEFAULT 0,
                 fetch_replies         INTEGER DEFAULT 0,
                 max_replies_per_tweet INTEGER DEFAULT 0,
+                reply_depth          INTEGER DEFAULT 2,
                 crawl_strategy        TEXT DEFAULT 'dfs',
                 replies_fetched       INTEGER DEFAULT 0,
                 crawl_phase           TEXT DEFAULT '',
+                task_kind             TEXT DEFAULT 'search',
+                source_file_name      TEXT,
+                queue_id              TEXT,
+                queue_name            TEXT,
+                queue_order           INTEGER,
+                queue_total           INTEGER,
+                comment_backfill_progress_json TEXT DEFAULT '{}',
                 segment_progress_json TEXT DEFAULT '{}',
                 tweets_json           TEXT DEFAULT '[]',
                 preview_json          TEXT DEFAULT '[]'
@@ -92,6 +100,16 @@ def init_db(db_path: str | Path) -> None:
                 task_id      TEXT PRIMARY KEY,
                 tweets_json  TEXT NOT NULL DEFAULT '[]',
                 updated_at   TEXT NOT NULL
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_queues (
+                queue_id      TEXT PRIMARY KEY,
+                payload_json  TEXT NOT NULL,
+                updated_at    TEXT NOT NULL
             )
             """
         )
@@ -152,7 +170,15 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "platform", "TEXT DEFAULT 'x'")
         _ensure_column(conn, "tasks", "start_date", "TEXT")
         _ensure_column(conn, "tasks", "end_date", "TEXT")
+        _ensure_column(conn, "tasks", "reply_depth", "INTEGER DEFAULT 2")
         _ensure_column(conn, "tasks", "segment_progress_json", "TEXT DEFAULT '{}'")
+        _ensure_column(conn, "tasks", "task_kind", "TEXT DEFAULT 'search'")
+        _ensure_column(conn, "tasks", "source_file_name", "TEXT")
+        _ensure_column(conn, "tasks", "queue_id", "TEXT")
+        _ensure_column(conn, "tasks", "queue_name", "TEXT")
+        _ensure_column(conn, "tasks", "queue_order", "INTEGER")
+        _ensure_column(conn, "tasks", "queue_total", "INTEGER")
+        _ensure_column(conn, "tasks", "comment_backfill_progress_json", "TEXT DEFAULT '{}'")
 
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
@@ -186,9 +212,20 @@ def _summary_params(task: dict) -> dict:
         "resumed": int(task.get("resumed", False)),
         "fetch_replies": int(task.get("fetch_replies", False)),
         "max_replies_per_tweet": task.get("max_replies_per_tweet", 0),
+        "reply_depth": task.get("reply_depth", 2),
         "crawl_strategy": task.get("crawl_strategy", "dfs"),
         "replies_fetched": task.get("replies_fetched", 0),
         "crawl_phase": task.get("crawl_phase", ""),
+        "task_kind": task.get("task_kind", "search"),
+        "source_file_name": task.get("source_file_name"),
+        "queue_id": task.get("queue_id"),
+        "queue_name": task.get("queue_name"),
+        "queue_order": task.get("queue_order"),
+        "queue_total": task.get("queue_total"),
+        "comment_backfill_progress_json": json.dumps(
+            task.get("comment_backfill_progress", {}),
+            ensure_ascii=False,
+        ),
         "segment_progress_json": json.dumps(task.get("segment_progress", {}), ensure_ascii=False),
         "preview_json": json.dumps(task.get("preview_tweets", []), ensure_ascii=False),
         "platform": task.get("platform", "x"),
@@ -206,7 +243,9 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             result_count, current_page, created_at, finished_at,
             error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
             resumed, fetch_replies, max_replies_per_tweet,
-            crawl_strategy, replies_fetched, crawl_phase,
+            reply_depth, crawl_strategy, replies_fetched, crawl_phase,
+            task_kind, source_file_name, queue_id, queue_name,
+            queue_order, queue_total, comment_backfill_progress_json,
             segment_progress_json, preview_json,
             platform, start_date, end_date
         ) VALUES (
@@ -214,7 +253,9 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             :result_count, :current_page, :created_at, :finished_at,
             :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
             :resumed, :fetch_replies, :max_replies_per_tweet,
-            :crawl_strategy, :replies_fetched, :crawl_phase,
+            :reply_depth, :crawl_strategy, :replies_fetched, :crawl_phase,
+            :task_kind, :source_file_name, :queue_id, :queue_name,
+            :queue_order, :queue_total, :comment_backfill_progress_json,
             :segment_progress_json, :preview_json,
             :platform, :start_date, :end_date
         )
@@ -236,9 +277,17 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             resumed = excluded.resumed,
             fetch_replies = excluded.fetch_replies,
             max_replies_per_tweet = excluded.max_replies_per_tweet,
+            reply_depth = excluded.reply_depth,
             crawl_strategy = excluded.crawl_strategy,
             replies_fetched = excluded.replies_fetched,
             crawl_phase = excluded.crawl_phase,
+            task_kind = excluded.task_kind,
+            source_file_name = excluded.source_file_name,
+            queue_id = excluded.queue_id,
+            queue_name = excluded.queue_name,
+            queue_order = excluded.queue_order,
+            queue_total = excluded.queue_total,
+            comment_backfill_progress_json = excluded.comment_backfill_progress_json,
             segment_progress_json = excluded.segment_progress_json,
             preview_json = excluded.preview_json,
             platform = excluded.platform,
@@ -368,7 +417,9 @@ def load_all_tasks() -> list[dict]:
                     result_count, current_page, created_at, finished_at,
                     error, risk_state, quality_state, runtime_metrics_json, time_coverage_json,
                     last_event_at, resumed, fetch_replies, max_replies_per_tweet,
-                    crawl_strategy, replies_fetched, crawl_phase, segment_progress_json,
+                    reply_depth, crawl_strategy, replies_fetched, crawl_phase,
+                    task_kind, source_file_name, queue_id, queue_name,
+                    queue_order, queue_total, comment_backfill_progress_json, segment_progress_json,
                     preview_json, platform, start_date, end_date
                 FROM tasks
                 ORDER BY created_at DESC
@@ -384,9 +435,18 @@ def load_all_tasks() -> list[dict]:
             d["quality_state"] = d.get("quality_state") or "complete"
             d["runtime_metrics"] = json.loads(d.pop("runtime_metrics_json", "{}") or "{}")
             d["time_coverage"] = json.loads(d.pop("time_coverage_json", "{}") or "{}")
+            d["comment_backfill_progress"] = json.loads(
+                d.pop("comment_backfill_progress_json", "{}") or "{}"
+            )
             d["segment_progress"] = json.loads(d.pop("segment_progress_json", "{}") or "{}")
             d["resumed"] = bool(d["resumed"])
             d["fetch_replies"] = bool(d["fetch_replies"])
+            d.setdefault("task_kind", "search")
+            d.setdefault("source_file_name", None)
+            d.setdefault("queue_id", None)
+            d.setdefault("queue_name", None)
+            d.setdefault("queue_order", None)
+            d.setdefault("queue_total", None)
             d.setdefault("platform", "x")
             tasks.append(d)
         logger.info(f"已从数据库加载 {len(tasks)} 条历史任务摘要")
@@ -407,3 +467,49 @@ def delete_task(task_id: str) -> None:
             conn.commit()
     except Exception as e:
         logger.error(f"删除任务记录失败 task_id={task_id}: {e}", exc_info=True)
+
+
+def save_task_queue(queue_data: dict) -> None:
+    if _DB_PATH is None:
+        return
+    try:
+        with _get_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO task_queues (queue_id, payload_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(queue_id) DO UPDATE SET
+                    payload_json = excluded.payload_json,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    queue_data["queue_id"],
+                    json.dumps(queue_data, ensure_ascii=False),
+                    _now_iso(),
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"持久化任务队列失败 queue_id={queue_data.get('queue_id')}: {e}", exc_info=True)
+
+
+def load_task_queues() -> list[dict]:
+    if _DB_PATH is None or not _DB_PATH.exists():
+        return []
+    try:
+        with _get_conn() as conn:
+            rows = conn.execute(
+                "SELECT payload_json FROM task_queues ORDER BY updated_at DESC"
+            ).fetchall()
+        queues: list[dict] = []
+        for row in rows:
+            try:
+                decoded = json.loads(row["payload_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(decoded, dict) and decoded.get("queue_id"):
+                queues.append(decoded)
+        return queues
+    except Exception as e:
+        logger.error(f"读取任务队列失败: {e}", exc_info=True)
+        return []

@@ -43,6 +43,10 @@ class Settings(BaseSettings):
         default=True,
         description="检测到登录失效或风控需人工处理时，是否自动将浏览器切到前台"
     )
+    browser_prefer_user_data_dir: bool = Field(
+        default=True,
+        description="启动新浏览器时，是否优先复用检测到的真实用户数据目录；被占用时自动回退到爬虫专用 Profile"
+    )
     browser_load_mode: str = Field(
         default="normal", description="页面加载模式：normal/eager"
     )
@@ -245,6 +249,10 @@ class Settings(BaseSettings):
     )
     weibo_sub_comment_max_pages: int = Field(
         default=200, description="微博单条顶层评论子评论最大翻页数（安全上限）"
+    )
+    weibo_auto_split_or_keywords: bool = Field(
+        default=False,
+        description="微博是否自动拆分简单 OR 关键词（关闭时按原样保留完整查询）",
     )
     x_auto_time_split_enabled: bool = Field(
         default=True, description="X 搜索是否自动启用时间分割"

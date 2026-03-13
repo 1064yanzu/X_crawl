@@ -65,6 +65,7 @@ class CrawlerConfig(BaseModel):
     browser_headless: Optional[bool] = Field(default=None, description="是否无头模式")
     browser_background_tabs: Optional[bool] = Field(default=None, description="是否在后台创建新标签页")
     browser_foreground_on_login: Optional[bool] = Field(default=None, description="登录失效或风控时是否自动前台唤起浏览器")
+    browser_prefer_user_data_dir: Optional[bool] = Field(default=None, description="启动新浏览器时是否优先复用检测到的真实用户数据目录")
     browser_proxy: Optional[str] = Field(default=None, description="代理配置，格式：http://ip:port")
     browser_load_mode: Optional[str] = Field(default=None, description="页面加载模式：normal 或 eager")
     browser_block_images: Optional[bool] = Field(default=None, description="是否禁用图片加载")
@@ -75,6 +76,10 @@ class CrawlerConfig(BaseModel):
     raw_responses_max_pages: int = Field(default=0, ge=0, le=20000, description="每任务最多保存页数（0=不限制）")
     # 去重配置
     crawler_dedup_enabled: bool = Field(default=True, description="是否启用跨任务推文去重（缓存命中后跳过重复抓取）")
+    weibo_auto_split_or_keywords: bool = Field(
+        default=False,
+        description="是否自动拆分微博简单 OR 关键词；关闭时按原样保留完整查询",
+    )
     x_auto_time_split_enabled: bool = Field(default=True, description="是否启用 X 搜索自动时间分割")
     x_time_split_trigger_days: int = Field(default=30, ge=1, le=3650, description="X 搜索时间跨度达到该值后触发时间分割")
     x_time_split_window_days: int = Field(default=14, ge=1, le=365, description="X 限定抓取模式下的时间窗天数")
@@ -120,6 +125,7 @@ async def get_crawler_config() -> CrawlerConfig:
         browser_headless=settings.browser_headless,
         browser_background_tabs=settings.browser_background_tabs,
         browser_foreground_on_login=settings.browser_foreground_on_login,
+        browser_prefer_user_data_dir=settings.browser_prefer_user_data_dir,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
@@ -128,6 +134,7 @@ async def get_crawler_config() -> CrawlerConfig:
         save_raw_responses=settings.save_raw_responses,
         raw_responses_max_pages=settings.raw_responses_max_pages,
         crawler_dedup_enabled=settings.crawler_dedup_enabled,
+        weibo_auto_split_or_keywords=settings.weibo_auto_split_or_keywords,
         x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
         x_time_split_trigger_days=settings.x_time_split_trigger_days,
         x_time_split_window_days=settings.x_time_split_window_days,
@@ -185,6 +192,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.save_raw_responses = config.save_raw_responses
     settings.raw_responses_max_pages = config.raw_responses_max_pages
     settings.crawler_dedup_enabled = config.crawler_dedup_enabled
+    settings.weibo_auto_split_or_keywords = config.weibo_auto_split_or_keywords
     settings.x_auto_time_split_enabled = config.x_auto_time_split_enabled
     settings.x_time_split_trigger_days = config.x_time_split_trigger_days
     settings.x_time_split_window_days = config.x_time_split_window_days
@@ -222,6 +230,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "save_raw_responses": settings.save_raw_responses,
         "raw_responses_max_pages": settings.raw_responses_max_pages,
         "crawler_dedup_enabled": settings.crawler_dedup_enabled,
+        "weibo_auto_split_or_keywords": settings.weibo_auto_split_or_keywords,
         "x_auto_time_split_enabled": settings.x_auto_time_split_enabled,
         "x_time_split_trigger_days": settings.x_time_split_trigger_days,
         "x_time_split_window_days": settings.x_time_split_window_days,
@@ -239,6 +248,9 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     if config.browser_foreground_on_login is not None:
         settings.browser_foreground_on_login = config.browser_foreground_on_login
         persist["browser_foreground_on_login"] = config.browser_foreground_on_login
+    if config.browser_prefer_user_data_dir is not None:
+        settings.browser_prefer_user_data_dir = config.browser_prefer_user_data_dir
+        persist["browser_prefer_user_data_dir"] = config.browser_prefer_user_data_dir
 
     if config.browser_proxy is not None:
         settings.browser_proxy = config.browser_proxy
@@ -293,6 +305,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         browser_headless=settings.browser_headless,
         browser_background_tabs=settings.browser_background_tabs,
         browser_foreground_on_login=settings.browser_foreground_on_login,
+        browser_prefer_user_data_dir=settings.browser_prefer_user_data_dir,
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
@@ -301,6 +314,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         save_raw_responses=settings.save_raw_responses,
         raw_responses_max_pages=settings.raw_responses_max_pages,
         crawler_dedup_enabled=settings.crawler_dedup_enabled,
+        weibo_auto_split_or_keywords=settings.weibo_auto_split_or_keywords,
         x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
         x_time_split_trigger_days=settings.x_time_split_trigger_days,
         x_time_split_window_days=settings.x_time_split_window_days,

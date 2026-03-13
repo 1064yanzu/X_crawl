@@ -16,7 +16,7 @@ export function useTaskLiveData(
         Boolean(controlling),
         stream.fallbackPolling || !stream.task,
     );
-    const task = stream.task ?? polledTask;
+    const task = stream.task ?? polledTask ?? null;
     const fallbackToastShown = React.useRef(false);
 
     React.useEffect(() => {

@@ -4,7 +4,7 @@ import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
-import { canResumeTask, formatDateTime, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
+import { canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +33,7 @@ function TaskPreviewBody({
     const phase = getTaskPhase(task);
     const coverage = getCoverageSummary(task.time_coverage as Record<string, unknown> | undefined);
     const active = isTaskActive(task.status);
+    const backfillSummary = getCommentBackfillSummary(task);
 
     return (
         <>
@@ -40,6 +41,7 @@ function TaskPreviewBody({
                 <div className="space-y-3">
                     <div className="flex flex-wrap items-center gap-2">
                         <span className={cn("inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium", platformMeta.badgeClass)}>{platformMeta.label}</span>
+                        <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">{getTaskKindLabel(task)}</span>
                         <TaskStatusBadge status={task.status} riskState={task.risk_state} size="sm" />
                         {active ? <span className="rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary">进行中</span> : null}
                     </div>
@@ -57,7 +59,11 @@ function TaskPreviewBody({
 
                 <div className="grid gap-3 sm:grid-cols-2">
                     <PreviewStat label="结果数" value={`${task.result_count}`} hint={task.max_count > 0 ? `目标 ${task.max_count}` : "未设上限"} />
-                    <PreviewStat label="当前页" value={task.current_page > 0 ? `${task.current_page}` : "--"} hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "仍在持续更新"} />
+                    <PreviewStat
+                        label={task.task_kind === "comment_backfill" ? "补采进度" : "当前页"}
+                        value={task.task_kind === "comment_backfill" ? (backfillSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
+                        hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "仍在持续更新"}
+                    />
                     <PreviewStat label="覆盖时间" value={coverage} hint={formatDateTime(task.created_at)} />
                     <PreviewStat label="风控状态" value={getRiskStateLabel(task.risk_state)} hint={task.status === "done" ? "任务已完成" : active ? getRiskStateHint(task.risk_state) : "可在详情页复盘"} />
                 </div>
@@ -67,6 +73,7 @@ function TaskPreviewBody({
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                         <span className="rounded-full bg-muted px-2.5 py-1">平台 {platformMeta.label}</span>
                         <span className="rounded-full bg-muted px-2.5 py-1">状态 {task.status}</span>
+                        <span className="rounded-full bg-muted px-2.5 py-1">类型 {getTaskKindLabel(task)}</span>
                         <span className="rounded-full bg-muted px-2.5 py-1">结果 {task.result_count}</span>
                         {task.fetch_replies ? <span className="rounded-full bg-muted px-2.5 py-1">已抓评论</span> : null}
                         {task.resumed ? <span className="rounded-full bg-muted px-2.5 py-1">曾恢复过</span> : null}

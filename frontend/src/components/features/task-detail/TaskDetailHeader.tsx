@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
-import { formatDateTime, getTaskPhase } from "@/lib/task-ui";
+import { formatDateTime, getCommentBackfillSummary, getTaskKindLabel, getTaskModeLabel, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
 
 function SummaryCard({ label, value, hint }: { label: string; value: string; hint: string }) {
     return (
@@ -93,6 +93,7 @@ export function TaskDetailHeader({
 }) {
     const platformMeta = getPlatformMeta(task.platform);
     const phase = getTaskPhase(task);
+    const backfillSummary = getCommentBackfillSummary(task);
 
     return (
         <div className="rounded-[1.75rem] border border-border/60 bg-card/90 p-6 shadow-sm backdrop-blur-sm sm:p-8">
@@ -104,6 +105,7 @@ export function TaskDetailHeader({
                     </Link>
                     <div className="flex flex-wrap items-center gap-2">
                         <span className={cn("inline-flex rounded-full px-3 py-1 text-xs font-medium", platformMeta.badgeClass)}>{platformMeta.label}</span>
+                        <Badge variant="secondary" className="rounded-full px-3 py-1">{getTaskKindLabel(task)}</Badge>
                         <TaskStatusBadge status={task.status} riskState={task.risk_state} />
                         {task.fetch_replies ? <Badge variant="secondary" className="rounded-full px-3 py-1">评论抓取开启</Badge> : null}
                     </div>
@@ -169,10 +171,18 @@ export function TaskDetailHeader({
             </div>
 
             <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <SummaryCard label="结果数量" value={hasLimit ? `${task.result_count} / ${task.max_count}` : `${task.result_count}`} hint={hasLimit ? `完成度 ${progressPct}%` : "未设置数量上限"} />
+                <SummaryCard
+                    label={task.task_kind === "comment_backfill" ? "补采结果" : "结果数量"}
+                    value={task.task_kind === "comment_backfill" ? (backfillSummary || `${task.result_count}`) : hasLimit ? `${task.result_count} / ${task.max_count}` : `${task.result_count}`}
+                    hint={hasLimit ? `完成度 ${progressPct}%` : "未设置数量上限"}
+                />
                 <SummaryCard label="实时通道" value={task.status === "pending" ? `队列第 ${task.queue_position ?? "-"} 位` : connected ? "实时推送中" : "轮询模式"} hint={lastMessageAt ? `最近消息 ${new Date(lastMessageAt).toLocaleTimeString("zh-CN")}` : "等待首条消息"} />
                 <SummaryCard label="创建时间" value={formatDateTime(task.created_at)} hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "任务仍在进行中"} />
-                <SummaryCard label="任务模式" value={task.product} hint={task.fetch_replies ? `评论深度 ${task.reply_depth}` : "仅采集结构化结果"} />
+                <SummaryCard
+                    label="任务模式"
+                    value={getTaskModeLabel(task)}
+                    hint={getTaskQueueLabel(task) || (task.task_kind === "comment_backfill" ? `来源文件 ${task.source_file_name ?? "--"}` : task.fetch_replies ? `评论深度 ${task.reply_depth}` : "仅采集结构化结果")}
+                />
             </div>
         </div>
     );

@@ -59,6 +59,17 @@ def _default_segment_progress() -> dict:
     }
 
 
+def _default_comment_backfill_progress() -> dict:
+    return {
+        "total_posts": 0,
+        "eligible_posts": 0,
+        "processed_posts": 0,
+        "skipped_posts": 0,
+        "succeeded_posts": 0,
+        "failed_posts": 0,
+    }
+
+
 def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: int) -> dict:
     return {
         "task_id": task_id,
@@ -86,6 +97,13 @@ def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: 
         "max_replies_per_tweet": 20,
         "reply_depth": 2,
         "replies_fetched": 0,
+        "task_kind": "search",
+        "source_file_name": None,
+        "queue_id": None,
+        "queue_name": None,
+        "queue_order": None,
+        "queue_total": None,
+        "comment_backfill_progress": _default_comment_backfill_progress(),
         "preview_tweets": [],
         "crawl_phase": "",
         "platform": "x",
@@ -299,6 +317,13 @@ def _ensure_db() -> None:
                 task.setdefault("preview_tweets", [])
                 task.setdefault("replies_fetched", 0)
                 task.setdefault("reply_depth", 2)
+                task.setdefault("task_kind", "search")
+                task.setdefault("source_file_name", None)
+                task.setdefault("queue_id", None)
+                task.setdefault("queue_name", None)
+                task.setdefault("queue_order", None)
+                task.setdefault("queue_total", None)
+                task.setdefault("comment_backfill_progress", _default_comment_backfill_progress())
                 task.setdefault("debug_screenshot", None)
 
                 if task["status"] in ("running", "pending", "paused"):
@@ -486,6 +511,13 @@ def create_task(
     platform: str = "x",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    task_kind: str = "search",
+    source_file_name: Optional[str] = None,
+    queue_id: Optional[str] = None,
+    queue_name: Optional[str] = None,
+    queue_order: Optional[int] = None,
+    queue_total: Optional[int] = None,
+    comment_backfill_progress: Optional[dict] = None,
 ) -> str:
     _ensure_db()
     from crawler import telemetry
@@ -520,6 +552,16 @@ def create_task(
             "max_replies_per_tweet": max_replies_per_tweet,
             "reply_depth": reply_depth,
             "crawl_strategy": crawl_strategy,
+            "task_kind": task_kind,
+            "source_file_name": source_file_name,
+            "queue_id": queue_id,
+            "queue_name": queue_name,
+            "queue_order": queue_order,
+            "queue_total": queue_total,
+            "comment_backfill_progress": {
+                **_default_comment_backfill_progress(),
+                **(comment_backfill_progress or {}),
+            },
             "platform": platform,
             "start_date": start_date,
             "end_date": end_date,
@@ -537,11 +579,33 @@ def create_task(
             "product": product,
             "fetch_replies": fetch_replies,
             "crawl_strategy": crawl_strategy,
+            "task_kind": task_kind,
+            "source_file_name": source_file_name,
+            "queue_id": queue_id,
+            "queue_order": queue_order,
+            "queue_total": queue_total,
         },
     )
     _persist_force(tid, full=False)
     logger.info(f"任务已创建/重置: task_id={tid}, strategy={crawl_strategy}, fetch_replies={fetch_replies}")
     return tid
+
+
+def restore_waiting_task(task_id: str, phase: str) -> bool:
+    _ensure_db()
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task or is_thread_alive(task_id):
+            return False
+        task["status"] = "pending"
+        task["finished_at"] = None
+        task["error"] = None
+        task["risk_state"] = "none"
+        task["quality_state"] = "complete"
+        task["crawl_phase"] = phase
+        _touch(task)
+    _persist_force(task_id, full=False)
+    return True
 
 
 def get_task(task_id: str) -> Optional[dict]:
@@ -633,6 +697,17 @@ def update_task_segment_progress(task_id: str, progress: Optional[dict]) -> None
         if not task:
             return
         task["segment_progress"] = merged
+        _touch(task)
+    _persist(task_id)
+
+
+def update_comment_backfill_progress(task_id: str, progress: Optional[dict]) -> None:
+    merged = {**_default_comment_backfill_progress(), **(progress or {})}
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        task["comment_backfill_progress"] = merged
         _touch(task)
     _persist(task_id)
 

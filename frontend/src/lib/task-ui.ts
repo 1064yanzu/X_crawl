@@ -78,3 +78,25 @@ export function getTaskPhase(task: Pick<TaskOut, "crawl_phase" | "latest_action"
 export function getTaskLastUpdated(task: Pick<TaskOut, "last_event_at" | "finished_at" | "created_at">) {
     return task.last_event_at ?? task.finished_at ?? task.created_at;
 }
+
+export function getTaskKindLabel(task: Pick<TaskOut, "task_kind">) {
+    return task.task_kind === "comment_backfill" ? "评论补采" : "帖子采集";
+}
+
+export function getTaskModeLabel(task: Pick<TaskOut, "task_kind" | "product">) {
+    if (task.task_kind === "comment_backfill") return "评论补采";
+    return task.product || "采集任务";
+}
+
+export function getCommentBackfillSummary(task: Pick<TaskOut, "task_kind" | "comment_backfill_progress">) {
+    if (task.task_kind !== "comment_backfill") return "";
+    const progress = task.comment_backfill_progress;
+    if (!progress) return "等待导入结果";
+    return `${progress.processed_posts}/${progress.eligible_posts} 已处理`;
+}
+
+export function getTaskQueueLabel(task: Pick<TaskOut, "queue_total" | "queue_order" | "queue_name">) {
+    if (!task.queue_total || task.queue_total <= 1 || !task.queue_order) return "";
+    const prefix = task.queue_name ? `${task.queue_name} · ` : "";
+    return `${prefix}${task.queue_order}/${task.queue_total}`;
+}

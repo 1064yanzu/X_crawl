@@ -10,18 +10,27 @@
 """
 from __future__ import annotations
 
-import json
 import logging
-import time
 import random
+import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-logger = logging.getLogger(__name__)
+from .checkpoints import (
+    build_date_split_checkpoint,
+    build_page_checkpoint,
+    checkpoint_date_ranges,
+    checkpoint_mode,
+    checkpoint_next_segment_index,
+    checkpoint_page,
+    checkpoint_posts,
+    load_checkpoint,
+    same_query_scope,
+    save_checkpoint,
+)
 
-CHECKPOINTS_DIR = Path(__file__).parent.parent.parent / "checkpoints"
+logger = logging.getLogger(__name__)
 
 # 重试配置
 MAX_PAGE_RETRIES = 2
@@ -36,24 +45,24 @@ class WeiboSearchResult:
     resumed: bool = False
 
 
-def _load_checkpoint(task_id: str) -> dict:
-    """加载断点。"""
-    path = CHECKPOINTS_DIR / f"weibo_{task_id}.json"
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
 
+def _merge_posts_by_id(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    merged = list(existing)
+    seen_ids = {
+        str(post.get("id") or post.get("mid") or "").strip()
+        for post in merged
+        if isinstance(post, dict)
+    }
 
-def _save_checkpoint(task_id: str, state: dict) -> None:
-    """保存断点。"""
-    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = CHECKPOINTS_DIR / f"weibo_{task_id}.json"
-    path.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    for post in incoming:
+        post_id = str(post.get("id") or post.get("mid") or "").strip()
+        if post_id and post_id in seen_ids:
+            continue
+        if post_id:
+            seen_ids.add(post_id)
+        merged.append(post)
+
+    return merged
 
 
 def _check_anti_crawl(tab) -> Optional[str]:
@@ -156,6 +165,28 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 3.0) -> tuple[Optional[s
         return None, error_str
 
 
+def _prepare_search_session(tab, task_id: Optional[str]) -> None:
+    """为微博搜索准备一次性会话状态，避免每个时间分段都回到主页重新初始化。"""
+    from api.services.task_manager import update_task_phase
+    from .auth import ensure_weibo_login, ensure_search_cookies
+
+    if task_id:
+        update_task_phase(task_id, "正在验证微博登录状态...")
+    try:
+        logged_in = ensure_weibo_login(tab)
+        if not logged_in:
+            logger.warning("微博未登录，将以游客模式尝试（可能受限）")
+    except Exception as e:
+        logger.warning(f"微博登录验证失败: {e}")
+
+    if task_id:
+        update_task_phase(task_id, "正在准备搜索 Cookie...")
+    try:
+        ensure_search_cookies(tab)
+    except Exception as e:
+        logger.warning(f"搜索 Cookie 准备失败: {e}")
+
+
 def search(
     keyword: str,
     max_count: int = 100,
@@ -165,6 +196,9 @@ def search(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     _parent_accumulated: Optional[list] = None,
+    _tab=None,
+    _session_ready: bool = False,
+    _query_plan_resolved: bool = False,
 ) -> WeiboSearchResult:
     """
     微博关键词搜索主入口。
@@ -173,39 +207,106 @@ def search(
     from config import settings
     from api.services.task_manager import update_preview_tweets, update_task_phase
     from crawler.utils import check_signal, StopSignal, jittered_sleep, interruptible_sleep
-    from .auth import ensure_weibo_login, ensure_search_cookies
     from .html_parser import parse_search_page
     from .comment_fetcher import fetch_comments as do_fetch_comments
+    from .query_planner import build_weibo_query_plan
 
-    tab = _get_tab_with_retry()
+    owns_tab = _tab is None
+    tab = _tab or _get_tab_with_retry()
 
     try:
-        # ── 1. 登录验证 ──────────────────────────────────────────
-        if task_id:
-            update_task_phase(task_id, "正在验证微博登录状态...")
-        try:
-            logged_in = ensure_weibo_login(tab)
-            if not logged_in:
-                logger.warning("微博未登录，将以游客模式尝试（可能受限）")
-        except Exception as e:
-            logger.warning(f"微博登录验证失败: {e}")
+        # ── 1. 登录验证 + 搜索 Cookie 准备（仅首次执行）──────────────
+        if not _session_ready:
+            _prepare_search_session(tab, task_id)
 
-        # ── 2. 搜索 Cookie 准备 ──────────────────────────────────
-        if task_id:
-            update_task_phase(task_id, "正在准备搜索 Cookie...")
-        try:
-            ensure_search_cookies(tab)
-        except Exception as e:
-            logger.warning(f"搜索 Cookie 准备失败: {e}")
+        if not _query_plan_resolved:
+            query_plan = build_weibo_query_plan(
+                keyword,
+                enable_or_split=bool(getattr(settings, "weibo_auto_split_or_keywords", False)),
+            )
+            if query_plan.uses_or_split:
+                logger.info(
+                    "微博查询包含 OR，拆分为 %s 个子查询: %s",
+                    len(query_plan.variants),
+                    " | ".join(query_plan.variants),
+                )
+                if task_id:
+                    update_task_phase(
+                        task_id,
+                        f"微博关键词包含 OR，已拆分为 {len(query_plan.variants)} 个子查询并自动去重..."
+                    )
+
+                merged_posts: list[dict] = []
+                seen_post_ids: set[str] = set()
+                try:
+                    for variant_idx, variant_keyword in enumerate(query_plan.variants):
+                        check_signal(task_id)
+                        if task_id:
+                            update_task_phase(
+                                task_id,
+                                f"正在执行微博子查询 {variant_idx + 1}/{len(query_plan.variants)}: {variant_keyword}"
+                            )
+                        remaining = max(0, max_count - len(merged_posts)) if max_count > 0 else 0
+                        if max_count > 0 and remaining <= 0:
+                            break
+
+                        variant_result = search(
+                            keyword=variant_keyword,
+                            max_count=remaining if max_count > 0 else 0,
+                            task_id=task_id,
+                            resume=False,
+                            fetch_comments=fetch_comments,
+                            start_date=start_date,
+                            end_date=end_date,
+                            _tab=tab,
+                            _session_ready=True,
+                            _query_plan_resolved=True,
+                        )
+                        for post in variant_result.posts:
+                            post_id = str(post.get("id") or post.get("mid") or "").strip()
+                            if post_id and post_id in seen_post_ids:
+                                continue
+                            if post_id:
+                                seen_post_ids.add(post_id)
+                            merged_posts.append(post)
+
+                        if task_id:
+                            update_preview_tweets(
+                                task_id,
+                                current_page=variant_idx + 1,
+                                tweets_for_preview=merged_posts,
+                            )
+                except StopSignal:
+                    logger.info(f"收到停止信号，微博 OR 子查询终止 task_id={task_id}")
+                else:
+                    logger.info(
+                        "微博 OR 查询完成：%s 个子查询，去重后 %s 条",
+                        len(query_plan.variants),
+                        len(merged_posts),
+                    )
+                return WeiboSearchResult(posts=merged_posts, resumed=False)
 
         # ── 3. 断点恢复 ──────────────────────────────────────────
         checkpoint: dict = {}
         if resume and task_id:
-            checkpoint = _load_checkpoint(task_id)
+            loaded_checkpoint = load_checkpoint(task_id)
+            if same_query_scope(
+                loaded_checkpoint,
+                keyword=keyword,
+                start_date=start_date,
+                end_date=end_date,
+            ):
+                checkpoint = loaded_checkpoint
+            elif loaded_checkpoint:
+                logger.info(
+                    "微博断点与当前查询范围不一致，忽略旧断点: task_id=%s",
+                    task_id,
+                )
 
-        start_page: int = checkpoint.get("page", 1)
-        all_posts_dicts: list[dict] = checkpoint.get("posts", [])
+        start_page: int = checkpoint_page(checkpoint, 1)
+        all_posts_dicts: list[dict] = checkpoint_posts(checkpoint)
         resumed = bool(checkpoint)
+        ckpt_mode = checkpoint_mode(checkpoint)
 
         max_pages: int = settings.weibo_max_pages
         page_interval: float = settings.weibo_search_page_interval
@@ -213,15 +314,34 @@ def search(
         # ── 日期范围分割（突破 50 页限制）────────────────────────
         # 注意：如果 _parent_accumulated 不为 None，说明当前调用已经是父级分段的子段，
         # 不应再次分割，否则会导致 43 个月 × 10 个子段 = 430 个切片的指数级膨胀
-        if start_date and end_date and not resumed and _parent_accumulated is None:
+        if start_date and end_date and _parent_accumulated is None:
             from .date_splitter import split_date_range
-            date_ranges = split_date_range(
-                start_date, 
-                end_date, 
-                max_pages=max_pages,
-                target_count=max_count,
+
+            date_ranges = checkpoint_date_ranges(checkpoint) if ckpt_mode == "date_split" else []
+            if not date_ranges:
+                date_ranges = split_date_range(
+                    start_date,
+                    end_date,
+                    max_pages=max_pages,
+                    target_count=max_count,
+                )
+
+            should_use_date_split = len(date_ranges) > 1 and (
+                not resumed or ckpt_mode == "date_split" or start_page > max_pages
             )
-            if len(date_ranges) > 1:
+            if should_use_date_split:
+                if resumed and ckpt_mode == "page" and start_page > max_pages:
+                    logger.info(
+                        "检测到旧页级断点已到达微博 50 页上限，自动切换为时间分段续爬: task_id=%s, next_page=%s",
+                        task_id,
+                        start_page,
+                    )
+                    if task_id:
+                        update_task_phase(
+                            task_id,
+                            "检测到已达到微博单次 50 页上限，自动切换为时间分段继续抓取...",
+                        )
+
                 logger.info(
                     f"日期范围已分割为 {len(date_ranges)} 个子范围，将依次搜索"
                 )
@@ -230,9 +350,17 @@ def search(
                         task_id,
                         f"日期范围已拆分为 {len(date_ranges)} 段，开始分段搜索..."
                     )
-                all_results: list[dict] = []
+                all_results: list[dict] = checkpoint_posts(checkpoint)
+                start_segment_index = checkpoint_next_segment_index(checkpoint) if ckpt_mode == "date_split" else 0
+                if all_results and task_id:
+                    update_preview_tweets(
+                        task_id,
+                        current_page=start_segment_index,
+                        tweets_for_preview=all_results,
+                    )
                 try:
-                    for seg_idx, (seg_start, seg_end) in enumerate(date_ranges):
+                    for seg_idx in range(start_segment_index, len(date_ranges)):
+                        seg_start, seg_end = date_ranges[seg_idx]
                         check_signal(task_id)  # 支持 pause/stop
                         if task_id:
                             update_task_phase(
@@ -253,8 +381,10 @@ def search(
                             start_date=seg_start,
                             end_date=seg_end,
                             _parent_accumulated=all_results,
+                            _tab=tab,
+                            _session_ready=True,
                         )
-                        all_results.extend(seg_result.posts)
+                        all_results = _merge_posts_by_id(all_results, seg_result.posts)
                         # 实时推送合并后的预览
                         if task_id:
                             update_preview_tweets(
@@ -262,9 +392,26 @@ def search(
                                 current_page=seg_idx + 1,
                                 tweets_for_preview=all_results,
                             )
+                            save_checkpoint(
+                                task_id,
+                                build_date_split_checkpoint(
+                                    keyword=keyword,
+                                    start_date=start_date,
+                                    end_date=end_date,
+                                    date_ranges=date_ranges,
+                                    next_segment_index=seg_idx + 1,
+                                    posts=all_results,
+                                ),
+                            )
                 except StopSignal:
                     logger.info(f"收到停止信号，微博分段搜索终止 task_id={task_id}")
-                return WeiboSearchResult(posts=all_results, resumed=False)
+                else:
+                    logger.info(
+                        "微博分段搜索完成：共 %s 段，累计 %s 条",
+                        len(date_ranges),
+                        len(all_results),
+                    )
+                return WeiboSearchResult(posts=all_results, resumed=resumed)
 
         # 构建搜索 URL
         kw_encoded = quote(keyword)
@@ -415,14 +562,16 @@ def search(
                     )
 
                 # 保存检查点
-                if task_id:
-                    _save_checkpoint(
+                if task_id and _parent_accumulated is None:
+                    save_checkpoint(
                         task_id,
-                        {
-                            "page": page + 1,
-                            "posts": all_posts_dicts,
-                            "keyword": keyword,
-                        },
+                        build_page_checkpoint(
+                            keyword=keyword,
+                            next_page=page + 1,
+                            posts=all_posts_dicts,
+                            start_date=start_date,
+                            end_date=end_date,
+                        ),
                     )
 
                 # 检查是否达到 max_count
@@ -438,8 +587,8 @@ def search(
             logger.info(f"收到停止信号，微博搜索终止 task_id={task_id}")
 
     finally:
-        # 确保搜索 tab 在函数结束后关闭
-        if tab is not None:
+        # 仅最外层调用负责关闭搜索 tab，分段子调用复用当前 tab。
+        if owns_tab and tab is not None:
             try:
                 tab.close()
                 logger.debug("微博搜索 tab 已关闭")

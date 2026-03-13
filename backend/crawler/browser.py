@@ -25,7 +25,7 @@ from typing import Optional
 from DrissionPage import Chromium, ChromiumOptions
 
 from config import settings
-from crawler.browser_detector import detect_all_browsers, detect_browser_path, get_browser_by_id
+from crawler.browser_detector import detect_all_browsers, detect_preferred_browser, get_browser_by_id
 from crawler.platform_runtime import (
     should_force_headless_on_linux,
     linux_headless_args_enabled,
@@ -380,7 +380,7 @@ def _resolve_browser_paths() -> tuple[Optional[str], Optional[str]]:
     优先级：
     1. settings.browser_exec_path（手动配置的路径，最高优先级）
     2. settings.browser_selected_id（用户在 UI 中选择的浏览器）
-    3. 自动检测（detect_browser_path）
+    3. 自动检测（首个兼容 Chromium 浏览器）
 
     Returns:
         (exec_path, user_data_path)  任一可能为 None
@@ -390,18 +390,25 @@ def _resolve_browser_paths() -> tuple[Optional[str], Optional[str]]:
         logger.info(f"使用手动配置的浏览器路径: {settings.browser_exec_path}")
         return settings.browser_exec_path, settings.browser_user_data_path or None
 
+    prefer_user_data_dir = bool(getattr(settings, "browser_prefer_user_data_dir", True))
+
     # 2. 用户在 UI 选择的浏览器
     selected_id = settings.browser_selected_id
     if selected_id:
         browser_info = get_browser_by_id(selected_id)
         if browser_info and browser_info["compatible"]:
             logger.info(f"使用用户选择的浏览器: {browser_info['name']} ({selected_id})")
-            return browser_info["path"], browser_info.get("user_data_path")
+            selected_user_data = browser_info.get("user_data_path") if prefer_user_data_dir else None
+            return browser_info["path"], selected_user_data
         else:
             logger.warning(f"用户选择的浏览器 '{selected_id}' 不可用或不兼容，回退到自动检测")
 
     # 3. 自动检测
-    return detect_browser_path(), None
+    preferred_browser = detect_preferred_browser()
+    if preferred_browser:
+        detected_user_data = preferred_browser.get("user_data_path") if prefer_user_data_dir else None
+        return str(preferred_browser["path"]), detected_user_data
+    return None, None
 
 
 def _create_browser() -> Chromium:

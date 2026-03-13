@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { TaskMetaBlock } from "@/components/features/tasks/TaskMetaBlock";
 import { getPlatformMeta } from "@/lib/platformRegistry";
-import { canResumeTask, formatDateTime, getCoverageSummary, getTaskLastUpdated, getTaskPhase } from "@/lib/task-ui";
+import { canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 import type { DensityMode } from "@/hooks/useTaskListState";
 
@@ -39,6 +39,9 @@ export function TaskListCard({
     const phase = getTaskPhase(task);
     const lastUpdated = formatDateTime(getTaskLastUpdated(task));
     const coverage = getCoverageSummary(task.time_coverage as Record<string, unknown> | undefined);
+    const isBackfill = task.task_kind === "comment_backfill";
+    const progressSummary = getCommentBackfillSummary(task);
+    const queueLabel = getTaskQueueLabel(task);
 
     return (
         <Card
@@ -59,6 +62,10 @@ export function TaskListCard({
                             <span className={cn("inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium", platformMeta.badgeClass)}>
                                 {platformMeta.label}
                             </span>
+                            <span className="rounded-full bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                                {getTaskKindLabel(task)}
+                            </span>
+                            {queueLabel ? <span className="rounded-full bg-primary/8 px-2.5 py-1 text-[11px] font-medium text-primary">队列 {queueLabel}</span> : null}
                             <TaskStatusBadge status={task.status} riskState={task.risk_state} size="sm" />
                             <code className="rounded-full bg-muted px-2.5 py-1 text-[11px] text-muted-foreground">{task.task_id.slice(0, 8)}</code>
                         </div>
@@ -70,7 +77,11 @@ export function TaskListCard({
 
                         <div className={cn("grid md:grid-cols-2 xl:grid-cols-4", density === "compact" ? "gap-2" : "gap-3")}>
                             <TaskMetaBlock label="结果数" value={`${task.result_count}`} compact={density === "compact"} />
-                            <TaskMetaBlock label="当前页" value={task.current_page > 0 ? `${task.current_page}` : "--"} compact={density === "compact"} />
+                            <TaskMetaBlock
+                                label={isBackfill ? "补采进度" : "当前页"}
+                                value={isBackfill ? (progressSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
+                                compact={density === "compact"}
+                            />
                             <TaskMetaBlock label="覆盖时间" value={coverage} compact={density === "compact"} />
                             <TaskMetaBlock label="最近更新" value={lastUpdated} compact={density === "compact"} />
                         </div>

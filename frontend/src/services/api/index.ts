@@ -3,6 +3,7 @@ export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "/xapi").replace
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "paused" | "stopped";
 export type Platform = "x" | "weibo";
 export type CrawlStrategy = "bfs" | "dfs";
+export type TaskKind = "search" | "comment_backfill";
 export type RiskState = "none" | "challenge" | "rate_limited" | "login_required" | "search_blocked";
 export type QualityState = "complete" | "partial" | "interrupted";
 
@@ -42,6 +43,20 @@ export interface TaskOut {
     max_replies_per_tweet: number;
     reply_depth: number;
     replies_fetched: number;
+    task_kind?: TaskKind;
+    source_file_name?: string | null;
+    queue_id?: string | null;
+    queue_name?: string | null;
+    queue_order?: number | null;
+    queue_total?: number | null;
+    comment_backfill_progress?: {
+        total_posts: number;
+        eligible_posts: number;
+        processed_posts: number;
+        skipped_posts: number;
+        succeeded_posts: number;
+        failed_posts: number;
+    };
     tweets: Record<string, unknown>[];
     preview_tweets: Record<string, unknown>[];  // 实时预览（最多 N 条）
     crawl_phase: string;  // 爬虫实时阶段描述，如 "等待第 1 页数据包..."
@@ -75,6 +90,61 @@ export interface SearchRequest {
     platform?: Platform;
     start_date?: string;
     end_date?: string;
+}
+
+export interface TaskQueueItemRequest {
+    keyword: string;
+    max_count: number;
+    product: "Top" | "Latest" | "Photos" | "Videos";
+    fetch_replies?: boolean;
+    max_replies_per_tweet?: number;
+    reply_depth?: number;
+    crawl_strategy?: CrawlStrategy;
+    platform?: Platform;
+    start_date?: string;
+    end_date?: string;
+}
+
+export interface TaskQueueCreateRequest {
+    name?: string;
+    tasks: TaskQueueItemRequest[];
+}
+
+export interface TaskQueueOut {
+    queue_id: string;
+    name: string;
+    status: "running" | "paused" | "completed";
+    created_at: string;
+    started_at?: string | null;
+    finished_at?: string | null;
+    current_task_id?: string | null;
+    total_tasks: number;
+    completed_tasks: number;
+    running_tasks: number;
+    pending_tasks: number;
+    failed_tasks: number;
+    stopped_tasks: number;
+    tasks: TaskOut[];
+}
+
+export interface CommentBackfillAnalyzeResponse {
+    file_name: string;
+    platform: Platform;
+    total_rows: number;
+    original_post_rows: number;
+    unique_post_count: number;
+    eligible_posts: number;
+    skipped_non_post_rows: number;
+    skipped_zero_comment_posts: number;
+    skipped_invalid_posts: number;
+    deduplicated_posts: number;
+    has_platform_column: boolean;
+    detected_platform?: Platform | null;
+}
+
+export interface CommentBackfillImportResponse {
+    task: TaskOut;
+    summary: CommentBackfillAnalyzeResponse;
 }
 
 export interface HealthResponse {
@@ -117,12 +187,14 @@ export interface CrawlerConfig {
     browser_headless?: boolean;        // 是否无头模式
     browser_background_tabs?: boolean; // 是否后台创建新标签页
     browser_foreground_on_login?: boolean; // 登录/风控时是否自动前台唤起浏览器
+    browser_prefer_user_data_dir?: boolean; // 启动新浏览器时优先复用真实用户目录
     browser_proxy?: string;            // 代理配置
     browser_load_mode?: "normal" | "eager";
     browser_block_images?: boolean;
     browser_stealth_enabled?: boolean;
     browser_linux_hardening?: boolean;
     crawler_dedup_enabled?: boolean;   // 跨任务推文去重
+    weibo_auto_split_or_keywords?: boolean;
     x_auto_time_split_enabled?: boolean;
     x_time_split_trigger_days?: number;
     x_time_split_window_days?: number;
@@ -301,6 +373,28 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
     return response.json();
 }
 
+async function fetchFormApi<T>(endpoint: string, formData: FormData): Promise<T> {
+    const url = `${API_BASE_URL}${endpoint}`;
+    const response = await fetch(url, {
+        method: "POST",
+        body: formData,
+    });
+
+    if (!response.ok) {
+        let errorDetail = response.statusText;
+        try {
+            const errorData = await response.json();
+            if (errorData.detail) errorDetail = errorData.detail;
+            else if (errorData.message) errorDetail = errorData.message;
+        } catch {
+            // Ignore JSON parse err
+        }
+        throw new Error(`API Error: ${response.status} - ${errorDetail}`);
+    }
+
+    return response.json();
+}
+
 /**
  * 下载文件（触发浏览器 Save Dialog）
  */
@@ -357,6 +451,36 @@ export const api = {
             }),
         get: (taskId: string, includeTweets = true) =>
             fetchApi<TaskOut>(`/api/v1/search/${taskId}?include_tweets=${includeTweets ? "true" : "false"}`),
+    },
+    commentBackfill: {
+        analyze: (file: File, platform: Platform) => {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("platform", platform);
+            return fetchFormApi<CommentBackfillAnalyzeResponse>("/api/v1/comment-backfill/analyze", formData);
+        },
+        import: (params: {
+            file: File;
+            platform: Platform;
+            replyDepth: number;
+            maxRepliesPerTweet: number;
+        }) => {
+            const formData = new FormData();
+            formData.append("file", params.file);
+            formData.append("platform", params.platform);
+            formData.append("reply_depth", String(params.replyDepth));
+            formData.append("max_replies_per_tweet", String(params.maxRepliesPerTweet));
+            return fetchFormApi<CommentBackfillImportResponse>("/api/v1/comment-backfill/import", formData);
+        },
+    },
+    taskQueues: {
+        create: (data: TaskQueueCreateRequest) =>
+            fetchApi<TaskQueueOut>("/api/v1/task-queues", {
+                method: "POST",
+                body: JSON.stringify(data),
+            }),
+        list: () => fetchApi<TaskQueueOut[]>("/api/v1/task-queues"),
+        get: (queueId: string) => fetchApi<TaskQueueOut>(`/api/v1/task-queues/${queueId}`),
     },
     tasks: {
         list: (includePayload = false) =>

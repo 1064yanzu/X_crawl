@@ -8,6 +8,7 @@ TaskStatus = Literal["pending", "running", "done", "failed", "paused", "stopped"
 CrawlStrategy = Literal["bfs", "dfs"]
 RiskState = Literal["none", "challenge", "rate_limited", "login_required", "search_blocked"]
 QualityState = Literal["complete", "partial", "interrupted"]
+TaskKind = Literal["search", "comment_backfill"]
 
 
 class SearchRequest(BaseModel):
@@ -58,6 +59,15 @@ class SegmentProgress(BaseModel):
     current_until: Optional[str] = Field(default=None, description="当前时间段结束日期 YYYY-MM-DD")
 
 
+class CommentBackfillProgress(BaseModel):
+    total_posts: int = Field(default=0, description="导入文件中的去重原帖总数")
+    eligible_posts: int = Field(default=0, description="需要补采评论的帖子数")
+    processed_posts: int = Field(default=0, description="已处理的帖子数")
+    skipped_posts: int = Field(default=0, description="已跳过的帖子数")
+    succeeded_posts: int = Field(default=0, description="补采成功的帖子数")
+    failed_posts: int = Field(default=0, description="补采失败的帖子数")
+
+
 class TaskOut(BaseModel):
     task_id: str
     status: TaskStatus
@@ -85,6 +95,16 @@ class TaskOut(BaseModel):
     max_replies_per_tweet: int = Field(default=20)
     reply_depth: int = Field(default=2, description="评论抓取深度")
     replies_fetched: int = Field(default=0, description="已抓取的总回复数")
+    task_kind: TaskKind = Field(default="search", description="任务类型：search/comment_backfill")
+    source_file_name: Optional[str] = Field(default=None, description="评论补采任务的来源文件名")
+    queue_id: Optional[str] = Field(default=None, description="所属任务队列 ID")
+    queue_name: Optional[str] = Field(default=None, description="所属任务队列名称")
+    queue_order: Optional[int] = Field(default=None, description="当前任务在队列中的顺序（从 1 开始）")
+    queue_total: Optional[int] = Field(default=None, description="所属队列的任务总数")
+    comment_backfill_progress: CommentBackfillProgress = Field(
+        default_factory=CommentBackfillProgress,
+        description="评论补采任务进度",
+    )
     # ── 推文数据 ──
     tweets: list[dict] = Field(default_factory=list)
     # ── 实时预览（最多 crawler_preview_count 条，避免前端性能问题）──

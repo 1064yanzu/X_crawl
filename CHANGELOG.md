@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-03-12
+
+### 🐛 修复：微博关键词中的 `OR` 默认按原样保留，不再强制拆成多个关键词
+
+- 新增 `weibo_auto_split_or_keywords` 设置项，默认关闭；只有显式开启时才会把简单 `A OR B` 拆成多个子查询
+- `backend/crawler/weibo/query_planner.py` 增加按开关保留原始查询的能力
+- `backend/crawler/weibo/searcher.py` 改为读取配置决定是否启用微博 OR 拆分
+- 设置页新增“微博 OR 自动拆分”开关，任务创建页同步更新提示文案
+- `docs/api.md`、`docs/施工文档.md`、`docs/changelog.md` 已同步更新
+
+## 2026-03-11
+
+### ✨ 新增：顺序任务队列
+
+- 新增任务队列 API：`POST /api/v1/task-queues`、`GET /api/v1/task-queues`、`GET /api/v1/task-queues/{queue_id}`
+- 新增 `backend/api/services/task_queue_manager.py`，支持批量创建任务并在前序任务终态后自动接力下一项
+- 任务摘要新增 `queue_id / queue_name / queue_order / queue_total` 持久化字段
+- 前端任务创建页新增队列草稿区，支持把当前配置加入队列、调整顺序并整组提交
+- 任务列表、首页卡片与任务详情页新增队列归属展示，便于追踪当前批次位置
+
+## 2026-03-11
+
+### 🐛 修复：微博恢复任务在第 50 页后直接结束，无法继续突破单次页数上限
+
+**问题**：微博任务恢复时如果旧 checkpoint 已保存为 `page=51`，恢复链路仍会沿用页级翻页模式；由于单次搜索上限是 50 页，循环会被直接跳过，任务随即被错误标记为完成。与此同时，日期分段恢复链路缺失，分段子调用还会覆盖父级 checkpoint，导致“继续任务”看起来只是重新开浏览器然后秒结束。
+
+**修复**：
+- 新增 `backend/crawler/weibo/checkpoints.py`，统一管理微博页级 / 时间分段 checkpoint
+- `backend/crawler/weibo/searcher.py` 新增旧页级 checkpoint 自动迁移：当检测到 `page > 50` 且存在时间范围时，自动切换为日期分段续爬
+- 微博分段恢复支持从 `next_segment_index` 接着跑，不再每次从头开始
+- 分段子调用不再覆盖父任务 checkpoint，避免续爬状态被破坏
+- 结果聚合改为按微博 ID 去重，历史已抓结果可安全复用
+- `backend/api/services/crawl_service.py` 修复微博分支未透传 `resume` 参数的问题
+- 新增回归测试 `backend/tests/test_weibo_resume_recovery.py`
+
+## 2026-03-10
+
+### 🐛 修复：微博沿用 X 风格 `OR` 查询导致结果严重偏少
+
+**问题**：微博任务直接使用 `Claude OR anthropic` 这类 X 风格查询时，结果会异常偏少；排查真实任务后发现，抓到的 32 条微博全部同时包含 `Claude` 和 `Anthropic`，明显不是并集语义。
+
+**修复**：
+- 新增 `backend/crawler/weibo/query_planner.py`，识别微博简单 `OR` 查询并拆成多个子查询
+- `backend/crawler/weibo/searcher.py` 接入 OR 子查询顺序执行 + 按微博 ID 去重聚合
+- `frontend/src/hooks/useCrawlerTaskBuilder.ts` 改为仅在 X 平台拼装高级搜索语法，避免隐藏高级条件污染微博任务
+- `frontend/src/components/features/CrawlerTaskBuilder.tsx` 补充微博关键词提示文案
+- `docs/api.md` 补充微博 `keyword` 的 OR 拆分行为说明
+
+### 🔎 排查 + 优化：微博爬虫“突然停止”实际为分段任务正常完成，补足完成态日志
+
+**排查结论**：
+- 本次微博任务 `35b3572e-280c-41a8-bdfe-bc87bd26316e` 实际状态为 `done`，并非异常中断
+- 任务区间 `2023-01-01 ~ 2026-03-10` 在无限抓取模式下被自动按月拆成 **39 段**，`current_page=39` 说明 39 个时间分段都已执行完
+- 用户之所以感觉“突然停止”，是因为最后一段结束后缺少显式的“分段搜索完成/微博任务完成”日志，日志尾部只停留在最后一段的“第 1 页完成”
+
+**改进**：
+- `backend/crawler/weibo/searcher.py`：微博分段搜索完成后新增汇总日志 `微博分段搜索完成：共 N 段，累计 M 条`
+- `backend/api/services/crawl_service.py`：微博分支补充最终阶段文案和统一完成日志 `微博任务完成: task_id=..., 微博=..., 评论=...`
+
+### ✨ 协助：解答 Git 合并冲突问题
+
+**背景**：用户在执行 Git 合并（如 `git pull`）时遇到了 `backend/tasks.db` 的冲突报错。
+**响应**：为用户解释了这是因为本地数据库文件有未提交的修改，并提供了三种解决方案（放弃修改、暂存修改或提交修改）。
+
 ## 2026-03-06
 
 ### 🔧 优化：X 时间分割策略改为自适应（大跨度按月分割，防反爬）
@@ -732,3 +796,42 @@
 - 后端：`PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests` → `28 passed`。
 - 前端：`npm --prefix frontend run build` 通过。
 - 前端：`npm --prefix frontend run lint` 0 error（保留历史 warning 4 条）。
+
+### ✨ 优化：浏览器默认优先复用真实用户数据目录
+
+**背景**：当前“自动检测”模式会自动选浏览器，但默认仍可能落到爬虫专用 Profile，不够方便，也会让真实登录态与浏览器指纹割裂。
+
+**改进**：
+- 后端新增 `browser_prefer_user_data_dir` 配置，默认开启
+- 自动检测和用户手动选择浏览器时，默认优先复用检测到的真实用户数据目录
+- 若真实用户目录已被占用，仍自动回退到爬虫专用 Profile，避免锁冲突
+- 设置页引擎配置新增“优先复用用户目录”开关，方便按需切换“真实复用 / 隔离运行”
+- 浏览器选择页文案同步更新，明确自动模式会遵循该策略
+- 顺手修复 `useTaskLiveData` 的空值类型收窄，恢复前端 `next build` 通过
+
+### 🐛 修复：微博时间分段搜索每段都回主页并重复初始化浏览器会话
+
+**问题**：微博跨月/跨年搜索任务拆段后，旧实现会在每个时间段递归重新进入 `search()`，导致每段都重新建 tab、回 `weibo.com` 验证登录、再到 `s.weibo.com` 准备搜索 Cookie，表现为“回主页、刷新两次、再重新搜索”。
+
+**修复**：
+- 分段搜索现在复用同一个搜索 tab
+- 登录验证与搜索 Cookie 只在最外层准备一次
+- 子分段之间直接切换搜索 URL / 时间条件，不再重复回主页初始化
+- 新增后端测试覆盖 tab 复用与会话只初始化一次的行为
+## 2026-03-10
+
+### 日志排查：X 任务中途停止原因确认
+- 排查任务 `a719fc02-8ec3-4db4-9db8-749601f51356` 的运行日志与任务库状态。
+- 确认任务首次中断原因为 X 登录态失效，自动注入持久化 Cookie 失败，触发 `cookie_injection_failed` 并进入登录暂停。
+- 确认任务展示为 `stopped` 的原因是后端服务重启后，启动恢复逻辑会把历史 `paused/running/pending` 任务统一改写为 `stopped`。
+- 补充更新 `docs/施工文档.md`，沉淀本次排查时间线、数据库状态与结论。
+
+## 2026-03-11
+
+### 新增：导入式评论补采任务
+- 新增评论补采接口：`POST /api/v1/comment-backfill/analyze`、`POST /api/v1/comment-backfill/import`。
+- 后端新增导入解析服务与评论补采执行器，支持 X / 微博从导出文件二次补抓评论。
+- `TaskOut` / SQLite 任务摘要新增 `task_kind`、`source_file_name`、`comment_backfill_progress`。
+- 导出新增 `平台` 列，便于后续导入和平台校验。
+- 首页任务创建区升级为“双入口”：常规帖子采集 + 评论补采。
+- 任务列表、右侧预览、任务详情同步展示评论补采任务类型与处理进度。
