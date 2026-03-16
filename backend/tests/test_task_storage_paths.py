@@ -48,6 +48,9 @@ def _base_task(task_id: str = "task-1") -> dict:
                 "replies": [{"id": "r1", "created_at": "2026-03-10T01:00:00+00:00"}],
             },
         ],
+        "task_kind": "search",
+        "source_file_name": None,
+        "source_task_id": None,
         "platform": "x",
         "start_date": None,
         "end_date": None,
@@ -110,6 +113,18 @@ def test_task_db_keeps_summary_and_full_result_separate(task_db_module):
     assert json.loads(result_row[0]) == task["tweets"]
 
 
+def test_task_db_persists_source_task_id_in_summary(task_db_module):
+    task_db, _db_path = task_db_module
+    task = {**_base_task("source-linked-task"), "task_kind": "comment_backfill", "source_task_id": "origin-001"}
+
+    task_db.save_task(task)
+
+    summaries = task_db.load_all_tasks()
+    assert len(summaries) == 1
+    assert summaries[0]["task_kind"] == "comment_backfill"
+    assert summaries[0]["source_task_id"] == "origin-001"
+
+
 def test_task_db_lazy_migrates_legacy_tweets_json(task_db_module):
     task_db, db_path = task_db_module
     task = _base_task("legacy-task")
@@ -148,6 +163,37 @@ def test_task_manager_summary_and_full_views_split_payload(task_manager_module):
     assert full is not None and full["tweets"] == tweets
     assert listed_summary[0]["tweets"] == []
     assert listed_full[0]["tweets"] == tweets
+
+
+def test_task_manager_set_task_seed_tweets_persists_full_result(task_manager_module):
+    manager = task_manager_module
+    task_id = manager.create_task(
+        "微博 评论补采 · OpenAI",
+        1,
+        "Comments",
+        task_kind="comment_backfill",
+        source_task_id="source-task-001",
+    )
+    tweets = [
+        {
+            "id": "1001",
+            "text": "seed",
+            "url": "https://weibo.com/detail/1001",
+            "author": {"id": "u-1", "screen_name": "openai", "name": "OpenAI"},
+            "metrics": {"replies": 6},
+        }
+    ]
+
+    manager.set_task_seed_tweets(task_id, tweets, current_page=0)
+
+    summary = manager.get_task_summary(task_id)
+    full = manager.get_task_full(task_id)
+
+    assert summary is not None
+    assert summary["source_task_id"] == "source-task-001"
+    assert summary["result_count"] == 1
+    assert full is not None
+    assert full["tweets"] == tweets
 
 
 def test_search_route_uses_summary_path_for_lightweight_polling(monkeypatch):

@@ -173,6 +173,7 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
             end_date=payload.get("end_date"),
             task_kind=payload.get("task_kind", "search"),
             source_file_name=payload.get("source_file_name"),
+            source_task_id=payload.get("source_task_id"),
             queue_id=queue_id,
             queue_name=queue_name,
             queue_order=index,
@@ -181,7 +182,7 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
         )
         seed_tweets = payload.get("seed_tweets")
         if isinstance(seed_tweets, list) and seed_tweets:
-            task_manager.update_preview_tweets(task_id, 0, copy.deepcopy(seed_tweets))
+            task_manager.set_task_seed_tweets(task_id, copy.deepcopy(seed_tweets), current_page=0)
         phase = (
             "队列首个任务已创建，正在进入调度队列..."
             if index == 1
@@ -232,41 +233,47 @@ def list_queues() -> list[dict]:
     return views
 
 
-def can_resume_task(task_id: str) -> tuple[bool, Optional[str]]:
+def can_resume_task(task_id: str) -> tuple[bool, Optional[str], bool]:
+    """检查任务是否可以恢复。
+
+    Returns:
+        (can_resume, reason, needs_queue): 第三个值表示是否需要排队等待
+    """
     _ensure_loaded()
 
     from api.services import task_manager
 
     task = task_manager.get_task_summary(task_id)
     if not task:
-        return False, "任务不存在"
+        return False, "任务不存在", False
 
     queue_id = task.get("queue_id")
     if not queue_id:
-        return True, None
+        return True, None, False
 
     with _lock:
         queue = copy.deepcopy(_queues.get(queue_id))
     if not queue:
-        return True, None
+        return True, None, False
 
     task_ids = queue.get("task_ids", [])
     if task_id not in task_ids:
-        return True, None
+        return True, None, False
 
+    # 检查队列中是否有其他任务正在运行或前序任务未完成
     current_task_id = queue.get("current_task_id")
     if current_task_id and current_task_id != task_id:
         current_task = task_manager.get_task_summary(current_task_id)
         if current_task and current_task.get("status") not in _TERMINAL_STATUSES:
-            return False, "当前队列还有前序任务未完成，不能插队继续"
+            return True, None, True  # 允许恢复，但需要排队
 
     index = task_ids.index(task_id)
     for prev_task_id in task_ids[:index]:
         prev_task = task_manager.get_task_summary(prev_task_id)
         if prev_task and prev_task.get("status") not in _TERMINAL_STATUSES:
-            return False, "必须等待前序任务结束后才能继续当前队列项"
+            return True, None, True  # 允许恢复，但需要排队
 
-    return True, None
+    return True, None, False
 
 
 def mark_task_resuming(task_id: str) -> None:
@@ -292,6 +299,35 @@ def mark_task_resuming(task_id: str) -> None:
         if task_id not in queue.get("started_task_ids", []):
             queue.setdefault("started_task_ids", []).append(task_id)
         _persist_queue(queue)
+
+
+def enqueue_resumed_task(task_id: str) -> None:
+    """将恢复的任务放回队列排队等待，不立即启动。"""
+    _ensure_loaded()
+
+    from api.services import task_manager
+
+    task = task_manager.get_task_summary(task_id)
+    if not task:
+        return
+    queue_id = task.get("queue_id")
+    if not queue_id:
+        return
+
+    with _lock:
+        queue = _queues.get(queue_id)
+        if not queue:
+            return
+        task_ids = queue.get("task_ids", [])
+        if task_id not in task_ids:
+            return
+        index = task_ids.index(task_id)
+        total = len(task_ids)
+        _persist_queue(queue)
+
+    phase = f"任务已恢复，队列等待中（{index + 1}/{total}），等待前序任务完成"
+    task_manager.update_task_phase(task_id, phase)
+    logger.info("任务 %s 已恢复并排队等待（位置 %d/%d）", task_id, index + 1, total)
 
 
 def mark_task_paused(task_id: str) -> None:
@@ -329,8 +365,18 @@ def notify_task_terminal(task_id: str, status: str) -> None:
         if task_id not in task_ids:
             return
 
+        # 找到下一个需要执行的任务（pending 状态，跳过已终态的）
         index = task_ids.index(task_id)
-        next_task_id = task_ids[index + 1] if index + 1 < len(task_ids) else None
+        next_task_id = None
+        next_index = None
+        for i in range(index + 1, len(task_ids)):
+            candidate = task_ids[i]
+            candidate_task = task_manager.get_task_summary(candidate)
+            if candidate_task and candidate_task.get("status") not in _TERMINAL_STATUSES:
+                next_task_id = candidate
+                next_index = i
+                break
+
         if next_task_id:
             queue["status"] = "running"
             queue["current_task_id"] = next_task_id
@@ -346,7 +392,7 @@ def notify_task_terminal(task_id: str, status: str) -> None:
     if not next_task_id:
         return
 
-    phase = f"前序任务已结束（{status}），当前开始执行队列项 {index + 2}/{len(task_ids)}"
+    phase = f"前序任务已结束（{status}），当前开始执行队列项 {next_index + 1}/{len(task_ids)}"
     task_manager.restore_waiting_task(next_task_id, phase)
     next_task = task_manager.get_task_summary(next_task_id)
     if next_task:

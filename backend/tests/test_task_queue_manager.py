@@ -84,9 +84,9 @@ def test_queue_advances_to_next_task_after_terminal(queue_modules, monkeypatch):
     first_task_id = queue["tasks"][0]["task_id"]
     second_task_id = queue["tasks"][1]["task_id"]
 
-    can_resume, reason = queue_manager.can_resume_task(second_task_id)
-    assert can_resume is False
-    assert reason is not None
+    can_resume, reason, needs_queue = queue_manager.can_resume_task(second_task_id)
+    assert can_resume is True
+    assert needs_queue is True
 
     manager.update_task_result(first_task_id, tweets=[], runtime_metrics={})
     queue_manager.notify_task_terminal(first_task_id, "done")
@@ -128,6 +128,7 @@ def test_create_comment_backfill_queue_preserves_seed_tweets(queue_modules, monk
                 "product": "Comments",
                 "platform": "x",
                 "task_kind": "comment_backfill",
+                "source_task_id": "source-task-1",
                 "comment_backfill_progress": {
                     "total_posts": 1,
                     "eligible_posts": 1,
@@ -140,6 +141,7 @@ def test_create_comment_backfill_queue_preserves_seed_tweets(queue_modules, monk
                 "product": "Comments",
                 "platform": "x",
                 "task_kind": "comment_backfill",
+                "source_task_id": "source-task-2",
                 "comment_backfill_progress": {
                     "total_posts": 1,
                     "eligible_posts": 1,
@@ -150,10 +152,17 @@ def test_create_comment_backfill_queue_preserves_seed_tweets(queue_modules, monk
     )
 
     first_task_id = queue["tasks"][0]["task_id"]
+    second_task_id = queue["tasks"][1]["task_id"]
     first_full = manager.get_task_full(first_task_id)
+    second_full = manager.get_task_full(second_task_id)
 
     assert started == [first_task_id]
     assert first_full is not None
     assert first_full["task_kind"] == "comment_backfill"
+    assert first_full["source_task_id"] == "source-task-1"
     assert first_full["result_count"] == 1
     assert first_full["tweets"][0]["id"] == "1001"
+    assert second_full is not None
+    assert second_full["source_task_id"] == "source-task-2"
+    assert second_full["result_count"] == 1
+    assert second_full["tweets"][0]["id"] == "1001"

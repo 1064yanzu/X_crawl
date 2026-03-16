@@ -97,6 +97,7 @@ class TaskOut(BaseModel):
     replies_fetched: int = Field(default=0, description="已抓取的总回复数")
     task_kind: TaskKind = Field(default="search", description="任务类型：search/comment_backfill")
     source_file_name: Optional[str] = Field(default=None, description="评论补采任务的来源文件名")
+    source_task_id: Optional[str] = Field(default=None, description="评论补采任务的源帖子任务 ID（从历史任务创建时有值）")
     queue_id: Optional[str] = Field(default=None, description="所属任务队列 ID")
     queue_name: Optional[str] = Field(default=None, description="所属任务队列名称")
     queue_order: Optional[int] = Field(default=None, description="当前任务在队列中的顺序（从 1 开始）")

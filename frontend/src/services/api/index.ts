@@ -45,6 +45,7 @@ export interface TaskOut {
     replies_fetched: number;
     task_kind?: TaskKind;
     source_file_name?: string | null;
+    source_task_id?: string | null;
     queue_id?: string | null;
     queue_name?: string | null;
     queue_order?: number | null;

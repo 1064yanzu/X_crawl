@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-03-15
+
+### 🐛 修复：队列中恢复任务不再报 409，改为排队等待
+
+- `can_resume_task()` 不再在队列有其他任务运行时直接拒绝恢复，改为返回"需要排队"标记
+- 恢复已结束/已暂停的任务时，若队列有前序任务未完成，自动将任务设为 pending 排队等待
+- 新增 `enqueue_resumed_task()` 方法，恢复的任务会显示排队等待状态提示
+- 改进 `notify_task_terminal()` 队列推进逻辑，跳过已终态任务寻找下一个待执行任务
+- 更新相关测试用例适配新的三元组返回值
+
 ## 2026-03-14
 
 ### ✨ 新增：已完成任务直接评论补采 + 自动排队
@@ -845,3 +855,29 @@
 - 导出新增 `平台` 列，便于后续导入和平台校验。
 - 首页任务创建区升级为“双入口”：常规帖子采集 + 评论补采。
 - 任务列表、右侧预览、任务详情同步展示评论补采任务类型与处理进度。
+
+## 2026-03-15
+
+### 日志排查：评论补采队列任务提示“没有可处理的帖子”
+- 排查 `backend/crawler/comment_backfill_runner.py`、`backend/api/services/task_manager.py`、`backend/api/services/task_queue_manager.py` 与 `backend/tasks.db` 的真实状态。
+- 确认报错直接触发点为 `run_comment_backfill_task()` 读取 `task_manager.get_task_full(task_id)` 后发现 `tweets=[]`，因此抛出 `RuntimeError("评论补采任务没有可处理的帖子")`。
+- 确认本次异常集中出现在“从历史任务批量创建评论补采队列”的后续队列项：首个任务可正常执行，后续任务在服务重启 / 恢复后丢失 seed 帖子。
+- 确认根因是评论补采 seed 帖子只通过 `update_preview_tweets()` 写入了内存结果，但该方法默认仅走摘要持久化；同时它紧跟在 `create_task()` 的 `_persist_force(full=False)` 之后，容易被 `_PERSIST_MIN_INTERVAL_SEC=0.4` 的节流吞掉，导致 `result_count / preview_json / task_results` 都未真正落库。
+- 数据库实锤：失败任务 `906d2c3e-75b4-4234-9cea-a1aacbe46439` 等在 `backend/tasks.db` 中 `result_count=0`、`preview_json='[]'`、`task_results.tweets_json='[]'`，而同队列首个任务 `d84b00f3-5dfc-40a0-b165-f8d8ae34d192` 已正常完成并持久化 3007 条结果。
+- 本次仅完成真实问题定位与证据留档，未直接改动代码逻辑。
+
+### 修复：评论补采任务支持回源原任务，并强制持久化 seed 帖子
+- `TaskOut` / SQLite 任务摘要新增 `source_task_id`，从历史任务创建评论补采时会记录源任务 ID。
+- `backend/crawler/comment_backfill_runner.py` 新增回源逻辑：当评论补采任务自身 `tweets` 为空时，若存在 `source_task_id`，自动从原任务重新构造可补采帖子列表。
+- 为兼容历史上已创建、尚未写入 `source_task_id` 的评论补采任务，运行时会根据 `评论补采 · 原关键词` 自动反查对应的已完成搜索任务，并把推断出的 `source_task_id` 回写到任务摘要。
+- `backend/api/services/task_manager.py` 新增 `set_task_seed_tweets()`，专门用于评论补采初始化阶段强制落库完整 seed 帖子，避免被 0.4 秒摘要持久化节流吞掉。
+- `backend/api/routers/comment_backfill.py` 与 `backend/api/services/task_queue_manager.py` 统一切换到 `set_task_seed_tweets()` 初始化评论补采输入数据。
+- 前端共享类型与 `docs/api.md` 已同步新增 `source_task_id` 说明。
+- 已对当前 `backend/tasks.db` 中缺失 `source_task_id` 的历史评论补采任务执行一次真实回填，按同平台同关键词匹配原始搜索任务。
+- 新增测试覆盖：
+  - `backend/tests/test_comment_backfill_runner.py`
+  - `backend/tests/test_task_storage_paths.py`
+  - `backend/tests/test_task_queue_manager.py`
+- 验证：
+  - `backend/.venv/bin/python -m pytest -q backend/tests/test_comment_backfill_runner.py backend/tests/test_comment_backfill_task_source.py backend/tests/test_task_queue_manager.py backend/tests/test_task_storage_paths.py`
+  - 结果：`13 passed`

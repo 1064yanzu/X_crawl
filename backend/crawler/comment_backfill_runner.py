@@ -30,7 +30,7 @@ def run_comment_backfill_task(
     if not task:
         raise RuntimeError(f"任务不存在: {task_id}")
 
-    tweets = copy.deepcopy(task.get("tweets") or [])
+    tweets = _resolve_comment_backfill_tweets(task_id=task_id, task=task)
     if not tweets:
         raise RuntimeError("评论补采任务没有可处理的帖子")
 
@@ -42,6 +42,102 @@ def run_comment_backfill_task(
         max_replies_per_tweet=max_replies_per_tweet,
         reply_depth=reply_depth,
     )
+
+
+def _resolve_comment_backfill_tweets(*, task_id: str, task: dict) -> list[dict]:
+    tweets = copy.deepcopy(task.get("tweets") or [])
+    if tweets:
+        return tweets
+
+    source_task_id = _resolve_source_task_id(task_id=task_id, task=task)
+    if not source_task_id:
+        return []
+
+    source_task = task_manager.get_task_full(source_task_id)
+    if not source_task:
+        raise RuntimeError(f"评论补采源任务不存在或不可读取: {source_task_id}")
+
+    from fastapi import HTTPException
+
+    from api.services.comment_backfill_task_source import analyze_comment_backfill_task
+
+    try:
+        analysis = analyze_comment_backfill_task(source_task)
+    except HTTPException as exc:
+        raise RuntimeError(f"评论补采源任务不可用于回源补采: {exc.detail}") from exc
+
+    source_tweets = copy.deepcopy(analysis.tweets)
+    if source_tweets:
+        logger.info(
+            "评论补采任务回源原始任务成功: task_id=%s, source_task_id=%s, posts=%s",
+            task_id,
+            source_task_id,
+            len(source_tweets),
+        )
+        task_manager.set_task_seed_tweets(task_id, source_tweets, current_page=0)
+    return source_tweets
+
+
+def _resolve_source_task_id(*, task_id: str, task: dict) -> str:
+    source_task_id = str(task.get("source_task_id") or "").strip()
+    if source_task_id:
+        return source_task_id
+
+    inferred = _infer_legacy_source_task_id(task_id=task_id, task=task)
+    if inferred:
+        logger.info(
+            "评论补采任务自动补全 source_task_id: task_id=%s, source_task_id=%s",
+            task_id,
+            inferred,
+        )
+        task_manager.update_task_source_task_id(task_id, inferred)
+        return inferred
+    return ""
+
+
+def _infer_legacy_source_task_id(*, task_id: str, task: dict) -> str:
+    if str(task.get("task_kind") or "") != "comment_backfill":
+        return ""
+    if task.get("source_file_name"):
+        return ""
+
+    keyword = str(task.get("keyword") or "").strip()
+    platform = str(task.get("platform") or "").strip().lower()
+    if not keyword or platform not in {"x", "weibo"}:
+        return ""
+
+    prefix = "微博 评论补采 · " if platform == "weibo" else "X 评论补采 · "
+    if not keyword.startswith(prefix):
+        return ""
+    source_keyword = keyword[len(prefix):].strip()
+    if not source_keyword:
+        return ""
+
+    current_created_at = str(task.get("created_at") or "")
+    candidates = task_manager.list_tasks(include_payload=False)
+    matched = [
+        item for item in candidates
+        if item.get("task_id") != task_id
+        and item.get("task_kind") == "search"
+        and item.get("status") == "done"
+        and str(item.get("platform") or "").lower() == platform
+        and str(item.get("keyword") or "").strip() == source_keyword
+        and int(item.get("result_count") or 0) > 0
+    ]
+    if not matched:
+        return ""
+
+    # 优先选择创建时间早于评论补采任务、且离它最近的一条搜索任务；若没有，再退回最新的一条。
+    earlier_or_equal = [
+        item for item in matched
+        if not current_created_at or str(item.get("created_at") or "") <= current_created_at
+    ]
+    if earlier_or_equal:
+        earlier_or_equal.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+        return str(earlier_or_equal[0].get("task_id") or "")
+
+    matched.sort(key=lambda item: str(item.get("created_at") or ""), reverse=True)
+    return str(matched[0].get("task_id") or "")
 
 
 def _run_x_comment_backfill(

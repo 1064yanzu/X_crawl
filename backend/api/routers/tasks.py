@@ -163,7 +163,7 @@ async def resume_task(task_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
 
     status = task["status"]
-    can_resume, reason = task_queue_manager.can_resume_task(task_id)
+    can_resume, reason, needs_queue = task_queue_manager.can_resume_task(task_id)
     if not can_resume:
         raise HTTPException(status_code=409, detail=reason or "当前任务不允许继续")
 
@@ -172,6 +172,10 @@ async def resume_task(task_id: str) -> dict:
         success = task_manager.resume_finished_task(task_id)
         if not success:
             raise HTTPException(status_code=409, detail=f"任务恢复失败: {task_id}")
+        if needs_queue:
+            # 队列中有其他任务在跑，排队等待
+            task_queue_manager.enqueue_resumed_task(task_id)
+            return {"message": f"任务 {task_id} 已恢复并加入队列排队等待", "status": "pending"}
         task_queue_manager.mark_task_resuming(task_id)
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
         return {"message": f"任务 {task_id} 已恢复并加入调度队列", "status": "pending"}
@@ -183,6 +187,14 @@ async def resume_task(task_id: str) -> dict:
             status_code=409,
             detail=f"任务当前状态为 '{status}'，无法继续",
         )
+
+    if needs_queue:
+        # 队列中有其他任务在跑，终止当前暂停线程并排队等待
+        if task_manager.is_thread_alive(task_id):
+            task_manager.send_signal(task_id, "stop")
+        task_manager.resume_finished_task(task_id)
+        task_queue_manager.enqueue_resumed_task(task_id)
+        return {"message": f"任务 {task_id} 已恢复并加入队列排队等待", "status": "pending"}
 
     if task_manager.is_thread_alive(task_id):
         # 爬虫线程还活着，只需发送 run 信号即可唤醒轮询

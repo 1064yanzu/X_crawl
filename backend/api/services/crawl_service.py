@@ -58,6 +58,7 @@ def _build_worker_payload(
         end_date=task.get("end_date"),
         task_kind=task.get("task_kind", "search"),
         source_file_name=task.get("source_file_name"),
+        source_task_id=task.get("source_task_id"),
     )
 
 
@@ -98,6 +99,7 @@ def run_search_task(
     end_date: Optional[str] = None,
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
+    source_task_id: Optional[str] = None,
 ) -> None:
     final_status = "failed"
     task_manager.update_task_status(task_id, "running")
@@ -152,6 +154,7 @@ def run_search_task(
                 meta={
                     "failed_posts": result.progress.get("failed_posts", 0),
                     "source_file_name": source_file_name,
+                    "source_task_id": source_task_id,
                 },
             )
             logger.info(

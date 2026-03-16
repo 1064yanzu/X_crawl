@@ -99,6 +99,7 @@ def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: 
         "replies_fetched": 0,
         "task_kind": "search",
         "source_file_name": None,
+        "source_task_id": None,
         "queue_id": None,
         "queue_name": None,
         "queue_order": None,
@@ -319,6 +320,7 @@ def _ensure_db() -> None:
                 task.setdefault("reply_depth", 2)
                 task.setdefault("task_kind", "search")
                 task.setdefault("source_file_name", None)
+                task.setdefault("source_task_id", None)
                 task.setdefault("queue_id", None)
                 task.setdefault("queue_name", None)
                 task.setdefault("queue_order", None)
@@ -513,6 +515,7 @@ def create_task(
     end_date: Optional[str] = None,
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
+    source_task_id: Optional[str] = None,
     queue_id: Optional[str] = None,
     queue_name: Optional[str] = None,
     queue_order: Optional[int] = None,
@@ -554,6 +557,7 @@ def create_task(
             "crawl_strategy": crawl_strategy,
             "task_kind": task_kind,
             "source_file_name": source_file_name,
+            "source_task_id": source_task_id,
             "queue_id": queue_id,
             "queue_name": queue_name,
             "queue_order": queue_order,
@@ -581,6 +585,7 @@ def create_task(
             "crawl_strategy": crawl_strategy,
             "task_kind": task_kind,
             "source_file_name": source_file_name,
+            "source_task_id": source_task_id,
             "queue_id": queue_id,
             "queue_order": queue_order,
             "queue_total": queue_total,
@@ -712,6 +717,16 @@ def update_comment_backfill_progress(task_id: str, progress: Optional[dict]) -> 
     _persist(task_id)
 
 
+def update_task_source_task_id(task_id: str, source_task_id: Optional[str]) -> None:
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        task["source_task_id"] = source_task_id
+        _touch(task)
+    _persist_force(task_id, full=False)
+
+
 def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[dict]) -> None:
     from crawler import telemetry
 
@@ -818,6 +833,50 @@ def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: l
         meta={"preview_count": len(tweets_for_preview)},
     )
     _persist(task_id)
+
+
+def set_task_seed_tweets(task_id: str, tweets_for_preview: list[dict], *, current_page: int = 0) -> None:
+    """
+    初始化任务种子帖子并强制落库完整结果。
+
+    适用于评论补采等需要“先保存输入帖子，再异步执行”的任务，
+    避免只写摘要时被节流吞掉，导致 task_results 为空。
+    """
+    from crawler import telemetry
+
+    replies_fetched, coverage = _summarize_tweets(tweets_for_preview)
+
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return
+        prev_result = int(task.get("result_count", 0))
+        _set_task_result_locked(task_id, tweets_for_preview)
+        task.update(
+            {
+                "current_page": current_page,
+                "result_count": len(tweets_for_preview),
+                "preview_tweets": _make_preview(tweets_for_preview),
+                "replies_fetched": replies_fetched,
+                "time_coverage": coverage,
+            }
+        )
+        _touch(task)
+        phase = task.get("crawl_phase", "")
+        status = task.get("status")
+        risk_state = task.get("risk_state")
+
+    telemetry.record_event(
+        task_id,
+        "seed_tweets_ready",
+        phase=phase,
+        page=current_page,
+        delta_tweets=max(0, len(tweets_for_preview) - prev_result),
+        status=status,
+        risk_state=risk_state,
+        meta={"seed_count": len(tweets_for_preview)},
+    )
+    _persist_force(task_id, full=True)
 
 
 def update_task_replies_progress(task_id: str, tweet_id: str, reply_count: int) -> None:

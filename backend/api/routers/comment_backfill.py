@@ -74,9 +74,10 @@ async def import_comment_backfill(
         platform=platform,
         task_kind="comment_backfill",
         source_file_name=source_file_name,
+        source_task_id=None,
         comment_backfill_progress=progress,
     )
-    task_manager.update_preview_tweets(task_id, 0, result.tweets)
+    task_manager.set_task_seed_tweets(task_id, result.tweets, current_page=0)
 
     task = task_manager.get_task_summary(task_id)
     if not task:
@@ -174,6 +175,7 @@ async def create_comment_backfill_from_tasks(
                 "platform": platform,
                 "task_kind": "comment_backfill",
                 "source_file_name": None,
+                "source_task_id": summary["source_task_id"],
                 "comment_backfill_progress": {
                     "total_posts": summary["unique_post_count"],
                     "eligible_posts": summary["eligible_posts"],
@@ -204,9 +206,10 @@ async def create_comment_backfill_from_tasks(
             platform=payload["platform"],
             task_kind=payload["task_kind"],
             source_file_name=payload["source_file_name"],
+            source_task_id=payload["source_task_id"],
             comment_backfill_progress=payload["comment_backfill_progress"],
         )
-        task_manager.update_preview_tweets(task_id, 0, payload["seed_tweets"])
+        task_manager.set_task_seed_tweets(task_id, payload["seed_tweets"], current_page=0)
         task = task_manager.get_task_summary(task_id)
         if not task:
             raise HTTPException(status_code=500, detail="评论补采任务创建失败")
