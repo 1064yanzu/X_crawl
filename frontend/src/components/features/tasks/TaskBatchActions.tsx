@@ -1,9 +1,10 @@
-import { Loader2, MessageCircleMore, RefreshCcw, Trash2 } from "lucide-react";
+import { Download, Loader2, MessageCircleMore, RefreshCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function TaskBatchActions({
     searchedCount,
     selectedCount,
+    exportableSelectedCount,
     resumableSelectedCount,
     backfillableSelectedCount,
     allVisibleSelected,
@@ -12,18 +13,21 @@ export function TaskBatchActions({
     onClearSelection,
     onBatchResume,
     onBatchCommentBackfill,
+    onBatchExport,
     onBatchDelete,
 }: {
     searchedCount: number;
     selectedCount: number;
+    exportableSelectedCount: number;
     resumableSelectedCount: number;
     backfillableSelectedCount: number;
     allVisibleSelected: boolean;
-    busyAction: "resume" | "backfill" | "delete" | null;
+    busyAction: "resume" | "backfill" | "delete" | "export" | null;
     onToggleSelectAll: () => void;
     onClearSelection: () => void;
     onBatchResume: () => void;
     onBatchCommentBackfill: () => void;
+    onBatchExport: () => void;
     onBatchDelete: () => void;
 }) {
     if (searchedCount === 0) return null;
@@ -34,7 +38,7 @@ export function TaskBatchActions({
                 <div>
                     <h2 className="text-lg font-semibold text-foreground">批量操作</h2>
                     <p className="text-sm text-muted-foreground">
-                        当前筛出 {searchedCount} 个任务，已选择 {selectedCount} 个；其中可继续 {resumableSelectedCount} 个，可补采评论 {backfillableSelectedCount} 个。
+                        当前筛出 {searchedCount} 个任务，已选择 {selectedCount} 个；其中可导出 {exportableSelectedCount} 个，可继续 {resumableSelectedCount} 个，可补采评论 {backfillableSelectedCount} 个。
                     </p>
                 </div>
 
@@ -44,6 +48,15 @@ export function TaskBatchActions({
                     </Button>
                     <Button variant="ghost" className="rounded-xl" onClick={onClearSelection} disabled={selectedCount === 0}>
                         清空选择
+                    </Button>
+                    <Button
+                        variant="outline"
+                        className="rounded-xl"
+                        onClick={onBatchExport}
+                        disabled={exportableSelectedCount === 0 || busyAction !== null}
+                    >
+                        {busyAction === "export" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
+                        批量导出
                     </Button>
                     <Button
                         variant="outline"

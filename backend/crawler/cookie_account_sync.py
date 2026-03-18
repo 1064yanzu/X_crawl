@@ -5,6 +5,7 @@ Cookie ↔ 账号池同步模块
 - 保存 Cookie 时自动识别账号并同步到账号池
 - 清除 Cookie 时同步清理账号池中对应账号
 - 从 twid Cookie 提取用户 ID 作为账号标识
+- 支持多账号：同一文件中可存储多个账号的 cookie，按 twid 分组
 
 原则：
     全局 Cookie 文件是唯一的数据录入入口，
@@ -36,12 +37,26 @@ def has_login_cookies(cookies: list[dict]) -> bool:
     return "auth_token" in names and "twid" in names
 
 
+def group_cookies_by_account(all_cookies: list[dict]) -> dict[str, list[dict]]:
+    """
+    将所有 cookie 按账号分组。
+    
+    复用 cookie_manager 中的 _group_cookies_by_user 实现，
+    基于 twid 位置就近原则分配 cookie 到对应账号。
+    
+    Returns:
+        {user_id: [cookies], ...}
+    """
+    from crawler.cookie_manager import _group_cookies_by_user
+    return _group_cookies_by_user(all_cookies)
+
+
 def sync_cookies_to_pool(cookies: list[dict]) -> None:
     """
-    将全局 Cookie 同步到账号池。
+    将新增 Cookie 同步到账号池。
 
     逻辑：
-    - 从 Cookie 中提取用户 ID（通过 twid）
+    - 从新增 Cookie 中提取用户 ID（通过 twid）
     - 若账号池中已存在同名账号 → 更新 Cookie
     - 若账号池中不存在 → 自动添加
     - 使用 "user_{user_id}" 作为 alias
@@ -53,11 +68,11 @@ def sync_cookies_to_pool(cookies: list[dict]) -> None:
 
     user_id = extract_user_id(cookies)
     if not user_id:
-        logger.debug("Cookie 中未找到 twid，无法识别账号，跳过同步")
+        logger.debug("新增 Cookie 中未找到 twid，无法识别账号，跳过同步")
         return
 
     if not has_login_cookies(cookies):
-        logger.debug("Cookie 登录态不完整（缺 auth_token/twid），跳过同步")
+        logger.debug("新增 Cookie 登录态不完整（缺 auth_token/twid），跳过同步")
         return
 
     try:
@@ -87,6 +102,51 @@ def sync_cookies_to_pool(cookies: list[dict]) -> None:
         logger.warning(f"Cookie → 账号池同步失败（不影响 Cookie 保存）: {e}")
 
 
+def sync_all_cookies_to_pool() -> None:
+    """
+    全量同步：将全局 Cookie 文件中的所有账号同步到账号池。
+    用于启动时或手动触发的完整同步。
+    """
+    try:
+        from crawler.cookie_manager import load_cookies
+        from crawler.account_pool import get_pool
+
+        all_cookies = load_cookies()
+        if not all_cookies:
+            logger.debug("全局 Cookie 文件为空，无需同步")
+            return
+
+        # 按账号分组
+        groups = group_cookies_by_account(all_cookies)
+        pool = get_pool()
+
+        for user_id, group_cookies in groups.items():
+            if user_id == "unknown":
+                logger.debug("跳过无法识别的 Cookie 组（缺 twid）")
+                continue
+
+            if not has_login_cookies(group_cookies):
+                logger.debug(f"账号 user_{user_id} 的 Cookie 登录态不完整，跳过")
+                continue
+
+            alias = f"user_{user_id}"
+            existing = None
+            for acc in pool.list_accounts():
+                if acc.alias == alias:
+                    existing = acc
+                    break
+
+            if existing:
+                pool.add_account(alias=alias, cookies=group_cookies)
+                logger.info(f"全量同步：已更新账号 {alias!r}（{len(group_cookies)} 条 Cookie）")
+            else:
+                pool.add_account(alias=alias, cookies=group_cookies)
+                logger.info(f"全量同步：已添加账号 {alias!r}（{len(group_cookies)} 条 Cookie）")
+
+    except Exception as e:
+        logger.warning(f"全量同步失败: {e}")
+
+
 def remove_account_from_pool(cookies: list[dict]) -> None:
     """
     从账号池中移除对应账号（Cookie 被清除时调用）。
@@ -109,3 +169,76 @@ def remove_account_from_pool(cookies: list[dict]) -> None:
 
     except Exception as e:
         logger.warning(f"账号池移除失败: {e}")
+
+
+# ─── 微博 Cookie ↔ 账号池同步 ──────────────────────────────────────────────
+
+
+def sync_weibo_cookies_to_pool(cookies: list[dict]) -> None:
+    """
+    将新增微博 Cookie 同步到微博账号池。
+
+    逻辑：
+    - 从新增 Cookie 中提取 SUB 值作为账号标识
+    - 若账号池中已存在同名账号 → 更新 Cookie
+    - 若不存在 → 自动添加
+    """
+    if not cookies:
+        return
+
+    try:
+        from crawler.weibo.cookie_manager import _extract_weibo_account_id, has_weibo_login
+        from crawler.weibo.account_pool import get_weibo_pool
+
+        sub_val = _extract_weibo_account_id(cookies)
+        if sub_val == "unknown":
+            logger.debug("微博 Cookie 中未找到 SUB，无法识别账号，跳过同步")
+            return
+
+        if not has_weibo_login(cookies):
+            logger.debug("微博 Cookie 登录态不完整（缺 SUB），跳过同步")
+            return
+
+        pool = get_weibo_pool()
+        alias = f"weibo_{sub_val[:12]}"
+        pool.add_account(alias=alias, cookies=cookies)
+        logger.info(f"微博账号池同步：已同步账号 {alias!r}（{len(cookies)} 条 Cookie）")
+
+    except Exception as e:
+        logger.warning(f"微博 Cookie → 账号池同步失败（不影响 Cookie 保存）: {e}")
+
+
+def sync_all_weibo_cookies_to_pool() -> None:
+    """
+    全量同步：将全局微博 Cookie 文件中的所有账号同步到微博账号池。
+    """
+    try:
+        from crawler.weibo.cookie_manager import (
+            load_cookies,
+            has_weibo_login,
+            _group_weibo_cookies_by_account,
+        )
+        from crawler.weibo.account_pool import get_weibo_pool
+
+        all_cookies = load_cookies()
+        if not all_cookies:
+            logger.debug("全局微博 Cookie 文件为空，无需同步")
+            return
+
+        groups = _group_weibo_cookies_by_account(all_cookies)
+        pool = get_weibo_pool()
+
+        for sub_val, group_cookies in groups.items():
+            if sub_val == "unknown":
+                continue
+            if not has_weibo_login(group_cookies):
+                continue
+
+            alias = f"weibo_{sub_val[:12]}"
+            pool.add_account(alias=alias, cookies=group_cookies)
+            logger.info(
+                f"微博全量同步：已同步账号 {alias!r}（{len(group_cookies)} 条 Cookie）"
+            )
+
+    except Exception as e:
+        logger.warning(f"微博全量同步失败: {e}")

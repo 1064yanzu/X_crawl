@@ -280,6 +280,7 @@ def fetch_comments(
     max_comments: int = 500,
     page_interval: float = 4.0,
     task_id: str | None = None,
+    browser_instance=None,
 ) -> WeiboCommentFetchResult:
     """
     抓取微博评论（v6 - 首页网络拦截 + Python requests 翻页）。
@@ -326,7 +327,7 @@ def fetch_comments(
     if _update_phase:
         _update_phase(f"正在打开帖子页面获取评论...")
 
-    tab = get_new_tab()
+    tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
 
     try:
         # ─── 阶段 1：访问帖子页面 + 网络拦截首批评论 ────────────────

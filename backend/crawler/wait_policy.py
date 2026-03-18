@@ -48,11 +48,8 @@ def scroll_step_pause(task_id: str | None = None) -> None:
 
 def before_scroll_wait(task_id: str | None = None) -> None:
     """
-    翻页前的轻量等待。
-    只保留短窗口让 DOM 稳定，避免旧逻辑中的长等待放大。
+    翻页前的轻量等待：仅让 DOM 稳定，不叠加翻页间隔。
+    翻页节奏由 x_searcher/reply_fetcher 各自的动态间隔统一管理。
     """
-    base = max(0.25, min(2.0, float(getattr(settings, "crawler_reply_wait", 4.0)) * 0.35))
+    base = max(0.2, min(0.8, float(getattr(settings, "crawler_reply_wait", 2.0)) * 0.15))
     interruptible_sleep(base, task_id=task_id)
-    # 基线翻页节奏仍保留随机抖动，但由全局自适应区间约束
-    jittered_sleep(float(getattr(settings, "crawler_page_interval", 4.0)), task_id=task_id)
-

@@ -42,3 +42,24 @@ async def get_task_queue(queue_id: str) -> TaskQueueOut:
     if not queue:
         raise HTTPException(status_code=404, detail=f"任务队列不存在: {queue_id}")
     return TaskQueueOut(**queue)
+
+
+@router.post(
+    "/{queue_id}/resume",
+    summary="恢复整个任务队列",
+    description=(
+        "一次性恢复队列中所有暂停/停止/失败的任务并提交给调度器。"
+        "调度器根据并发上限自行控制哪些任务立即执行、哪些排队。"
+    ),
+)
+async def resume_task_queue(queue_id: str) -> dict:
+    try:
+        result = task_queue_manager.resume_queue(queue_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    total_resumed = len(result["resumed"])
+    total_running = len(result["already_running"])
+    return {
+        "message": f"队列已恢复：{total_resumed} 个任务重新提交调度器，{total_running} 个已在运行",
+        **result,
+    }

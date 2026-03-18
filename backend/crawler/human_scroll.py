@@ -56,24 +56,24 @@ def human_like_scroll(
         finish_at_bottom:   最后是否滚到底部确保触发懒加载
     """
     if steps <= 0:
-        steps = random.randint(4, 7)
+        steps = random.randint(3, 5)
 
     for i in range(steps):
         px = random.randint(min_step_px, max_step_px)
         safe_scroll_down(tab, px, task_id=task_id)
 
         # 大部分时候短停顿，偶尔长停顿（假装在看某条帖子）
-        if random.random() < 0.2:
-            pause = random.uniform(1.5, 3.0)  # 20% 概率长停顿
+        if random.random() < 0.12:
+            pause = random.uniform(1.2, 2.2)  # 12% 概率长停顿
         else:
-            pause = random.uniform(min_pause, max_pause)
+            pause = random.uniform(min_pause, min(max_pause, 1.0))
         interruptible_sleep(pause, task_id=task_id)
 
         # 偶尔回滚（非最后一步）
         if i < steps - 1 and random.random() < scroll_back_chance:
             back_px = random.randint(*scroll_back_px_range)
             safe_scroll_up(tab, back_px, task_id=task_id)
-            interruptible_sleep(random.uniform(0.4, 0.8), task_id=task_id)
+            interruptible_sleep(random.uniform(0.3, 0.6), task_id=task_id)
 
     if finish_at_bottom:
         safe_scroll_to_bottom(tab, task_id=task_id)
@@ -86,45 +86,44 @@ def simulate_reading(
     tweet_count: int = 0,
 ) -> None:
     """
-    模拟人类阅读搜索结果：收到一批推文后，慢慢浏览它们。
+    模拟人类阅读搜索结果：收到一批推文后，快速扫过。
 
-    特点：速度很慢、几乎不完全停下来、只加一些随机时间扰动假装阅读。
-    比翻页滚动更慢——这是"阅读"而不是"翻页"。
+    轻量版：步数收敛，保持随机特征即可，避免占用过多时间。
 
     Args:
         tab:           DrissionPage 标签页
         task_id:       任务 ID
         tweet_count:   本批获取的推文数量（影响阅读时长）
     """
-    # 根据推文数量决定阅读步数（更多推文=更多阅读时间）
+    # 根据推文数量决定阅读步数（限制上限防止过慢）
     if tweet_count <= 0:
-        steps = random.randint(3, 5)
+        steps = random.randint(2, 3)
     else:
-        # 20 条→7~10 步；5 条→3~5 步
-        steps = max(3, min(12, tweet_count // 2 + random.randint(1, 3)))
+        # 20 条→4~6 步；5 条→2~3 步
+        steps = max(2, min(6, tweet_count // 4 + random.randint(1, 2)))
 
     for i in range(steps):
         # 小幅滚动（一条推文大约 200~400px 高）
-        px = random.randint(120, 350)
+        px = random.randint(150, 350)
         safe_scroll_down(tab, px, task_id=task_id)
 
-        # 阅读节奏：大部分时间短暂停留（扫一眼），偶尔驻留更久
+        # 阅读节奏：大部分快速扫过，偶尔停一下
         roll = random.random()
-        if roll < 0.15:
-            # 15% 概率长驻留（仔细看图/视频/长文本）
-            lognormal_sleep(2.5, sigma=0.4, floor=1.0, ceiling=5.0, task_id=task_id)
-        elif roll < 0.40:
-            # 25% 概率中等停留（读完一条帖子）
-            lognormal_sleep(1.3, sigma=0.4, floor=0.5, ceiling=3.0, task_id=task_id)
+        if roll < 0.08:
+            # 8% 概率长驻留
+            lognormal_sleep(1.5, sigma=0.35, floor=0.8, ceiling=3.0, task_id=task_id)
+        elif roll < 0.30:
+            # 22% 概率中等停留
+            lognormal_sleep(0.8, sigma=0.3, floor=0.4, ceiling=1.8, task_id=task_id)
         else:
-            # 60% 快速扫过
-            lognormal_sleep(0.7, sigma=0.35, floor=0.2, ceiling=2.0, task_id=task_id)
+            # 70% 快速扫过
+            lognormal_sleep(0.4, sigma=0.3, floor=0.15, ceiling=1.0, task_id=task_id)
 
         # 偶尔回滚（回看感兴趣的帖子）
-        if random.random() < 0.10:
-            back_px = random.randint(80, 200)
+        if random.random() < 0.08:
+            back_px = random.randint(60, 160)
             safe_scroll_up(tab, back_px, task_id=task_id)
-            lognormal_sleep(0.6, sigma=0.3, floor=0.2, ceiling=2.0, task_id=task_id)
+            lognormal_sleep(0.4, sigma=0.25, floor=0.15, ceiling=1.0, task_id=task_id)
 
 
 def idle_scroll(

@@ -31,7 +31,7 @@ def wait_for_target_packet(
     *,
     timeout: float,
     accept_body: BodyPredicate,
-    max_ignored: int = 12,
+    max_ignored: int = 30,
     on_packet: PacketObserver | None = None,
 ):
     """等待目标 JSON 包，忽略无关包，直到超时。"""
@@ -40,7 +40,11 @@ def wait_for_target_packet(
 
     while time.monotonic() < deadline:
         remaining = max(0.2, deadline - time.monotonic())
-        packet = tab.listen.wait(timeout=min(remaining, 2.5), raise_err=False)
+        try:
+            packet = tab.listen.wait(timeout=min(remaining, 1.5), raise_err=False)
+        except (UnboundLocalError, RuntimeError):
+            # DrissionPage bug: 浏览器停止时 fail 变量未赋值；RuntimeError 表示监听已停止
+            return None, ignored
         if not packet:
             continue
 

@@ -148,19 +148,6 @@ def _build_login_pause_message(result) -> str:
 
     return f"未检测到可用的 X 登录状态（reason={result.reason}）。{action}"
 
-    # 如果没有普通词（全是操作符），尝试提取 from: 的账号名作为搜索词
-    for token in tokens:
-        if token.lower().startswith("from:"):
-            return token.split(":", 1)[1].lstrip("@")
-
-    # 兜底：用第一个 token 去掉操作符前缀
-    if tokens:
-        first = tokens[0]
-        for prefix in _SEARCH_OPERATOR_PREFIXES:
-            if first.lower().startswith(prefix):
-                return first.split(":", 1)[1] if ":" in first else first.lstrip("-@#")
-        return first
-    return keyword
 
 class SearchResult:
     """搜索结果容器"""
@@ -230,8 +217,10 @@ def _search_with_time_splits(
     reply_depth: int,
     crawl_strategy: CrawlStrategy,
     checkpoint: Optional[dict] = None,
+    browser_instance=None,
+    slot_id: Optional[int] = None,
 ) -> SearchResult:
-    shared_tab = get_new_tab()
+    shared_tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
     try:
         if checkpoint and checkpoint.get("mode") == "time_split":
             base_query = str(checkpoint.get("base_query", "")).strip()
@@ -292,6 +281,8 @@ def _search_with_time_splits(
                 reply_depth=reply_depth,
                 crawl_strategy=crawl_strategy,
                 existing_tab=shared_tab,
+                browser_instance=browser_instance,
+                slot_id=slot_id,
                 _time_split_context={
                     "root_keyword": keyword,
                     "base_query": base_query,
@@ -550,6 +541,8 @@ def search(
     crawl_strategy: CrawlStrategy = "dfs",  # 保留参数兼容旧调用，统一走 DFS
     existing_tab=None,
     _time_split_context: Optional[dict] = None,
+    browser_instance=None,
+    slot_id: Optional[int] = None,
 ) -> SearchResult:
     """
     搜索 X 推文（含断点续爬 + 可选回复抓取 + 可暂停/可终止）
@@ -667,6 +660,39 @@ def search(
         if segment_progress:
             _task_mgr.update_task_segment_progress(task_id, segment_progress)
 
+    # ── 缓存时间分割计划，避免重复构建（原逻辑最多调用 3 次） ──
+    _time_split_plan_cache = None
+
+    def _get_time_split_plan():
+        nonlocal _time_split_plan_cache
+        if _time_split_plan_cache is None:
+            _time_split_plan_cache = build_time_split_plan(
+                keyword,
+                max_count=max_count,
+                enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
+                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
+                window_days=int(getattr(settings, "x_time_split_window_days", 14)),
+                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
+            )
+        return _time_split_plan_cache
+
+    def _dispatch_time_splits():
+        return _search_with_time_splits(
+            keyword=keyword,
+            max_count=max_count,
+            product=product,
+            timeout=timeout,
+            task_id=task_id,
+            resume=resume,
+            fetch_replies=fetch_replies,
+            max_replies_per_tweet=max_replies_per_tweet,
+            reply_depth=reply_depth,
+            crawl_strategy=crawl_strategy,
+            browser_instance=browser_instance,
+            slot_id=slot_id,
+        )
+
     if task_id and resume:
         ckpt = load_checkpoint(task_id)
         if not time_split_active and ckpt and ckpt.get("mode") == "time_split" and ckpt.get("root_keyword") == keyword and ckpt.get("product") == product:
@@ -682,33 +708,15 @@ def search(
                 reply_depth=reply_depth,
                 crawl_strategy=crawl_strategy,
                 checkpoint=ckpt,
+                browser_instance=browser_instance,
+                slot_id=slot_id,
             )
         if (
             not time_split_active
             and not (ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product)
         ):
-            plan = build_time_split_plan(
-                keyword,
-                max_count=max_count,
-                enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=int(getattr(settings, "x_time_split_window_days", 14)),
-                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
-                max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
-            )
-            if plan.enabled:
-                return _search_with_time_splits(
-                    keyword=keyword,
-                    max_count=max_count,
-                    product=product,
-                    timeout=timeout,
-                    task_id=task_id,
-                    resume=resume,
-                    fetch_replies=fetch_replies,
-                    max_replies_per_tweet=max_replies_per_tweet,
-                    reply_depth=reply_depth,
-                    crawl_strategy=crawl_strategy,
-                )
+            if _get_time_split_plan().enabled:
+                return _dispatch_time_splits()
         if ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product:
             all_tweets = ckpt.get("tweets", [])
             seen_ids = {t["id"] for t in all_tweets if t.get("id")}
@@ -743,6 +751,7 @@ def search(
                         all_tweets, _resume_failed = _fetch_replies_for_tweets(
                             all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy,
                             reply_depth=reply_depth,
+                            browser_instance=browser_instance,
                         )
                     else:
                         logger.info("断点恢复：所有推文已有回复数据，跳过回复抓取")
@@ -756,31 +765,16 @@ def search(
                 )
 
     if task_id and not time_split_active and ckpt is None:
-        plan = build_time_split_plan(
-            keyword,
-            max_count=max_count,
-            enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-            trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
-            window_days=int(getattr(settings, "x_time_split_window_days", 14)),
-            unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
-            max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
-        )
-        if plan.enabled:
-            return _search_with_time_splits(
-                keyword=keyword,
-                max_count=max_count,
-                product=product,
-                timeout=timeout,
-                task_id=task_id,
-                resume=resume,
-                fetch_replies=fetch_replies,
-                max_replies_per_tweet=max_replies_per_tweet,
-                reply_depth=reply_depth,
-                crawl_strategy=crawl_strategy,
-            )
+        if _get_time_split_plan().enabled:
+            return _dispatch_time_splits()
 
     # ── 2. 启动浏览器标签页 ─────────────────────────────────────────
-    tab = existing_tab or get_new_tab()
+    if existing_tab is not None:
+        tab = existing_tab
+    elif browser_instance is not None:
+        tab = browser_instance.new_tab()
+    else:
+        tab = get_new_tab()
     owns_tab = existing_tab is None
     try:
         # ── 账号池初始化：若启用账号池且有账号，优先使用账号池登录 ──
@@ -789,7 +783,7 @@ def search(
         current_account = None
 
         if account_pool_enabled and pool.get_active_account_count() > 0:
-            current_account = pool.pick_next_account()
+            current_account = pool.pick_account_by_index(slot_id) if slot_id is not None else pool.pick_next_account()
             if current_account:
                 account_login = ensure_login_with_pool_detailed(tab, current_account)
                 if not account_login.ok:
@@ -908,7 +902,8 @@ def search(
                     seen_ids.add(t.get("id", ""))
 
                 # ── 模拟人类阅读：慢慢浏览本页推文 ────────────────────
-                if new_tweets:
+                # 当 DFS 回复抓取启用时跳过模拟阅读，回复抓取本身已提供足够的自然延迟
+                if new_tweets and not fetch_replies:
                     simulate_reading(tab, task_id=task_id, tweet_count=len(new_tweets))
 
                 # ── 每批新推文立即抓取回复（统一 DFS 策略） ───────────
@@ -937,8 +932,13 @@ def search(
                     # 建立索引加速查找
                     _dfs_tweet_index = {t.get("id", ""): t for t in new_tweets}
 
+                    _dfs_reply_progress_counter = 0
+
                     def _on_reply_progress(tweet_id: str, replies: list[dict]):
                         """每条推文回复抓取完成后更新进度，并按批次/时间窗刷新 checkpoint。"""
+                        nonlocal _dfs_reply_progress_counter
+                        _dfs_reply_progress_counter += 1
+
                         # 从原始推文中找到对应记录，合并 replies 后追加到已处理列表
                         orig = _dfs_tweet_index.get(tweet_id)
                         if orig is not None:
@@ -962,10 +962,12 @@ def search(
                                 _update_progress(page_num, interim_tweets)
 
                         # DFS 期间让搜索页保持微滚动（模拟人类偶尔回来看看）
-                        try:
-                            idle_scroll(tab, task_id=task_id)
-                        except Exception:
-                            pass
+                        # 优化：每 3 条推文回复完成才滚动一次，减少不必要的开销
+                        if _dfs_reply_progress_counter % 3 == 0:
+                            try:
+                                idle_scroll(tab, task_id=task_id)
+                            except Exception:
+                                pass
 
                     try:
                         new_tweets, _dfs_failed = _fetch_replies_for_tweets(
@@ -973,6 +975,7 @@ def search(
                             strategy="dfs",
                             progress_callback=_on_reply_progress,
                             reply_depth=reply_depth,
+                            browser_instance=browser_instance,
                         )
                         if task_id:
                             flush_reply_checkpoint(task_id)
@@ -1028,32 +1031,32 @@ def search(
                 # ── 休息节律（长时间爬虫专项，防连续爬取被识别） ──────────
                 if getattr(settings, "crawler_enable_break_rhythm", True) and new_tweets:
                     _total_fetched_now = len(all_tweets)
-                    # 微休息（15% 概率，30-90 秒）
-                    if random.random() < getattr(settings, "crawler_micro_break_chance", 0.15):
-                        _micro_wait = random.uniform(30, 90)
+                    # 微休息（5% 概率，8-20 秒）
+                    if random.random() < getattr(settings, "crawler_micro_break_chance", 0.05):
+                        _micro_wait = random.uniform(8, 20)
                         logger.info(f"微休息 {_micro_wait:.0f}s（模拟阅读有趣内容暂停）...")
                         if task_id:
                             _update_phase(f"微休息中 ({_micro_wait:.0f}s)，稍后继续...")
                         interruptible_sleep(_micro_wait, task_id=task_id)
-                    # 小憩（每 short_break_every_n 条推文，3-8 分钟）
+                    # 小憩（每 short_break_every_n 条推文，60-120 秒）
                     _short_n = getattr(settings, "crawler_short_break_every_n", 250)
                     if _short_n > 0 and _total_fetched_now > 0:
                         prev_count = _total_fetched_now - len(new_tweets)
                         if prev_count // _short_n < _total_fetched_now // _short_n:
-                            _short_wait = random.uniform(180, 480)
+                            _short_wait = random.uniform(60, 120)
                             logger.info(
                                 f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条，模拟起身休息）..."
                             )
                             if task_id:
                                 _update_phase(f"小憩中 ({_short_wait:.0f}s)，稍后继续...")
                             interruptible_sleep(_short_wait, task_id=task_id)
-                    # 长休息（每 long_rest_interval_hours 小时，15-25 分钟）
+                    # 长休息（每 long_rest_interval_hours 小时，6-12 分钟）
                     _rest_h = getattr(settings, "crawler_long_rest_interval_hours", 2.0)
-                    _rest_interval = _rest_h * 3600 * random.uniform(0.75, 1.25)
+                    _rest_interval = _rest_h * 3600 * random.uniform(0.80, 1.20)
                     _now_mono = time.monotonic()
                     _last_rest = max(_crawl_start_time, _long_rest_done_at)
                     if _now_mono - _last_rest >= _rest_interval:
-                        _long_wait = random.uniform(900, 1500)
+                        _long_wait = random.uniform(360, 720)
                         logger.info(
                             f"长休息 {_long_wait/60:.0f}min（运行 {(_now_mono - _crawl_start_time)/3600:.1f}h，模拟离开电脑）..."
                         )
@@ -1180,6 +1183,7 @@ def _fetch_replies_for_tweets(
     strategy: str,
     progress_callback=None,
     reply_depth: int = 2,
+    browser_instance=None,
 ) -> tuple[list[dict], list[dict]]:
     """统一的回复抓取入口（BFS/DFS 共用），返回 (updated_tweets, failed_records)"""
     from crawler.reply_fetcher import fetch_replies_batch
@@ -1198,6 +1202,7 @@ def _fetch_replies_for_tweets(
         progress_callback=on_progress,
         strategy=strategy,
         reply_depth=reply_depth,
+        browser_instance=browser_instance,
     )
 
 

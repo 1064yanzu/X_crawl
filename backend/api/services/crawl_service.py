@@ -12,6 +12,8 @@ from api.services.failed_replies_db import record_failed_replies_batch
 from api.services.task_scheduler import scheduler
 from crawler.browser import ensure_browser_alive, reset_browser
 from crawler.crawl_signals import ChallengeSignal, LoginRequiredPause, StopSignal
+from crawler.account_dispatcher import get_dispatcher
+from crawler.cookie_manager import load_cookies, save_cookies
 from crawler.comment_backfill_runner import run_comment_backfill_task
 from crawler import telemetry
 from crawler.runtime_metrics import clear_metrics, get_metrics, start_task_metrics
@@ -44,6 +46,7 @@ def _build_worker_payload(
 ) -> dict:
     return dict(
         task_id=task_id,
+        account_id=task.get("assigned_account_id"),
         keyword=task["keyword"],
         max_count=task["max_count"],
         product=task["product"],
@@ -74,7 +77,8 @@ def start_crawler_thread(
         force_new_browser=force_new_browser,
         resume=resume,
     )
-    enqueued = scheduler.enqueue(task_id, payload)
+    platform = task.get("platform", "x")
+    enqueued = scheduler.enqueue(task_id, payload, platform=platform)
     if enqueued:
         task_manager.update_task_status(task_id, "pending")
         task_manager.update_task_phase(task_id, "任务已进入调度队列，等待执行...")
@@ -100,6 +104,7 @@ def run_search_task(
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
     source_task_id: Optional[str] = None,
+    account_id: Optional[str] = None,
 ) -> None:
     final_status = "failed"
     task_manager.update_task_status(task_id, "running")
@@ -113,9 +118,31 @@ def run_search_task(
         f"resume={resume}, task_kind={task_kind}"
     )
 
-    if force_new_browser:
-        reset_browser()
-    ensure_browser_alive()
+    # ── 浏览器池模式：并发数>1 时按 slot 分配浏览器实例 ──────────────────
+    # 同一个 slot 内不同平台（X/微博）的任务共享同一个浏览器实例
+    from crawler.browser_pool import get_browser_pool, is_pool_mode_enabled
+    _pool_mode = is_pool_mode_enabled()
+    _browser_instance = None
+    _slot_id: int | None = None
+
+    if _pool_mode:
+        try:
+            pool_obj = get_browser_pool()
+            _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
+        except Exception as e:
+            logger.warning(f"[BrowserPool] 获取实例失败，回退到共享模式: {e}")
+            _pool_mode = False
+            _browser_instance = None
+            _slot_id = None
+
+    if not _pool_mode:
+        if force_new_browser:
+            reset_browser()
+        ensure_browser_alive()
+
+    # 如果指定了账号，注入其 Cookie
+    if account_id:
+        _inject_account_cookies(task_id, account_id)
 
     try:
         if task_kind == "comment_backfill":
@@ -176,6 +203,8 @@ def run_search_task(
                 start_date=start_date,
                 end_date=end_date,
                 fetch_replies=fetch_replies,
+                browser_instance=_browser_instance,
+                slot_id=_slot_id,
             )
             tweets = result.posts
             replies_fetched = sum(
@@ -218,6 +247,8 @@ def run_search_task(
                 max_replies_per_tweet=max_replies_per_tweet,
                 reply_depth=reply_depth,
                 crawl_strategy=crawl_strategy,
+                browser_instance=_browser_instance,
+                slot_id=_slot_id,
             )
             runtime_metrics = get_metrics(task_id)
             quality_state = "partial" if result.failed_replies else "complete"
@@ -333,6 +364,13 @@ def run_search_task(
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
         final_status = "failed"
     finally:
+        # 归还浏览器实例到池中
+        if _pool_mode and _browser_instance is not None:
+            try:
+                from crawler.browser_pool import get_browser_pool
+                get_browser_pool().release(task_id)
+            except Exception as e:
+                logger.warning(f"[BrowserPool] 归还实例失败: {e}")
         task_manager.clear_thread(task_id)
         scheduler.mark_done(task_id)
         if final_status in ("done", "failed", "stopped"):
@@ -349,6 +387,8 @@ def _run_weibo_task(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     fetch_replies: bool = False,
+    browser_instance=None,
+    slot_id: int | None = None,
 ):
     """微博爬虫任务入口（延迟导入，避免启动时加载 bs4）"""
     from crawler.weibo.searcher import search as weibo_search
@@ -362,6 +402,8 @@ def _run_weibo_task(
         fetch_comments=fetch_replies,
         start_date=start_date,
         end_date=end_date,
+        browser_instance=browser_instance,
+        slot_id=slot_id,
     )
 
 
@@ -373,3 +415,70 @@ def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:
         logger.info(f"已记录 {len(failed_records)} 条失败评论抓取: task_id={task_id}")
     except Exception as e:
         logger.error(f"记录失败评论失败: task_id={task_id}, error={e}", exc_info=True)
+
+
+# ─── 账号注入与管理 ────────────────────────────────────────────────────────
+
+def _inject_account_cookies(task_id: str, account_id: str) -> None:
+    """
+    为任务注入指定账号的 Cookie。
+
+    直接将账号 Cookie 注入到浏览器 tab，不写入全局 Cookie 文件，
+    避免并发任务之间互相覆盖 Cookie。
+    """
+    from crawler.account_pool import get_pool
+    from crawler.auth import inject_account_cookies, ensure_login_with_pool_detailed
+
+    pool = get_pool()
+    account = pool.get_account(account_id)
+
+    if not account:
+        logger.warning(f"账号 {account_id} 不存在，跳过注入")
+        return
+
+    logger.info(f"为任务 {task_id[:8]} 注入账号 {account.alias} 的 Cookie...")
+
+    try:
+        from crawler.browser import get_new_tab
+        tab = get_new_tab()
+
+        # 直接将账号 Cookie 注入 tab，不经过全局文件
+        injected = inject_account_cookies(tab, account)
+
+        if injected > 0:
+            logger.info(f"账号 {account.alias} 已注入 {injected} 条 Cookie")
+            pool.mark_account_used(account_id)
+        else:
+            logger.warning(f"账号 {account.alias} 无 Cookie 可注入")
+            pool.mark_account_invalid(account_id)
+
+    except Exception as e:
+        logger.error(f"注入账号 Cookie 失败: {e}", exc_info=True)
+        pool.mark_account_invalid(account_id)
+
+
+def _handle_task_account_lifecycle(task_id: str) -> None:
+    """
+    处理任务的账号生命周期：
+    1. 任务开始时分配账号
+    2. 任务结束时释放账号
+    """
+    dispatcher = get_dispatcher()
+
+    # 尝试为任务分配账号
+    account = dispatcher.assign_account(task_id)
+    if account:
+        task_manager.bind_account(task_id, account.account_id, account.alias)
+        logger.info(f"为任务 {task_id[:8]} 分配账号 {account.alias}")
+    else:
+        logger.debug(f"暂无可用账号分配给任务 {task_id[:8]}")
+
+
+def _release_task_account(task_id: str) -> None:
+    """
+    释放任务占用的账号。
+    """
+    dispatcher = get_dispatcher()
+    if dispatcher.release_account(task_id):
+        task_manager.release_account(task_id)
+        logger.info(f"已释放任务 {task_id[:8]} 的账号")

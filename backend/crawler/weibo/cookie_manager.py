@@ -25,12 +25,104 @@ def load_cookies() -> list[dict]:
         return []
 
 
-def save_cookies(cookies: list[dict]) -> None:
-    """持久化 Cookie 列表到磁盘。"""
+def _extract_weibo_account_id(cookies: list[dict]) -> str:
+    """
+    从一组微博 cookie 中提取账号标识（SUB 值）。
+    整组 cookie 共享同一个账号标识。
+    """
+    for c in cookies:
+        if c.get("name") == "SUB":
+            return c.get("value", "unknown")
+    return "unknown"
+
+
+def _group_weibo_cookies_by_account(cookies: list[dict]) -> dict[str, list[dict]]:
+    """
+    将微博 cookie 列表按账号分组。
+    
+    策略：先找出所有 SUB cookie 确定账号列表，
+    然后将其他 cookie 通过位置就近原则分配到对应账号。
+    
+    Returns:
+        {sub_value: [cookies], ...}
+    """
+    if not cookies:
+        return {}
+    
+    # 找出所有 SUB 的位置和值
+    sub_positions: list[tuple[int, str]] = []
+    for i, c in enumerate(cookies):
+        if c.get("name") == "SUB":
+            sub_val = c.get("value", "unknown")
+            sub_positions.append((i, sub_val))
+    
+    if not sub_positions:
+        return {"unknown": list(cookies)}
+    
+    if len(sub_positions) == 1:
+        return {sub_positions[0][1]: list(cookies)}
+    
+    # 多账号：按 SUB 位置切割，每个 cookie 归属最近的 SUB
+    groups: dict[str, list[dict]] = {}
+    for _, sub_val in sub_positions:
+        groups.setdefault(sub_val, [])
+    
+    for i, c in enumerate(cookies):
+        closest_sub = sub_positions[0][1]
+        min_dist = abs(i - sub_positions[0][0])
+        for pos, sub_val in sub_positions:
+            dist = abs(i - pos)
+            if dist < min_dist:
+                min_dist = dist
+                closest_sub = sub_val
+        groups[closest_sub].append(c)
+    
+    return groups
+
+
+def save_cookies(cookies: list[dict], merge: bool = True) -> None:
+    """
+    持久化 Cookie 列表到磁盘。
+    
+    Args:
+        cookies: Cookie 列表
+        merge: 是否合并模式（True=追加/更新，False=覆盖）
+    
+    合并模式逻辑（支持多账号）：
+    - 先从整组新 cookie 中提取 SUB 值确定账号标识
+    - 同账号的 cookie 整组替换，不同账号的 cookie 保留
+    """
     try:
-        WEIBO_COOKIES_PATH.write_text(
-            json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        if merge:
+            existing = load_cookies()
+            
+            # 从新 cookie 整组提取账号标识
+            new_account_id = _extract_weibo_account_id(cookies)
+            
+            # 从现有 cookie 按账号分组
+            existing_groups = _group_weibo_cookies_by_account(existing)
+            
+            # 用新 cookie 整组替换同账号的 cookie
+            existing_groups[new_account_id] = cookies
+            
+            # 合并所有账号的 cookie
+            merged = []
+            for group_cookies in existing_groups.values():
+                merged.extend(group_cookies)
+            
+            WEIBO_COOKIES_PATH.write_text(
+                json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            logger.info(
+                f"已合并保存微博账号 {new_account_id[:16]}... 的 {len(cookies)} 条 Cookie"
+                f"（总计 {len(merged)} 条，{len(existing_groups)} 个账号）"
+            )
+        else:
+            # 覆盖模式（用于清空）
+            WEIBO_COOKIES_PATH.write_text(
+                json.dumps(cookies, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            logger.info(f"已覆盖保存 {len(cookies)} 条微博 Cookie")
     except Exception as e:
         logger.error(f"保存微博 Cookie 失败: {e}")
 

@@ -51,26 +51,126 @@ def get_cookie_dict(path: Optional[str] = None) -> dict[str, str]:
 
 # ─── 写入 ──────────────────────────────────────────────────────────────────
 
-def save_cookies(cookies: list[dict], path: Optional[str] = None) -> None:
+def _extract_group_user_id(cookies: list[dict]) -> str:
     """
-    将 Cookie 列表持久化写入文件（覆盖）。
-    cookies: [{"name": ..., "value": ..., "domain": ...}, ...]
+    从一组 cookie 中提取 user_id（通过 twid cookie）。
+    整组 cookie 共享同一个 user_id，用于多账号分组。
+    """
+    from urllib.parse import unquote
+    for c in cookies:
+        if c.get("name") == "twid":
+            val = unquote(c.get("value", ""))
+            if val.startswith("u="):
+                return val[2:]
+            return val or "unknown"
+    return "unknown"
+
+
+def save_cookies(cookies: list[dict], path: Optional[str] = None, merge: bool = True) -> None:
+    """
+    将 Cookie 列表持久化写入文件。
+    
+    Args:
+        cookies: [{"name": ..., "value": ..., "domain": ...}, ...]
+        path: 文件路径（默认 ~/.xcrawl-cookies.json）
+        merge: 是否合并模式（True=追加/更新，False=覆盖）
+    
+    合并模式逻辑（支持多账号）：
+    - 先从整组新 cookie 中提取 twid 确定 user_id
+    - 按 (user_id, name, domain) 作为唯一键
+    - 同账号同名同域的 cookie 会被覆盖，不同账号的 cookie 保留
     """
     fp = get_cookies_file(path)
     with _lock:
         try:
             fp.parent.mkdir(parents=True, exist_ok=True)
-            with fp.open("w", encoding="utf-8") as f:
-                json.dump(cookies, f, ensure_ascii=False, indent=2)
-            logger.info(f"已保存 {len(cookies)} 条 Cookie 到 {fp}")
+            
+            if merge:
+                existing = load_cookies(path)
+                
+                # 从新 cookie 整组提取 user_id（所有 cookie 共享同一 user_id）
+                new_user_id = _extract_group_user_id(cookies)
+                
+                # 从现有 cookie 按账号分组
+                existing_groups = _group_cookies_by_user(existing)
+                
+                # 用新 cookie 覆盖同账号的所有 cookie
+                existing_groups[new_user_id] = cookies
+                
+                # 合并所有账号的 cookie
+                merged = []
+                for group_cookies in existing_groups.values():
+                    merged.extend(group_cookies)
+                
+                with fp.open("w", encoding="utf-8") as f:
+                    json.dump(merged, f, ensure_ascii=False, indent=2)
+                logger.info(
+                    f"已合并保存账号 {new_user_id} 的 {len(cookies)} 条 Cookie"
+                    f"（总计 {len(merged)} 条，{len(existing_groups)} 个账号）到 {fp}"
+                )
+            else:
+                with fp.open("w", encoding="utf-8") as f:
+                    json.dump(cookies, f, ensure_ascii=False, indent=2)
+                logger.info(f"已覆盖保存 {len(cookies)} 条 Cookie 到 {fp}")
         except Exception as e:
             logger.error(f"写入 Cookie 文件失败: {e}")
             raise
 
 
+def _group_cookies_by_user(cookies: list[dict]) -> dict[str, list[dict]]:
+    """
+    将 cookie 列表按账号分组。
+    
+    策略：先找出所有 twid cookie 确定账号列表和 auth_token 对应关系，
+    然后将其他 cookie 通过位置就近原则分配到对应账号。
+    
+    Returns:
+        {user_id: [cookies], ...}
+    """
+    from urllib.parse import unquote
+    
+    if not cookies:
+        return {}
+    
+    # 找出所有 twid 的位置和 user_id
+    twid_positions: list[tuple[int, str]] = []
+    for i, c in enumerate(cookies):
+        if c.get("name") == "twid":
+            val = unquote(c.get("value", ""))
+            uid = val[2:] if val.startswith("u=") else (val or "unknown")
+            twid_positions.append((i, uid))
+    
+    if not twid_positions:
+        # 没有 twid，所有 cookie 归为 unknown 组
+        return {"unknown": list(cookies)}
+    
+    if len(twid_positions) == 1:
+        # 只有一个账号，所有 cookie 都属于它
+        return {twid_positions[0][1]: list(cookies)}
+    
+    # 多账号：按 twid 位置切割，每个 twid 前后的 cookie 归属最近的 twid
+    # 先建立 cookie index -> user_id 的映射
+    groups: dict[str, list[dict]] = {}
+    for uid in dict(twid_positions).values():
+        groups.setdefault(uid, [])
+    
+    for i, c in enumerate(cookies):
+        # 找到最近的 twid
+        closest_uid = twid_positions[0][1]
+        min_dist = abs(i - twid_positions[0][0])
+        for pos, uid in twid_positions:
+            dist = abs(i - pos)
+            if dist < min_dist:
+                min_dist = dist
+                closest_uid = uid
+        groups[closest_uid].append(c)
+    
+    return groups
+
+
 def clear_cookies(path: Optional[str] = None) -> None:
     """清空本地持久化 Cookie"""
-    save_cookies([], path)
+    save_cookies([], path, merge=False)
     logger.info("已清空本地 Cookie")
 
 

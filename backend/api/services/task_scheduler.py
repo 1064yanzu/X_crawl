@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 class ScheduledTask:
     task_id: str
     payload: dict
+    platform: str = "x"
 
 
 class SchedulerBackend(Protocol):
@@ -64,10 +65,13 @@ class TaskScheduler:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._running: dict[str, threading.Thread] = {}
+        self._running_platforms: dict[str, str] = {}  # task_id -> platform
         self._queued_ids: set[str] = set()
         self._queued_order: list[str] = []
+        self._queued_platforms: dict[str, str] = {}  # task_id -> platform
         self._executor: Optional[Callable[[str, dict], threading.Thread]] = None
         self._backend: SchedulerBackend = self._make_backend()
+        self._pending_items: list[ScheduledTask] = []  # 暂时无法调度的任务（平台槽满）
         self._dispatch_thread = threading.Thread(
             target=self._dispatch_loop,
             daemon=True,
@@ -93,21 +97,30 @@ class TaskScheduler:
             self._backend = self._make_backend()
             logger.info(f"调度后端已刷新: {settings.scheduler_backend}")
 
-    def enqueue(self, task_id: str, payload: dict) -> bool:
+    def enqueue(self, task_id: str, payload: dict, platform: str = "x") -> bool:
         with self._lock:
             if task_id in self._running or task_id in self._queued_ids:
                 return False
             self._queued_ids.add(task_id)
             self._queued_order.append(task_id)
-            self._backend.put(ScheduledTask(task_id=task_id, payload=payload))
+            self._queued_platforms[task_id] = platform
+            self._backend.put(ScheduledTask(task_id=task_id, payload=payload, platform=platform))
             return True
 
     def mark_done(self, task_id: str) -> None:
         with self._lock:
             self._running.pop(task_id, None)
+            self._running_platforms.pop(task_id, None)
             self._queued_ids.discard(task_id)
+            self._queued_platforms.pop(task_id, None)
             if task_id in self._queued_order:
                 self._queued_order = [tid for tid in self._queued_order if tid != task_id]
+            pending_count = len(self._pending_items)
+            running_count = self._running_count()
+            logger.info(
+                "调度器 mark_done: task=%s, 剩余运行=%d, pending队列=%d, backend队列=%d",
+                task_id[:8], running_count, pending_count, self._backend.size(),
+            )
 
     def is_running(self, task_id: str) -> bool:
         with self._lock:
@@ -133,8 +146,35 @@ class TaskScheduler:
         except Exception:
             return configured
 
+    def _cross_platform_concurrent(self) -> bool:
+        return bool(getattr(settings, "crawler_cross_platform_concurrent", True))
+
+    def _platform_running_count(self, platform: str) -> int:
+        with self._lock:
+            return sum(
+                1 for tid, p in self._running_platforms.items()
+                if p == platform and tid in self._running and self._running[tid].is_alive()
+            )
+
+    def _can_dispatch(self, platform: str) -> bool:
+        """判断指定平台是否可以调度新任务。"""
+        max_w = self._max_workers()
+        total_running = self._running_count()
+
+        if not self._cross_platform_concurrent():
+            # 关闭跨平台并发时，退化为全局串行
+            return total_running < max_w
+
+        # 跨平台并发：每个平台独占自己的并发槽，不同平台可同时运行
+        # 每个平台最多运行 max_w 个任务
+        platform_running = self._platform_running_count(platform)
+        return platform_running < max_w
+
     def effective_worker_limit(self) -> int:
         return self._max_workers()
+
+    def cross_platform_concurrent(self) -> bool:
+        return self._cross_platform_concurrent()
 
     def _dispatch_loop(self) -> None:
         while True:
@@ -143,31 +183,77 @@ class TaskScheduler:
                 if self._executor is None:
                     time.sleep(0.2)
                     continue
-                if self._running_count() >= self._max_workers():
-                    time.sleep(0.2)
-                    continue
+
+                # 先尝试从 pending_items 中调度之前因平台槽满被暂缓的任务
+                dispatched_from_pending = self._try_dispatch_pending()
 
                 item = self._backend.get(timeout=0.5)
                 if not item:
+                    if not dispatched_from_pending:
+                        time.sleep(0.1)
                     continue
 
-                with self._lock:
-                    self._queued_ids.discard(item.task_id)
-                    if item.task_id in self._queued_order:
-                        self._queued_order = [tid for tid in self._queued_order if tid != item.task_id]
-                    if item.task_id in self._running:
-                        continue
-                    thread = self._executor(item.task_id, item.payload)
-                    self._running[item.task_id] = thread
+                # 检查该任务所在平台是否可调度
+                if not self._can_dispatch(item.platform):
+                    # 平台槽满，放入 pending 等待
+                    with self._lock:
+                        self._pending_items.append(item)
+                    continue
+
+                self._do_dispatch(item)
             except Exception as e:
                 logger.error(f"调度器循环异常: {e}", exc_info=True)
                 time.sleep(0.5)
+
+    def _try_dispatch_pending(self) -> bool:
+        """尝试从 pending 列表中找到可调度的任务并执行。"""
+        dispatched = False
+        with self._lock:
+            if self._pending_items:
+                logger.debug(
+                    "_try_dispatch_pending: pending=%d, running=%d, items=%s",
+                    len(self._pending_items), self._running_count(),
+                    [f"{it.task_id[:8]}({it.platform})" for it in self._pending_items],
+                )
+            still_pending: list[ScheduledTask] = []
+            for item in self._pending_items:
+                if item.task_id in self._running:
+                    # 已经在运行了（不应发生），丢弃
+                    continue
+                if self._can_dispatch(item.platform):
+                    self._do_dispatch_locked(item)
+                    dispatched = True
+                else:
+                    still_pending.append(item)
+            self._pending_items = still_pending
+        return dispatched
+
+    def _do_dispatch(self, item: ScheduledTask) -> None:
+        with self._lock:
+            self._do_dispatch_locked(item)
+
+    def _do_dispatch_locked(self, item: ScheduledTask) -> None:
+        """在持有 _lock 的情况下执行调度（内部方法）。"""
+        self._queued_ids.discard(item.task_id)
+        self._queued_platforms.pop(item.task_id, None)
+        if item.task_id in self._queued_order:
+            self._queued_order = [tid for tid in self._queued_order if tid != item.task_id]
+        if item.task_id in self._running:
+            return
+        thread = self._executor(item.task_id, item.payload)
+        self._running[item.task_id] = thread
+        self._running_platforms[item.task_id] = item.platform
+        logger.info(
+            "调度器启动任务: task_id=%s, platform=%s, 当前运行=%s",
+            item.task_id[:8], item.platform, self._running_count(),
+        )
 
     def _cleanup_dead_threads(self) -> None:
         with self._lock:
             dead = [tid for tid, t in self._running.items() if not t.is_alive()]
             for tid in dead:
                 self._running.pop(tid, None)
+                self._running_platforms.pop(tid, None)
 
     def _running_count(self) -> int:
         with self._lock:

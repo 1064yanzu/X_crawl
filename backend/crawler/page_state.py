@@ -44,11 +44,28 @@ _RATE_LIMIT_MARKERS = [
     "访问过于频繁",
 ]
 
-_LOGIN_MARKERS = [
-    "log in",
-    "sign in",
-    "登录",
-    "登入",
+# 强登录拦截标记：仅当页面主体出现这些明确的拦截性提示时才判定 login_required
+# 注意：不要使用 "log in" / "sign in" 这类过于宽泛的词——
+# X 的正常页面顶栏始终包含 "Log in" / "Sign in" 按钮文字，会导致误判
+_LOGIN_MARKERS_STRONG = [
+    "log in to x",
+    "sign in to x",
+    "sign in to twitter",
+    "log in to twitter",
+    "you need to log in",
+    "you must be logged in",
+    "please log in",
+    "please sign in",
+    "create an account",          # X 的登录拦截弹窗常见文案
+    "don\u2019t miss what\u2019s happening",  # X 登录弹窗经典文案
+    "don't miss what's happening", # 同上 ASCII 版
+    "see what\u2019s happening",
+    "join x today",
+    "join twitter today",
+    "登录以继续",
+    "请登录",
+    "需要登录",
+    "登录后查看",
 ]
 
 
@@ -95,7 +112,7 @@ def detect_page_state(tab) -> tuple[PageState, str]:
     if any(marker in text for marker in _TRANSIENT_ERROR_MARKERS):
         return PageState.TRANSIENT_ERROR, "命中临时错误页特征"
 
-    if any(marker in text for marker in _LOGIN_MARKERS) and "x.com" in url and "home" not in url:
+    if any(marker in text for marker in _LOGIN_MARKERS_STRONG):
         return PageState.LOGIN_REQUIRED, "命中登录提示特征"
 
     return PageState.OK, "页面状态正常"

@@ -157,7 +157,9 @@ async def pause_task(task_id: str) -> dict:
     ),
 )
 async def resume_task(task_id: str) -> dict:
-    """继续指定任务（支持已暂停和已结束的任务）"""
+    """继续指定任务（支持已暂停和已结束的任务）。
+    并发模式下，如果该任务属于队列，会自动恢复同队列其他暂停/停止的任务。
+    """
     task = task_manager.get_task_summary(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
@@ -173,11 +175,12 @@ async def resume_task(task_id: str) -> dict:
         if not success:
             raise HTTPException(status_code=409, detail=f"任务恢复失败: {task_id}")
         if needs_queue:
-            # 队列中有其他任务在跑，排队等待
             task_queue_manager.enqueue_resumed_task(task_id)
             return {"message": f"任务 {task_id} 已恢复并加入队列排队等待", "status": "pending"}
         task_queue_manager.mark_task_resuming(task_id)
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+        # 并发模式：自动恢复同队列其他任务
+        _auto_resume_queue_siblings(task)
         return {"message": f"任务 {task_id} 已恢复并加入调度队列", "status": "pending"}
 
     # ── 已暂停的任务：唤醒或重启 ──
@@ -189,7 +192,6 @@ async def resume_task(task_id: str) -> dict:
         )
 
     if needs_queue:
-        # 队列中有其他任务在跑，终止当前暂停线程并排队等待
         if task_manager.is_thread_alive(task_id):
             task_manager.send_signal(task_id, "stop")
         task_manager.resume_finished_task(task_id)
@@ -197,16 +199,40 @@ async def resume_task(task_id: str) -> dict:
         return {"message": f"任务 {task_id} 已恢复并加入队列排队等待", "status": "pending"}
 
     if task_manager.is_thread_alive(task_id):
-        # 爬虫线程还活着，只需发送 run 信号即可唤醒轮询
         task_manager.resume_task(task_id)
         task_queue_manager.mark_task_resuming(task_id)
+        # 并发模式：自动恢复同队列其他任务
+        _auto_resume_queue_siblings(task)
         return {"message": f"任务 {task_id} 继续信号已发送", "status": "running"}
     else:
-        # 爬虫线程已死（浏览器被关闭等），重新入队从断点恢复
         task_manager.resume_task(task_id)
         task_queue_manager.mark_task_resuming(task_id)
         crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+        # 并发模式：自动恢复同队列其他任务
+        _auto_resume_queue_siblings(task)
         return {"message": f"任务 {task_id} 已重新加入调度队列，从断点恢复", "status": "pending"}
+
+
+def _auto_resume_queue_siblings(task: dict) -> None:
+    """并发模式下，自动恢复同队列中其他暂停/停止的任务。"""
+    import logging
+    from config import settings
+    _logger = logging.getLogger(__name__)
+    max_concurrent = int(settings.crawler_max_concurrent_tasks)
+    if max_concurrent <= 1:
+        return
+    queue_id = task.get("queue_id")
+    if not queue_id:
+        _logger.debug("_auto_resume_queue_siblings: task 无 queue_id，跳过")
+        return
+    try:
+        result = task_queue_manager.resume_queue(queue_id)
+        _logger.info(
+            "_auto_resume_queue_siblings: queue=%s, resumed=%s, already_running=%s, skipped=%s",
+            queue_id, result["resumed"], result["already_running"], result["skipped"],
+        )
+    except Exception as e:
+        _logger.error("_auto_resume_queue_siblings 失败: queue=%s, error=%s", queue_id, e, exc_info=True)
 
 
 @router.post(

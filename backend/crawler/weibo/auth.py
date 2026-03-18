@@ -5,18 +5,49 @@
 1. 必须先导航到目标域名，再注入 Cookie，否则 browser 不会接受 .weibo.com 域的 Cookie
 2. 支持为 s.weibo.com（搜索）和 weibo.com（评论API）两个域名注入 Cookie
 3. 为搜索页单独准备 Cookie，确保 s.weibo.com 上的 Cookie 可用
+4. 支持按指定账号注入 Cookie，避免多账号并发时 Cookie 互相覆盖
 """
 from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
-def ensure_weibo_login(tab) -> bool:
+def _get_account_cookies(account_cookies: Optional[list[dict]] = None) -> list[dict]:
+    """
+    获取要注入的 Cookie 列表。
+    优先使用传入的账号 Cookie，否则从账号池取第一个可用账号，
+    最后回退到全局 Cookie 文件。
+    """
+    if account_cookies:
+        return account_cookies
+
+    # 尝试从微博账号池取第一个可用账号
+    try:
+        from .account_pool import get_weibo_pool
+        pool = get_weibo_pool()
+        account = pool.pick_next_account()
+        if account and account.cookies:
+            logger.debug(f"使用微博账号 {account.alias!r} 的 Cookie")
+            return account.cookies
+    except Exception:
+        pass
+
+    # 回退到全局 Cookie 文件
+    from .cookie_manager import load_cookies
+    return load_cookies()
+
+
+def ensure_weibo_login(tab, account_cookies: Optional[list[dict]] = None) -> bool:
     """
     注入 Cookie 并验证微博登录状态。
+
+    Args:
+        tab: 浏览器 tab
+        account_cookies: 指定账号的 Cookie 列表。为 None 时自动从账号池或全局文件获取。
 
     流程：
     1. 先导航到 weibo.com（让浏览器处于 .weibo.com 域下）
@@ -25,9 +56,9 @@ def ensure_weibo_login(tab) -> bool:
 
     返回 True 代表已登录，False 代表需要手动登录。
     """
-    from .cookie_manager import load_cookies, inject_cookies_to_tab, has_weibo_login
+    from .cookie_manager import inject_cookies_to_tab, has_weibo_login
 
-    cookies = load_cookies()
+    cookies = _get_account_cookies(account_cookies)
     if not cookies:
         return False
 
@@ -62,17 +93,21 @@ def ensure_weibo_login(tab) -> bool:
     return logged_in
 
 
-def ensure_search_cookies(tab) -> None:
+def ensure_search_cookies(tab, account_cookies: Optional[list[dict]] = None) -> None:
     """
     为 s.weibo.com 搜索页准备 Cookie。
+
+    Args:
+        tab: 浏览器 tab
+        account_cookies: 指定账号的 Cookie 列表。为 None 时自动从账号池或全局文件获取。
 
     s.weibo.com 与 weibo.com 共享 .weibo.com 域的 Cookie，
     但某些 Cookie（如 PC_TOKEN）只在访问 s.weibo.com 时由服务端下发。
     此方法先导航到 s.weibo.com，触发服务端 Set-Cookie，确保搜索请求不会被拦截。
     """
-    from .cookie_manager import load_cookies, inject_cookies_to_tab
+    from .cookie_manager import inject_cookies_to_tab
 
-    cookies = load_cookies()
+    cookies = _get_account_cookies(account_cookies)
     if not cookies:
         return
 

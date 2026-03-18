@@ -2,14 +2,21 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { MessageSquareText, Settings, TerminalSquare } from "lucide-react";
+import { FileUp, MessageSquareText, Settings, TerminalSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PostSearchTaskBuilder } from "@/components/features/PostSearchTaskBuilder";
 import { CommentBackfillBuilder } from "@/components/features/CommentBackfillBuilder";
+import { BatchImportBuilder } from "@/components/features/BatchImportBuilder";
 
-type BuilderMode = "search" | "comment_backfill";
+type BuilderMode = "search" | "comment_backfill" | "batch_import";
+
+const MODE_ICONS: Record<BuilderMode, React.ElementType> = {
+    search: TerminalSquare,
+    comment_backfill: MessageSquareText,
+    batch_import: FileUp,
+};
 
 const MODE_OPTIONS: Array<{
     value: BuilderMode;
@@ -25,6 +32,11 @@ const MODE_OPTIONS: Array<{
         value: "comment_backfill",
         label: "评论补采",
         description: "导入历史导出文件，只回补有评论的原帖。",
+    },
+    {
+        value: "batch_import",
+        label: "批量导入",
+        description: "文本或文件批量导入多个关键词，创建队列顺序执行。",
     },
 ];
 
@@ -53,9 +65,10 @@ export function CrawlerTaskBuilder() {
                     </Link>
                 </div>
 
-                <div className="mt-5 grid gap-2 rounded-[1.25rem] border border-border/60 bg-background/60 p-2 sm:grid-cols-2">
+                <div className="mt-5 grid gap-2 rounded-[1.25rem] border border-border/60 bg-background/60 p-2 sm:grid-cols-3">
                     {MODE_OPTIONS.map((option) => {
                         const active = mode === option.value;
+                        const Icon = MODE_ICONS[option.value];
                         return (
                             <button
                                 key={option.value}
@@ -67,7 +80,7 @@ export function CrawlerTaskBuilder() {
                                 )}
                             >
                                 <div className="flex items-center gap-2">
-                                    {option.value === "comment_backfill" ? <MessageSquareText className="h-4 w-4 text-primary" /> : <TerminalSquare className="h-4 w-4 text-primary" />}
+                                    <Icon className="h-4 w-4 text-primary" />
                                     <span className="font-medium">{option.label}</span>
                                 </div>
                                 <p className="mt-2 text-xs leading-5 text-muted-foreground">{option.description}</p>
@@ -78,7 +91,9 @@ export function CrawlerTaskBuilder() {
             </CardHeader>
 
             <CardContent className="p-0">
-                {mode === "search" ? <PostSearchTaskBuilder /> : <CommentBackfillBuilder />}
+                {mode === "search" && <PostSearchTaskBuilder />}
+                {mode === "comment_backfill" && <CommentBackfillBuilder />}
+                {mode === "batch_import" && <BatchImportBuilder />}
             </CardContent>
         </Card>
     );

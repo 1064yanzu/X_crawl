@@ -1,7 +1,8 @@
 "use client";
-import { Globe } from "lucide-react";
+import { Globe, Users } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { WeiboCookieManager } from "@/components/features/WeiboCookieManager";
+import { WeiboAccountPoolCard } from "@/components/features/WeiboAccountPoolCard";
 
 export default function WeiboSettingsPage() {
     return (
@@ -17,6 +18,20 @@ export default function WeiboSettingsPage() {
                 </CardHeader>
                 <CardContent>
                     <WeiboCookieManager />
+                </CardContent>
+            </Card>
+
+            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+                <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-xl">
+                        <Users className="h-5 w-5 text-orange-500" /> 微博多账号池
+                    </CardTitle>
+                    <CardDescription>
+                        保存 Cookie 后账号会自动同步到这里。多账号能分摊速率限制，提高长时间运行任务的稳定性。
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <WeiboAccountPoolCard />
                 </CardContent>
             </Card>
         </div>

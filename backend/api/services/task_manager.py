@@ -111,6 +111,8 @@ def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: 
         "start_date": None,
         "end_date": None,
         "debug_screenshot": None,
+        "assigned_account_id": None,
+        "account_alias": None,
     }
 
 
@@ -1086,3 +1088,53 @@ def delete_task(task_id: str) -> bool:
     except Exception as e:
         logger.error(f"从数据库删除任务失败 task_id={task_id}: {e}")
     return True
+
+
+# ─── 账号绑定管理 ──────────────────────────────────────────────────────────
+
+def bind_account(task_id: str, account_id: str, account_alias: str) -> bool:
+    """
+    为任务绑定账号。
+
+    返回：
+        bool: 是否成功绑定
+    """
+    with _tasks_lock:
+        if task_id not in _tasks:
+            return False
+        _tasks[task_id]["assigned_account_id"] = account_id
+        _tasks[task_id]["account_alias"] = account_alias
+        _touch(_tasks[task_id])
+        _mark_persist(task_id)
+        return True
+
+
+def release_account(task_id: str) -> bool:
+    """
+    释放任务的账号绑定。
+
+    返回：
+        bool: 是否成功释放
+    """
+    with _tasks_lock:
+        if task_id not in _tasks:
+            return False
+        _tasks[task_id]["assigned_account_id"] = None
+        _tasks[task_id]["account_alias"] = None
+        _touch(_tasks[task_id])
+        _mark_persist(task_id)
+        return True
+
+
+def get_task_account(task_id: str) -> tuple[Optional[str], Optional[str]]:
+    """
+    获取任务绑定的账号。
+
+    返回：
+        (account_id, account_alias) 或 (None, None)
+    """
+    with _tasks_lock:
+        if task_id not in _tasks:
+            return None, None
+        task = _tasks[task_id]
+        return task.get("assigned_account_id"), task.get("account_alias")

@@ -13,6 +13,7 @@ const DEFAULT_CONFIG: CrawlerConfig = {
     crawler_challenge_retry_times: 2,
     crawler_challenge_cooldown: 8,
     crawler_max_concurrent_tasks: 1,
+    crawler_cross_platform_concurrent: true,
     scheduler_backend: "memory",
     crawler_adaptive_wait_enabled: true,
     crawler_page_interval_min: 2.5,

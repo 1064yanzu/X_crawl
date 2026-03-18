@@ -87,6 +87,12 @@ export function CrawlerConfigCard() {
                                 checked={Boolean(config.x_auto_time_split_enabled)}
                                 onChange={(checked) => setConfig((prev) => ({ ...prev, x_auto_time_split_enabled: checked }))}
                             />
+                            <ToggleField
+                                label="跨平台并发"
+                                description="允许 X 和微博任务同时运行，共享浏览器但各占独立调度槽位。"
+                                checked={Boolean(config.crawler_cross_platform_concurrent ?? true)}
+                                onChange={(checked) => setConfig((prev) => ({ ...prev, crawler_cross_platform_concurrent: checked }))}
+                            />
                             <div className="rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
                                 <div className="flex items-center justify-between gap-3">
                                     <div>

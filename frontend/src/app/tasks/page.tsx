@@ -13,6 +13,7 @@ import { StatCard } from "@/components/ui/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TaskBatchActions } from "@/components/features/tasks/TaskBatchActions";
+import { BatchExportDialog } from "@/components/features/tasks/BatchExportDialog";
 import { TaskFiltersBar } from "@/components/features/tasks/TaskFiltersBar";
 import { TaskListCard } from "@/components/features/tasks/TaskListCard";
 import { TaskPreviewDrawer, TaskPreviewPanel } from "@/components/features/tasks/TaskPreview";
@@ -30,8 +31,9 @@ export default function TasksPage() {
     const [resumingId, setResumingId] = React.useState<string | null>(null);
     const [backfillingId, setBackfillingId] = React.useState<string | null>(null);
     const [deleteId, setDeleteId] = React.useState<string | null>(null);
-    const [batchAction, setBatchAction] = React.useState<"resume" | "backfill" | "delete" | null>(null);
+    const [batchAction, setBatchAction] = React.useState<"resume" | "backfill" | "delete" | "export" | null>(null);
     const [confirmBatchDelete, setConfirmBatchDelete] = React.useState(false);
+    const [showBatchExport, setShowBatchExport] = React.useState(false);
 
     const {
         searchInputRef,
@@ -71,6 +73,12 @@ export default function TasksPage() {
         [selectedTasks],
     );
     const backfillableSelectedCount = backfillableSelectedTasks.length;
+
+    const exportableSelectedTasks = React.useMemo(
+        () => selectedTasks.filter((task) => task.result_count > 0),
+        [selectedTasks],
+    );
+    const exportableSelectedCount = exportableSelectedTasks.length;
 
     const handleDelete = async (taskId: string) => {
         try {
@@ -269,6 +277,7 @@ export default function TasksPage() {
                 <TaskBatchActions
                     searchedCount={searchedTasks.length}
                     selectedCount={selectedCount}
+                    exportableSelectedCount={exportableSelectedCount}
                     resumableSelectedCount={resumableSelectedCount}
                     backfillableSelectedCount={backfillableSelectedCount}
                     allVisibleSelected={allVisibleSelected}
@@ -277,6 +286,7 @@ export default function TasksPage() {
                     onClearSelection={clearSelection}
                     onBatchResume={() => void handleBatchResume()}
                     onBatchCommentBackfill={() => void handleCreateCommentBackfill(backfillableSelectedTasks.map((task) => task.task_id))}
+                    onBatchExport={() => setShowBatchExport(true)}
                     onBatchDelete={() => setConfirmBatchDelete(true)}
                 />
 
@@ -371,6 +381,14 @@ export default function TasksPage() {
                     }}
                 />
             </div>
+
+            <BatchExportDialog
+                open={showBatchExport}
+                taskIds={exportableSelectedTasks.map((task) => task.task_id)}
+                onClose={() => setShowBatchExport(false)}
+                onSuccess={(msg) => push({ type: "success", title: msg })}
+                onError={(msg) => push({ type: "error", title: "批量导出失败", description: msg })}
+            />
 
             <TaskPreviewDrawer
                 task={previewTask}

@@ -173,6 +173,26 @@ export interface CommentBackfillFromTasksResponse {
     sources: CommentBackfillTaskSourceSummary[];
 }
 
+// 批量导入
+export interface BatchImportTask {
+    keyword: string;
+    max_count: number;
+    product: "Top" | "Latest" | "Photos" | "Videos";
+    platform: Platform;
+    fetch_replies: boolean;
+    reply_depth: number;
+    max_replies_per_tweet: number;
+    crawl_strategy: CrawlStrategy;
+    start_date?: string | null;
+    end_date?: string | null;
+}
+
+export interface BatchImportParseResult {
+    total: number;
+    tasks: BatchImportTask[];
+    errors: string[];
+}
+
 export interface HealthResponse {
     status: string;
     browser_detected: boolean;
@@ -192,6 +212,7 @@ export interface CrawlerConfig {
     crawler_challenge_retry_times: number;
     crawler_challenge_cooldown: number;
     crawler_max_concurrent_tasks: number;
+    crawler_cross_platform_concurrent?: boolean;
     scheduler_backend?: "memory" | "redis";
     crawler_adaptive_wait_enabled?: boolean;
     crawler_page_interval_min?: number;
@@ -291,6 +312,33 @@ export interface IntervalSuggestion {
     tweet_detail_interval_max: number;
     tweet_detail_safe_interval: number;
     note: string;
+}
+
+// 微博账号池相关类型
+export interface WeiboAccountOut {
+    account_id: string;
+    alias: string;
+    enabled: boolean;
+    is_valid: boolean;
+    is_rate_limited: boolean;
+    cookie_count: number;
+    use_count: number;
+    fail_count: number;
+    added_at: number;
+    last_used_at: number;
+    last_validated_at: number;
+    rate_reset_at: number;
+}
+
+export interface AddWeiboAccountRequest {
+    alias: string;
+    cookies?: Array<Record<string, string>>;
+    raw_cookie_string?: string;
+}
+
+export interface UpdateWeiboAccountRequest {
+    alias?: string;
+    enabled?: boolean;
 }
 
 export interface CookieItem {
@@ -457,6 +505,51 @@ async function downloadBlob(url: string, fallbackFilename: string): Promise<void
     }
 }
 
+/**
+ * POST 下载文件（用于需要传 body 的批量导出场景）
+ */
+async function downloadPostBlob(endpoint: string, body: unknown, fallbackFilename: string): Promise<void> {
+    try {
+        const url = `${API_BASE_URL}${endpoint}`;
+        const resp = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+        if (!resp.ok) {
+            let detail = resp.statusText;
+            try {
+                const errData = await resp.json();
+                if (errData.detail) detail = errData.detail;
+            } catch { /* ignore */ }
+            throw new Error(`导出失败: ${resp.status} - ${detail}`);
+        }
+
+        const disposition = resp.headers.get("Content-Disposition") || "";
+        let filename = fallbackFilename;
+        const utf8Match = disposition.match(/filename\*=UTF-8''(.+)/i);
+        if (utf8Match) {
+            filename = decodeURIComponent(utf8Match[1]);
+        } else {
+            const plainMatch = disposition.match(/filename="?([^";\n]+)"?/i);
+            if (plainMatch) filename = plainMatch[1].trim();
+        }
+
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+        console.error("批量导出下载失败:", err);
+        throw new Error(`批量导出下载失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+}
+
 export const api = {
     health: {
         check: () => fetchApi<HealthResponse>("/health"),
@@ -522,6 +615,11 @@ export const api = {
             }),
         list: () => fetchApi<TaskQueueOut[]>("/api/v1/task-queues"),
         get: (queueId: string) => fetchApi<TaskQueueOut>(`/api/v1/task-queues/${queueId}`),
+        resume: (queueId: string) =>
+            fetchApi<{ message: string; resumed: string[]; skipped: string[]; already_running: string[] }>(
+                `/api/v1/task-queues/${queueId}/resume`,
+                { method: "POST" },
+            ),
     },
     tasks: {
         list: (includePayload = false) =>
@@ -582,6 +680,20 @@ export const api = {
             const url = `${API_BASE_URL}/api/v1/export/${taskId}/excel`;
             await downloadBlob(url, `xcrawl_${taskId.substring(0, 8)}.xlsx`);
         },
+        batchDownloadCsv: async (taskIds: string[]) => {
+            await downloadPostBlob(
+                "/api/v1/export/batch/csv",
+                { task_ids: taskIds, merge_mode: "single" },
+                `batch_${taskIds.length}tasks.csv`,
+            );
+        },
+        batchDownloadExcel: async (taskIds: string[], mergeMode: "single" | "per_task" = "per_task") => {
+            await downloadPostBlob(
+                "/api/v1/export/batch/excel",
+                { task_ids: taskIds, merge_mode: mergeMode },
+                `batch_${taskIds.length}tasks.xlsx`,
+            );
+        },
     },
     failedReplies: {
         list: (taskId: string) =>
@@ -634,6 +746,23 @@ export const api = {
         intervalSuggestion: () =>
             fetchApi<IntervalSuggestion>("/api/v1/accounts/interval-suggestion"),
     },
+    batchImport: {
+        parseFile: (params: {
+            file: File;
+            defaultPlatform?: Platform;
+            defaultProduct?: string;
+            defaultMaxCount?: number;
+            defaultFetchReplies?: boolean;
+        }) => {
+            const formData = new FormData();
+            formData.append("file", params.file);
+            if (params.defaultPlatform) formData.append("default_platform", params.defaultPlatform);
+            if (params.defaultProduct) formData.append("default_product", params.defaultProduct);
+            if (params.defaultMaxCount !== undefined) formData.append("default_max_count", String(params.defaultMaxCount));
+            if (params.defaultFetchReplies !== undefined) formData.append("default_fetch_replies", String(params.defaultFetchReplies));
+            return fetchFormApi<BatchImportParseResult>("/api/v1/batch-import/parse", formData);
+        },
+    },
     weiboCookies: {
         list: () =>
             fetchApi<{
@@ -654,5 +783,23 @@ export const api = {
                 has_login: boolean;
                 message?: string;
             }>("/api/v1/weibo-cookies/capture", { method: "POST" }),
+    },
+    weiboAccounts: {
+        list: () =>
+            fetchApi<WeiboAccountOut[]>("/api/v1/weibo-accounts"),
+        add: (req: AddWeiboAccountRequest) =>
+            fetchApi<WeiboAccountOut>("/api/v1/weibo-accounts", {
+                method: "POST",
+                body: JSON.stringify(req),
+            }),
+        update: (accountId: string, req: UpdateWeiboAccountRequest) =>
+            fetchApi<WeiboAccountOut>(`/api/v1/weibo-accounts/${accountId}`, {
+                method: "PUT",
+                body: JSON.stringify(req),
+            }),
+        delete: (accountId: string) =>
+            fetchApi<{ message: string }>(`/api/v1/weibo-accounts/${accountId}`, { method: "DELETE" }),
+        validate: (accountId: string) =>
+            fetchApi<WeiboAccountOut>(`/api/v1/weibo-accounts/${accountId}/validate`, { method: "POST" }),
     },
 };

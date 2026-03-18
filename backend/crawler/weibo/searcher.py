@@ -99,21 +99,51 @@ def _check_anti_crawl(tab) -> Optional[str]:
     return None
 
 
-def _get_fresh_tab():
-    """获取一个新的 tab（用于崩溃后恢复）。先重置浏览器再创建新 tab。"""
-    from crawler.browser import get_new_tab, reset_browser
+def _get_fresh_tab(browser_instance=None):
+    """获取一个新的 tab（用于崩溃后恢复）。优先仅创建新 tab，避免 reset 影响并行任务。"""
+    if browser_instance is not None:
+        return browser_instance.new_tab()
+    from crawler.browser import get_new_tab, ensure_browser_alive
     try:
-        reset_browser()
+        ensure_browser_alive()
     except Exception:
         pass
     return get_new_tab()
 
 
-def _get_tab_with_retry(max_retries: int = 2):
+def _rebuild_weibo_tab(account_cookies: Optional[list[dict]] = None, browser_instance=None) -> "ChromiumTab":
+    """重建 tab 并注入微博 Cookie，返回就绪的新 tab。失败则抛出异常。"""
+    tab = _get_fresh_tab(browser_instance=browser_instance)
+    from .cookie_manager import inject_cookies_to_tab
+    from .auth import _get_account_cookies
+    cookies = _get_account_cookies(account_cookies)
+    if cookies:
+        tab.get("https://s.weibo.com")
+        time.sleep(1)
+        inject_cookies_to_tab(tab, cookies)
+        time.sleep(1)
+    return tab
+
+
+def _get_tab_with_retry(max_retries: int = 2, browser_instance=None):
     """
-    带重试的 tab 获取。浏览器卡死时自动重置并重建。
+    带重试的 tab 获取。
+    优先通过 ensure_browser_alive 恢复，仅在最后一次重试才 reset_browser。
+    避免跨平台并发时 reset 影响正在运行的 X 爬虫任务。
+    池模式下使用指定的 browser_instance。
     """
-    from crawler.browser import get_new_tab, reset_browser
+    if browser_instance is not None:
+        # 池模式：直接从指定实例创建 tab，不做全局重置
+        for attempt in range(max_retries + 1):
+            try:
+                return browser_instance.new_tab()
+            except Exception as e:
+                logger.warning(f"[BrowserPool] 从实例创建 Tab 失败 (attempt {attempt+1}): {e}")
+                if attempt < max_retries:
+                    time.sleep(2)
+        raise RuntimeError("[BrowserPool] 无法从浏览器实例创建 Tab")
+
+    from crawler.browser import get_new_tab, ensure_browser_alive, reset_browser
     for attempt in range(max_retries + 1):
         try:
             tab = get_new_tab()
@@ -123,14 +153,21 @@ def _get_tab_with_retry(max_retries: int = 2):
                 f"获取浏览器 Tab 失败 (attempt {attempt + 1}/{max_retries + 1}): {e}"
             )
             if attempt < max_retries:
-                logger.info("正在重置浏览器并重试...")
+                logger.info("正在尝试恢复浏览器连接...")
+                try:
+                    ensure_browser_alive()
+                except Exception:
+                    pass
+                time.sleep(3)
+            else:
+                # 最后手段：重置整个浏览器
+                logger.warning("所有恢复尝试均失败，执行浏览器重置...")
                 try:
                     reset_browser()
                 except Exception:
                     pass
                 time.sleep(3)
-            else:
-                raise
+                return get_new_tab()
 
 
 def _safe_get_html(tab, url: str, wait_seconds: float = 3.0) -> tuple[Optional[str], Optional[str]]:
@@ -165,15 +202,28 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 3.0) -> tuple[Optional[s
         return None, error_str
 
 
-def _prepare_search_session(tab, task_id: Optional[str]) -> None:
+def _prepare_search_session(tab, task_id: Optional[str], slot_id: Optional[int] = None) -> None:
     """为微博搜索准备一次性会话状态，避免每个时间分段都回到主页重新初始化。"""
     from api.services.task_manager import update_task_phase
     from .auth import ensure_weibo_login, ensure_search_cookies
+    from .account_pool import get_weibo_pool
+
+    # 按 slot_id 选择账号 Cookie，确保不同 slot 用不同账号
+    account_cookies = None
+    if slot_id is not None:
+        try:
+            pool = get_weibo_pool()
+            account = pool.pick_account_by_index(slot_id)
+            if account and account.cookies:
+                account_cookies = account.cookies
+                logger.info(f"微博 slot #{slot_id} 使用账号: {account.alias!r}")
+        except Exception as e:
+            logger.warning(f"按 slot 选择微博账号失败: {e}")
 
     if task_id:
         update_task_phase(task_id, "正在验证微博登录状态...")
     try:
-        logged_in = ensure_weibo_login(tab)
+        logged_in = ensure_weibo_login(tab, account_cookies=account_cookies)
         if not logged_in:
             logger.warning("微博未登录，将以游客模式尝试（可能受限）")
     except Exception as e:
@@ -182,7 +232,7 @@ def _prepare_search_session(tab, task_id: Optional[str]) -> None:
     if task_id:
         update_task_phase(task_id, "正在准备搜索 Cookie...")
     try:
-        ensure_search_cookies(tab)
+        ensure_search_cookies(tab, account_cookies=account_cookies)
     except Exception as e:
         logger.warning(f"搜索 Cookie 准备失败: {e}")
 
@@ -199,6 +249,8 @@ def search(
     _tab=None,
     _session_ready: bool = False,
     _query_plan_resolved: bool = False,
+    browser_instance=None,
+    slot_id: Optional[int] = None,
 ) -> WeiboSearchResult:
     """
     微博关键词搜索主入口。
@@ -212,12 +264,12 @@ def search(
     from .query_planner import build_weibo_query_plan
 
     owns_tab = _tab is None
-    tab = _tab or _get_tab_with_retry()
+    tab = _tab or _get_tab_with_retry(browser_instance=browser_instance)
 
     try:
         # ── 1. 登录验证 + 搜索 Cookie 准备（仅首次执行）──────────────
         if not _session_ready:
-            _prepare_search_session(tab, task_id)
+            _prepare_search_session(tab, task_id, slot_id=slot_id)
 
         if not _query_plan_resolved:
             query_plan = build_weibo_query_plan(
@@ -261,6 +313,8 @@ def search(
                             _tab=tab,
                             _session_ready=True,
                             _query_plan_resolved=True,
+                            browser_instance=browser_instance,
+                            slot_id=slot_id,
                         )
                         for post in variant_result.posts:
                             post_id = str(post.get("id") or post.get("mid") or "").strip()
@@ -383,6 +437,8 @@ def search(
                             _parent_accumulated=all_results,
                             _tab=tab,
                             _session_ready=True,
+                            browser_instance=browser_instance,
+                            slot_id=slot_id,
                         )
                         all_results = _merge_posts_by_id(all_results, seg_result.posts)
                         # 实时推送合并后的预览
@@ -442,24 +498,20 @@ def search(
                         break
 
                     # 错误处理
-                    is_crash = page_error and ("crashed" in page_error.lower() or "timeout" in page_error.lower())
+                    error_lower = (page_error or "").lower()
+                    is_tab_dead = any(kw in error_lower for kw in (
+                        "crashed", "timeout", "连接已断开",
+                        "disconnected", "connection lost", "target closed",
+                    ))
                     logger.warning(
                         f"获取微博搜索页失败 page={page} retry={retry}/{MAX_PAGE_RETRIES}: {page_error}"
                     )
 
-                    if is_crash and retry < MAX_PAGE_RETRIES:
-                        # Tab 崩溃：重建 tab
-                        logger.info("检测到 Tab 崩溃/超时，正在重建...")
+                    if is_tab_dead and retry < MAX_PAGE_RETRIES:
+                        # Tab 崩溃 / 连接断开：重建 tab
+                        logger.info("检测到 Tab 崩溃/断开连接，正在重建...")
                         try:
-                            tab = _get_fresh_tab()
-                            # 重新注入 Cookie
-                            from .cookie_manager import load_cookies, inject_cookies_to_tab
-                            cookies = load_cookies()
-                            if cookies:
-                                tab.get("https://s.weibo.com")
-                                time.sleep(1)
-                                inject_cookies_to_tab(tab, cookies)
-                                time.sleep(1)
+                            tab = _rebuild_weibo_tab(browser_instance=browser_instance)
                         except Exception as e:
                             logger.error(f"重建 Tab 失败: {e}")
                         interruptible_sleep(RETRY_DELAY, task_id=task_id)
@@ -474,6 +526,19 @@ def search(
                 if not html:
                     consecutive_errors += 1
                     logger.error(f"获取微博搜索页最终失败 page={page}: {page_error}")
+                    # 如果最终失败原因是连接断开，尝试重建 tab 以便后续页面/分段可用
+                    error_lower_final = (page_error or "").lower()
+                    if any(kw in error_lower_final for kw in (
+                        "连接已断开", "disconnected", "connection lost", "target closed",
+                    )):
+                        logger.info("页面最终失败且连接已断开，尝试重建 Tab...")
+                        try:
+                            tab = _rebuild_weibo_tab(browser_instance=browser_instance)
+                            logger.info("Tab 重建成功，继续搜索")
+                            consecutive_errors = 0  # 重建成功，重置计数器给一次机会
+                            continue
+                        except Exception as e:
+                            logger.error(f"Tab 重建失败: {e}")
                     if consecutive_errors >= 3:
                         logger.error("连续 3 页获取失败，终止搜索")
                         break
@@ -520,6 +585,7 @@ def search(
                                 max_comments=settings.weibo_max_comments_per_post,
                                 page_interval=settings.weibo_comment_page_interval,
                                 task_id=task_id,
+                                browser_instance=browser_instance,
                             )
                             post.comments = comment_result.comments
                             from .comment_stats import build_comment_stats, collect_comment_tree_stats

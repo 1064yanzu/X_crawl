@@ -59,27 +59,50 @@ class RateLimitTracker:
         return 3.0       # 临界模式：剩余 < 10%，配合 maybe_wait_for_reset
 
     def maybe_wait_for_reset(self, endpoint_type: str, task_id: Optional[str] = None) -> None:
-        """若剩余配额 < 10%，主动等待到 reset 时间戳后再继续"""
+        """若剩余配额 < 5%，先尝试切换账号；无可用账号时才主动等待 reset"""
         with self._lock:
             s = self._state.get(endpoint_type)
         if not s or s["limit"] == 0:
             return
-        if s["remaining"] / s["limit"] >= 0.1:
+        pct = s["remaining"] / s["limit"]
+        if pct >= 0.05:
             return
         wait = max(0.0, s["reset_ts"] - time.time() + 2.0)
-        if 0 < wait < 900:  # 最多等 15 分钟
-            logger.warning(
-                f"速率限制将尽 ({s['remaining']}/{s['limit']})，"
-                f"主动等待重置 {wait:.0f}s ..."
-            )
-            from crawler.utils import interruptible_sleep
-            interruptible_sleep(wait, task_id=task_id)
+        if wait <= 0 or wait >= 900:
+            return
+        logger.warning(
+            f"速率限制将尽 ({s['remaining']}/{s['limit']}, {pct*100:.1f}%)，"
+            f"尝试切换账号或等待重置 {wait:.0f}s ..."
+        )
+        # 先尝试切换账号避免等待
+        try:
+            from crawler.account_pool import get_pool
+            pool = get_pool()
+            if pool.get_active_account_count() > 1:
+                logger.info(
+                    f"速率限制将尽，账号池有 {pool.get_active_account_count()} 个账号，跳过等待"
+                )
+                return
+        except Exception:
+            pass
+        from crawler.utils import interruptible_sleep
+        interruptible_sleep(wait, task_id=task_id)
 
     def get_reset_ts(self, endpoint_type: str) -> int:
         """获取指定端点的限速重置时间戳（0 = 未知）"""
         with self._lock:
             s = self._state.get(endpoint_type, {})
             return s.get("reset_ts", 0)
+
+    def get_remaining_pct(self, endpoint_type: str) -> float:
+        """获取指定端点剩余配额百分比（1.0 = 尚未使用或不局）"""
+        with self._lock:
+            s = self._state.get(endpoint_type)
+        if not s or s.get("limit", 0) == 0:
+            return 1.0
+        if time.time() - s.get("updated_at", 0) > 300:
+            return 1.0
+        return s["remaining"] / s["limit"]
 
 
 def extract_rate_headers(packet) -> Optional[tuple[str, int, int, int]]:

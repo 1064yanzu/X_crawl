@@ -119,19 +119,30 @@ def _extract_user_id(cookies: list[dict]) -> str:
 
 
 def _build_response(cookies: list[dict]) -> CookiesResponse:
-    """构建以账号为单位分组的响应。全局 Cookie 视为单个账号。"""
+    """构建以账号为单位分组的响应。支持多账号。"""
+    from crawler.cookie_account_sync import group_cookies_by_account
+    
     masked = [_to_masked(c) for c in cookies]
     names = {c.get("name", "") for c in cookies}
     has_login = "auth_token" in names and "twid" in names
 
     accounts: list[CookieAccount] = []
-    if cookies:
-        user_id = _extract_user_id(cookies)
+    
+    # 按账号分组
+    groups = group_cookies_by_account(cookies)
+    for user_id, group_cookies in groups.items():
+        if user_id == "unknown":
+            continue  # 跳过无法识别的组
+        
+        group_masked = [_to_masked(c) for c in group_cookies]
+        group_names = {c.get("name", "") for c in group_cookies}
+        group_has_login = "auth_token" in group_names and "twid" in group_names
+        
         accounts.append(CookieAccount(
             user_id=user_id,
-            cookie_count=len(cookies),
-            has_login=has_login,
-            cookies=masked,
+            cookie_count=len(group_cookies),
+            has_login=group_has_login,
+            cookies=group_masked,
         ))
 
     return CookiesResponse(
@@ -156,6 +167,8 @@ async def upsert_cookies(req: SaveCookiesRequest):
     接受两种格式：
     1. `cookies`：[{"name": "auth_token", "value": "xxx", "domain": ".x.com"}]
     2. `raw_string`："auth_token=xxx; twid=yyy"
+    
+    支持多账号：新 cookie 会与现有 cookie 合并（按 name+domain 去重）
     """
     if req.cookies is not None:
         raw: Any = [c.model_dump() for c in req.cookies]
@@ -169,14 +182,17 @@ async def upsert_cookies(req: SaveCookiesRequest):
         raise HTTPException(status_code=422, detail="解析后 Cookie 为空，请检查格式")
 
     try:
-        save_cookies(normalized)
+        # 使用合并模式保存（支持多账号）
+        save_cookies(normalized, merge=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入 Cookie 失败: {e}")
 
     # 自动同步到账号池
     sync_cookies_to_pool(normalized)
 
-    return _build_response(normalized)
+    # 返回所有 cookie（包括新增和现有的）
+    all_cookies = load_cookies()
+    return _build_response(all_cookies)
 
 
 @router.delete("", summary="清空持久化 Cookie")
@@ -212,7 +228,8 @@ async def delete_single_cookie(
         raise HTTPException(status_code=404, detail=f"Cookie '{cookie_name}' 不存在")
 
     deleted_count = original_count - len(remaining)
-    save_cookies(remaining)
+    # 使用覆盖模式保存（因为是删除操作）
+    save_cookies(remaining, merge=False)
     logger.info(f"已删除 Cookie: {cookie_name}（{deleted_count} 条）")
 
     # 同步到账号池（可能登录态已失效，刷新状态）

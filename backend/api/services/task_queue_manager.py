@@ -183,12 +183,7 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
         seed_tweets = payload.get("seed_tweets")
         if isinstance(seed_tweets, list) and seed_tweets:
             task_manager.set_task_seed_tweets(task_id, copy.deepcopy(seed_tweets), current_page=0)
-        phase = (
-            "队列首个任务已创建，正在进入调度队列..."
-            if index == 1
-            else f"任务队列等待中（{index}/{total}），等待前序任务完成"
-        )
-        task_manager.update_task_phase(task_id, phase)
+        task_manager.update_task_phase(task_id, f"任务已创建（{index}/{total}），正在进入调度队列...")
         task_ids.append(task_id)
 
     queue = {
@@ -200,7 +195,7 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
         "finished_at": None,
         "current_task_id": task_ids[0] if task_ids else None,
         "task_ids": task_ids,
-        "started_task_ids": [task_ids[0]] if task_ids else [],
+        "started_task_ids": list(task_ids),
     }
 
     with _lock:
@@ -209,9 +204,11 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
             _task_to_queue[task_id] = queue_id
         _persist_queue(queue)
 
-    first_task = task_manager.get_task_summary(task_ids[0]) if task_ids else None
-    if first_task:
-        crawl_service.start_crawler_thread(task_ids[0], first_task, resume=False)
+    # 将所有任务一次性提交给调度器，调度器自己根据并发上限控制执行顺序
+    for task_id in task_ids:
+        task_summary = task_manager.get_task_summary(task_id)
+        if task_summary:
+            crawl_service.start_crawler_thread(task_id, task_summary, resume=False)
     return _build_queue_view(queue)
 
 
@@ -237,11 +234,13 @@ def can_resume_task(task_id: str) -> tuple[bool, Optional[str], bool]:
     """检查任务是否可以恢复。
 
     Returns:
-        (can_resume, reason, needs_queue): 第三个值表示是否需要排队等待
+        (can_resume, reason, needs_queue): 第三个值表示是否需要排队等待。
+        并发模式下 needs_queue 始终为 False——交给调度器控制并发。
     """
     _ensure_loaded()
 
     from api.services import task_manager
+    from config import settings
 
     task = task_manager.get_task_summary(task_id)
     if not task:
@@ -260,18 +259,23 @@ def can_resume_task(task_id: str) -> tuple[bool, Optional[str], bool]:
     if task_id not in task_ids:
         return True, None, False
 
-    # 检查队列中是否有其他任务正在运行或前序任务未完成
+    # 并发模式（并发数 > 1）：直接让调度器决定，不在队列层面排队
+    max_concurrent = int(settings.crawler_max_concurrent_tasks)
+    if max_concurrent > 1:
+        return True, None, False
+
+    # 串行模式：保留原有逻辑，队列中有其他任务运行则排队
     current_task_id = queue.get("current_task_id")
     if current_task_id and current_task_id != task_id:
         current_task = task_manager.get_task_summary(current_task_id)
         if current_task and current_task.get("status") not in _TERMINAL_STATUSES:
-            return True, None, True  # 允许恢复，但需要排队
+            return True, None, True
 
     index = task_ids.index(task_id)
     for prev_task_id in task_ids[:index]:
         prev_task = task_manager.get_task_summary(prev_task_id)
         if prev_task and prev_task.get("status") not in _TERMINAL_STATUSES:
-            return True, None, True  # 允许恢复，但需要排队
+            return True, None, True
 
     return True, None, False
 
@@ -350,10 +354,106 @@ def mark_task_paused(task_id: str) -> None:
         _persist_queue(queue)
 
 
-def notify_task_terminal(task_id: str, status: str) -> None:
+def resume_queue(queue_id: str) -> dict:
+    """
+    恢复整个队列：将队列中所有暂停/停止/失败的任务一次性恢复并提交给调度器。
+    调度器根据并发上限自行控制执行顺序。
+
+    Returns:
+        {"resumed": [...task_ids], "skipped": [...task_ids], "already_running": [...task_ids]}
+    """
     _ensure_loaded()
 
     from api.services import crawl_service, task_manager
+
+    with _lock:
+        queue = _queues.get(queue_id)
+        if not queue:
+            raise ValueError(f"任务队列不存在: {queue_id}")
+        task_ids = list(queue.get("task_ids", []))
+
+    resumed_ids: list[str] = []
+    skipped_ids: list[str] = []
+    already_running_ids: list[str] = []
+
+    for task_id in task_ids:
+        task = task_manager.get_task_summary(task_id)
+        if not task:
+            skipped_ids.append(task_id)
+            continue
+
+        status = task.get("status", "")
+
+        if status in ("running", "pending"):
+            # 检查线程是否真的活着——后端重启后内存状态可能残留 running/pending
+            if task_manager.is_thread_alive(task_id):
+                already_running_ids.append(task_id)
+                continue
+            # 线程已死但状态残留：重置后重新入队
+            logger.info("resume_queue: task=%s 状态=%s 但线程已死，重新入队", task_id[:8], status)
+            task_manager.update_task_status(task_id, "stopped")
+            task_manager.resume_finished_task(task_id)
+            crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+            resumed_ids.append(task_id)
+            continue
+
+        if status in ("paused",):
+            # 暂停中的任务：如果线程活着就唤醒，否则重置状态后重新提交调度器
+            if task_manager.is_thread_alive(task_id):
+                task_manager.resume_task(task_id)
+            else:
+                # 线程不活：先标记为 stopped，再走 resume_finished_task → 入队
+                task_manager.update_task_status(task_id, "stopped")
+                task_manager.resume_finished_task(task_id)
+                crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+            resumed_ids.append(task_id)
+
+        elif status in ("done", "stopped", "failed"):
+            # 已结束的任务：从断点恢复
+            success = task_manager.resume_finished_task(task_id)
+            if success:
+                crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+                resumed_ids.append(task_id)
+            else:
+                skipped_ids.append(task_id)
+        else:
+            skipped_ids.append(task_id)
+
+    # 更新队列状态
+    with _lock:
+        queue = _queues.get(queue_id)
+        if queue:
+            if resumed_ids or already_running_ids:
+                queue["status"] = "running"
+                queue["current_task_id"] = (already_running_ids or resumed_ids)[0]
+                queue["finished_at"] = None
+                if not queue.get("started_at"):
+                    queue["started_at"] = _now_iso()
+                for tid in resumed_ids:
+                    if tid not in queue.get("started_task_ids", []):
+                        queue.setdefault("started_task_ids", []).append(tid)
+            _persist_queue(queue)
+
+    logger.info(
+        "队列 %s 恢复完成: resumed=%d, already_running=%d, skipped=%d",
+        queue_id, len(resumed_ids), len(already_running_ids), len(skipped_ids),
+    )
+    return {
+        "resumed": resumed_ids,
+        "skipped": skipped_ids,
+        "already_running": already_running_ids,
+    }
+
+
+def notify_task_terminal(task_id: str, status: str) -> None:
+    """
+    任务终态通知。
+    更新队列状态，并在并发模式下自动调度同队列中下一个等待的任务。
+    """
+    _ensure_loaded()
+
+    from api.services import task_manager, crawl_service
+    from config import settings
 
     with _lock:
         queue_id = _task_to_queue.get(task_id)
@@ -365,35 +465,41 @@ def notify_task_terminal(task_id: str, status: str) -> None:
         if task_id not in task_ids:
             return
 
-        # 找到下一个需要执行的任务（pending 状态，跳过已终态的）
-        index = task_ids.index(task_id)
-        next_task_id = None
-        next_index = None
-        for i in range(index + 1, len(task_ids)):
-            candidate = task_ids[i]
-            candidate_task = task_manager.get_task_summary(candidate)
-            if candidate_task and candidate_task.get("status") not in _TERMINAL_STATUSES:
-                next_task_id = candidate
-                next_index = i
-                break
+        # 检查是否还有未完成的任务，同时收集需要恢复的任务
+        first_active_id = None
+        all_done = True
+        stalled_ids: list[str] = []  # 状态残留但线程已死的任务
+        for tid in task_ids:
+            t = task_manager.get_task_summary(tid)
+            if not t:
+                continue
+            t_status = t.get("status", "")
+            if t_status not in _TERMINAL_STATUSES:
+                all_done = False
+                if first_active_id is None:
+                    first_active_id = tid
+                # 检测状态残留：running/pending 但线程已死
+                if t_status in ("running", "pending") and not task_manager.is_thread_alive(tid):
+                    stalled_ids.append(tid)
 
-        if next_task_id:
-            queue["status"] = "running"
-            queue["current_task_id"] = next_task_id
-            queue["finished_at"] = None
-            if next_task_id not in queue.get("started_task_ids", []):
-                queue.setdefault("started_task_ids", []).append(next_task_id)
-        else:
+        if all_done:
             queue["status"] = "completed"
             queue["current_task_id"] = None
             queue["finished_at"] = _now_iso()
+        else:
+            queue["status"] = "running"
+            queue["current_task_id"] = first_active_id
+            queue["finished_at"] = None
         _persist_queue(queue)
 
-    if not next_task_id:
-        return
-
-    phase = f"前序任务已结束（{status}），当前开始执行队列项 {next_index + 1}/{len(task_ids)}"
-    task_manager.restore_waiting_task(next_task_id, phase)
-    next_task = task_manager.get_task_summary(next_task_id)
-    if next_task:
-        crawl_service.start_crawler_thread(next_task_id, next_task, resume=False)
+    # 并发模式下：恢复状态残留的任务
+    max_concurrent = int(settings.crawler_max_concurrent_tasks)
+    if max_concurrent > 1 and stalled_ids:
+        for tid in stalled_ids:
+            t = task_manager.get_task_summary(tid)
+            if not t:
+                continue
+            logger.info("notify_task_terminal: 恢复残留任务 %s（状态=%s 但线程已死）", tid[:8], t.get("status"))
+            task_manager.update_task_status(tid, "stopped")
+            task_manager.resume_finished_task(tid)
+            crawl_service.start_crawler_thread(tid, t, force_new_browser=True)

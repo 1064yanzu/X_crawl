@@ -27,6 +27,7 @@ class CrawlerConfig(BaseModel):
     crawler_challenge_retry_times: int = Field(description="挑战页自动重试次数", ge=0, le=8)
     crawler_challenge_cooldown: float = Field(description="挑战页重试冷却时间（秒）", ge=1.0, le=60.0)
     crawler_max_concurrent_tasks: int = Field(description="并发运行任务上限", ge=1, le=5)
+    crawler_cross_platform_concurrent: bool = Field(default=True, description="是否允许 X 和微博任务跨平台并发执行")
     scheduler_backend: str = Field(default="memory", description="调度后端：memory/redis")
     crawler_adaptive_wait_enabled: bool = Field(default=True, description="是否启用自适应等待")
     crawler_page_interval_min: float = Field(default=2.5, ge=0.5, le=120.0, description="翻页间隔下限（秒）")
@@ -106,6 +107,7 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
         crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
         crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
+        crawler_cross_platform_concurrent=settings.crawler_cross_platform_concurrent,
         scheduler_backend=settings.scheduler_backend,
         crawler_adaptive_wait_enabled=settings.crawler_adaptive_wait_enabled,
         crawler_page_interval_min=settings.crawler_page_interval_min,
@@ -165,6 +167,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.crawler_challenge_retry_times = config.crawler_challenge_retry_times
     settings.crawler_challenge_cooldown = config.crawler_challenge_cooldown
     settings.crawler_max_concurrent_tasks = config.crawler_max_concurrent_tasks
+    settings.crawler_cross_platform_concurrent = config.crawler_cross_platform_concurrent
     settings.scheduler_backend = (config.scheduler_backend or "memory").strip().lower()
     if settings.scheduler_backend not in ("memory", "redis"):
         settings.scheduler_backend = "memory"
@@ -211,6 +214,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "crawler_challenge_retry_times": config.crawler_challenge_retry_times,
         "crawler_challenge_cooldown": config.crawler_challenge_cooldown,
         "crawler_max_concurrent_tasks": config.crawler_max_concurrent_tasks,
+        "crawler_cross_platform_concurrent": settings.crawler_cross_platform_concurrent,
         "scheduler_backend": settings.scheduler_backend,
         "crawler_adaptive_wait_enabled": settings.crawler_adaptive_wait_enabled,
         "crawler_page_interval_min": settings.crawler_page_interval_min,
@@ -275,6 +279,13 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     set_settings_batch(persist)
     scheduler.reconfigure_backend()
 
+    # 同步更新浏览器池大小
+    try:
+        from crawler.browser_pool import get_browser_pool
+        get_browser_pool().resize(settings.crawler_max_concurrent_tasks)
+    except Exception:
+        pass
+
     return CrawlerConfig(
         crawler_timeout=settings.crawler_timeout,
         crawler_page_interval=settings.crawler_page_interval,
@@ -286,6 +297,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
         crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
         crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
+        crawler_cross_platform_concurrent=settings.crawler_cross_platform_concurrent,
         scheduler_backend=settings.scheduler_backend,
         crawler_adaptive_wait_enabled=settings.crawler_adaptive_wait_enabled,
         crawler_page_interval_min=settings.crawler_page_interval_min,

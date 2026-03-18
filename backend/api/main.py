@@ -15,13 +15,18 @@ from api.routers import search, tasks, checkpoints
 from api.routers import raw_responses as raw_responses_router
 from api.routers import cookies as cookies_router
 from api.routers import export as export_router
+from api.routers import batch_export as batch_export_router
 from api.routers import crawler_config as crawler_config_router
 from api.routers import failed_replies as failed_replies_router
 from api.routers import browser_selector as browser_selector_router
 from api.routers import accounts as accounts_router
 from api.routers import weibo_cookies as weibo_cookies_router
+from api.routers import weibo_accounts as weibo_accounts_router
 from api.routers import comment_backfill as comment_backfill_router
 from api.routers import task_queues as task_queues_router
+from api.routers import batch_import as batch_import_router
+from api.routers import concurrent_search as concurrent_search_router
+from api.routers import concurrent_search as concurrent_search_router
 from crawler.browser import close_browser, maybe_cleanup_stale_linux_browsers
 from crawler.browser_detector import detect_all
 from crawler.log_config import setup_logging
@@ -53,6 +58,12 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("正在关闭浏览器并释放资源...")
     close_browser()
+    try:
+        from crawler.browser_pool import get_browser_pool, is_pool_mode_enabled
+        if is_pool_mode_enabled():
+            get_browser_pool().close_all()
+    except Exception:
+        pass
     logger.info("X_crawl API 服务已关闭")
 
 
@@ -95,13 +106,17 @@ app.include_router(checkpoints.router)
 app.include_router(raw_responses_router.router)
 app.include_router(cookies_router.router)
 app.include_router(export_router.router)
+app.include_router(batch_export_router.router)
 app.include_router(crawler_config_router.router)
 app.include_router(failed_replies_router.router)
 app.include_router(browser_selector_router.router)
 app.include_router(accounts_router.router)
 app.include_router(weibo_cookies_router.router)
+app.include_router(weibo_accounts_router.router)
 app.include_router(comment_backfill_router.router)
 app.include_router(task_queues_router.router)
+app.include_router(batch_import_router.router)
+app.include_router(concurrent_search_router.router)
 
 
 @app.exception_handler(Exception)

@@ -271,6 +271,25 @@ class Settings(BaseSettings):
     )
 
 
+
+    # ─── 并发爬取配置 ──────────────────────────────────────────────────────────
+    concurrent_crawl_enabled: bool = Field(
+        default=True, description="是否启用并发爬取功能"
+    )
+    account_assignment_strategy: str = Field(
+        default="round_robin", description="账号分配策略: round_robin 或 least_used"
+    )
+    account_reuse_delay_sec: float = Field(
+        default=0.0, description="账号释放后的重用延迟（秒）"
+    )
+    account_max_concurrent_tasks: int = Field(
+        default=1, description="每个账号最多同时执行的任务数"
+    )
+    crawler_cross_platform_concurrent: bool = Field(
+        default=True, description="是否允许 X 和微博任务跨平台并发执行"
+    )
+
+
 settings = Settings()
 
 

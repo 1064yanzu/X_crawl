@@ -55,26 +55,26 @@ def _to_risk_state(state: PageState) -> RiskState:
 
 def _scroll_incremental(tab, *, task_id: Optional[str] = None, steps: Optional[int] = None) -> None:
     """
-    评论区渐进式滚动：模拟人类慢慢浏览评论列表。
+    评论区渐进式滚动：模拟人类浏览评论列表。
 
-    比搜索页滚动稍慢——阅读评论需要更多时间。
+    轻量版：2~4 步，保持随机特征即可，避免占用过多时间。
     """
-    move_steps = steps if steps is not None else scroll_steps()
+    move_steps = steps if steps is not None else random.randint(2, 4)
     for i in range(move_steps):
         # 小幅随机滚动（一条评论约 150~300px 高）
         px = random.randint(150, 350)
         safe_scroll_down(tab, px, task_id=task_id)
 
-        # 阅读评论的停顿：偶尔长停顿看完整评论
-        if random.random() < 0.20:
-            interruptible_sleep(random.uniform(1.2, 2.5), task_id=task_id)
+        # 阅读评论的停顿：大部分快速过，偶尔停一下
+        if random.random() < 0.12:
+            interruptible_sleep(random.uniform(0.8, 1.5), task_id=task_id)
         else:
             scroll_step_pause(task_id=task_id)
 
         # 偶尔回滚看上面的评论（非最后一步）
-        if i < move_steps - 1 and random.random() < 0.12:
-            safe_scroll_up(tab, random.randint(60, 150), task_id=task_id)
-            interruptible_sleep(random.uniform(0.3, 0.6), task_id=task_id)
+        if i < move_steps - 1 and random.random() < 0.08:
+            safe_scroll_up(tab, random.randint(50, 120), task_id=task_id)
+            interruptible_sleep(random.uniform(0.2, 0.4), task_id=task_id)
 
     # 最后滚到底部确保触发评论懒加载
     safe_scroll_to_bottom(tab, task_id=task_id)
@@ -220,6 +220,7 @@ def fetch_replies(
     timeout: Optional[float] = None,
     existing_tab=None,
     expected_count: int = 0,
+    browser_instance=None,
 ) -> tuple[list[dict], dict | None]:
     """
     抓取指定推文的所有回复。
@@ -249,7 +250,12 @@ def fetch_replies(
     empty_page_count = 0  # 连续无新评论计数
 
     # 决定是否使用外部传入的 tab（DFS 时复用避免频繁开关）
-    tab = existing_tab if existing_tab else get_new_tab()
+    if existing_tab is not None:
+        tab = existing_tab
+    elif browser_instance is not None:
+        tab = browser_instance.new_tab()
+    else:
+        tab = get_new_tab()
     should_close = (existing_tab is None)
 
     # 日志中展示预期评论数以便对比
@@ -520,6 +526,7 @@ def fetch_replies_batch(
     progress_callback=None,
     strategy: str = "dfs",
     reply_depth: int = 2,
+    browser_instance=None,
 ) -> tuple[list[dict], list[dict]]:
     """
     批量抓取多条推文的回复（统一 DFS 模式，搜到即抓）。
@@ -639,7 +646,10 @@ def fetch_replies_batch(
         # 当需要抓二级评论时，手动开标签页让一级评论页面保持打开
         # 模拟人类行为：打开推文→看评论→点击评论看子评论→全看完再关闭
         need_nested = (reply_depth > 1)
-        reply_tab = get_new_tab() if need_nested else None
+        if need_nested:
+            reply_tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
+        else:
+            reply_tab = None
 
         try:
             try:
@@ -651,6 +661,7 @@ def fetch_replies_batch(
                     timeout=timeout,
                     expected_count=expected_count,
                     existing_tab=reply_tab,  # 传入外部 tab，fetch_replies 不会关闭它
+                    browser_instance=browser_instance,
                 )
                 tweet = dict(tweet)  # 浅拷贝，防止污染原对象
                 tweet["replies"] = replies
@@ -692,9 +703,9 @@ def fetch_replies_batch(
                 import traceback
                 error_msg = str(e).lower()
                 if "disconnected" in error_msg or "connection lost" in error_msg or "target closed" in error_msg:
-                    logger.warning(f"检测到浏览器断开连接，尝试重置浏览器: {e}")
-                    from crawler.browser import reset_browser
-                    reset_browser()
+                    logger.warning(f"检测到浏览器断开连接，尝试恢复浏览器: {e}")
+                    from crawler.browser import ensure_browser_alive
+                    ensure_browser_alive()
                 logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
                 tweet = dict(tweet)
                 tweet["replies"] = []
@@ -722,8 +733,12 @@ def fetch_replies_batch(
             except Exception:
                 pass
 
-        # 礼貌性间隔（带随机扰动），避免被封
-        jittered_sleep(settings.crawler_page_interval, task_id=task_id)
+        # 礼貌性间隔：基于 tweet_detail 动态间隔，多账号时自动缩短
+        from crawler.account_pool import compute_dynamic_interval
+        _rate_mult_reply = get_tracker().get_sleep_multiplier("tweet_detail")
+        _min_r, _max_r, _ = compute_dynamic_interval("tweet_detail")
+        _reply_interval = random.uniform(_min_r, _max_r) * _rate_mult_reply
+        interruptible_sleep(_reply_interval, task_id=task_id)
 
     # ── 批次完成后注册指纹（供后续任务去重复用） ──────────────────
     if dedup_enabled and task_id:
