@@ -8,7 +8,6 @@ import {
     RefreshCw,
     ShieldCheck,
     Trash2,
-    Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";

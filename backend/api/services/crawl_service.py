@@ -449,12 +449,12 @@ def _inject_account_cookies(task_id: str, account_id: str) -> None:
             logger.info(f"账号 {account.alias} 已注入 {injected} 条 Cookie")
             pool.mark_account_used(account_id)
         else:
-            logger.warning(f"账号 {account.alias} 无 Cookie 可注入")
-            pool.mark_account_invalid(account_id)
+            # Cookie 为空可能是数据格式问题，不是账号被封，不标记无效
+            logger.warning(f"账号 {account.alias} 无 Cookie 可注入（不标记为无效）")
 
     except Exception as e:
+        # 注入异常是浏览器环境问题，不是账号问题，不标记无效
         logger.error(f"注入账号 Cookie 失败: {e}", exc_info=True)
-        pool.mark_account_invalid(account_id)
 
 
 def _handle_task_account_lifecycle(task_id: str) -> None:

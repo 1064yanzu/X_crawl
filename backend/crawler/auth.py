@@ -44,6 +44,25 @@ X_BASE_URL = "https://x.com"
 _REQUIRED_COOKIES = {"auth_token", "twid"}
 
 
+def _extract_twid_uid(twid_value: str) -> str:
+    """从 twid cookie 值（如 'u%3D1234' 或 'u=1234'）提取用户 ID。"""
+    from urllib.parse import unquote
+    decoded = unquote(twid_value)  # u%3D1234 -> u=1234
+    if decoded.startswith("u="):
+        return decoded[2:]
+    return decoded
+
+
+def _get_account_twid(account: "AccountEntry") -> str:
+    """从 AccountEntry 的 cookies 中提取 twid 用户 ID。"""
+    for c in (account.cookies or []):
+        name = c.get("name", "") if isinstance(c, dict) else getattr(c, "name", "")
+        value = c.get("value", "") if isinstance(c, dict) else getattr(c, "value", "")
+        if name == "twid" and value:
+            return _extract_twid_uid(value)
+    return ""
+
+
 @dataclass
 class LoginCheckResult:
     ok: bool
@@ -256,6 +275,7 @@ def ensure_login_detailed(tab: ChromiumTab) -> EnsureLoginResult:
     """
     确保 tab 已登录 X。
     优先复用当前 profile 中已有登录态；若缺失，再尝试注入持久化 Cookie 兜底。
+    注意：Cloudflare challenge 不是登录问题，Cookie 注入无法解决——直接返回失败让任务暂停。
     """
     _ensure_x_domain_context(tab)
     current = _finalize_login_result(tab, source="profile", injected_count=0, attempted_injection=False)
@@ -264,6 +284,14 @@ def ensure_login_detailed(tab: ChromiumTab) -> EnsureLoginResult:
             capture_cookies_from_tab(tab)
         except Exception as e:
             logger.warning(f"回写 Cookie 失败（不影响爬取）: {e}")
+        return current
+
+    # Cloudflare challenge / 风控挑战：Cookie 注入无法解决，直接返回让任务暂停等用户验证
+    if current.check.page_state in (PageState.CHALLENGE.value, PageState.RATE_LIMITED.value):
+        logger.warning(
+            f"检测到 {current.check.page_state}（非登录问题），跳过 Cookie 注入，"
+            f"等待用户在浏览器中完成验证"
+        )
         return current
 
     injected = inject_cookies_to_tab(tab)
@@ -327,12 +355,42 @@ def inject_account_cookies(tab: ChromiumTab, account: "AccountEntry") -> int:
 
 
 def ensure_login_with_pool_detailed(tab: ChromiumTab, account: "AccountEntry") -> EnsureLoginResult:
-    """注入指定账号 cookies 并验证登录状态。"""
+    """注入指定账号 cookies 并验证登录状态。
+    注意：Cloudflare challenge 不是登录/账号问题，Cookie 注入无法解决——直接返回失败。
+    """
     from crawler.account_pool import get_pool
 
     _ensure_x_domain_context(tab)
     current = _finalize_login_result(tab, source="account_profile", injected_count=0, attempted_injection=False)
+
+    # ── 已有登录态时，验证当前 twid 是否匹配目标账号 ──────────────────
+    need_inject = True  # 默认需要注入
     if current.ok:
+        browser_cookies = _get_cookie_dict(tab)
+        browser_twid_uid = _extract_twid_uid(browser_cookies.get("twid", ""))
+        target_twid_uid = _get_account_twid(account)
+        if target_twid_uid and browser_twid_uid and browser_twid_uid != target_twid_uid:
+            logger.info(
+                f"账号 {account.alias!r}：当前 profile 已登录为 uid={browser_twid_uid}，"
+                f"但目标账号 uid={target_twid_uid}，需要重新注入 Cookie"
+            )
+            # twid 不匹配，继续走注入流程
+        else:
+            # 匹配或无法判断（向后兼容），直接返回
+            need_inject = False
+            pool = get_pool()
+            pool.mark_account_used(account.account_id)
+            pool.mark_account_validated(account.account_id)
+            logger.info(f"账号 {account.alias!r} 登录验证通过（profile 匹配）")
+            return current
+
+    # ── Cloudflare challenge：不是账号问题，Cookie 注入无法解决 ────────
+    if current.check.page_state in (PageState.CHALLENGE.value, PageState.RATE_LIMITED.value):
+        # Cloudflare challenge / 风控挑战：不是账号问题，Cookie 注入无法解决
+        logger.warning(
+            f"账号 {account.alias!r}：检测到 {current.check.page_state}（非账号问题），"
+            f"跳过 Cookie 注入，等待用户在浏览器中完成验证"
+        )
         result = current
     else:
         injected = inject_account_cookies(tab, account)
@@ -354,8 +412,18 @@ def ensure_login_with_pool_detailed(tab: ChromiumTab, account: "AccountEntry") -
         pool.mark_account_validated(account.account_id)
         logger.info(f"账号 {account.alias!r} 登录验证通过")
     else:
-        pool.mark_account_invalid(account.account_id)
-        logger.warning(f"账号 {account.alias!r} 登录验证失败，已标记无效，reason={result.reason}")
+        # 以下原因不是账号本身的问题，不标记为无效：
+        # - challenge_required: Cloudflare 五秒盾，浏览器环境问题
+        # - cookie_injection_failed: profile 残留旧 Cookie 导致注入后验证失败，浏览器环境问题
+        _non_account_reasons = {"challenge_required", "cookie_injection_failed"}
+        if result.reason in _non_account_reasons:
+            logger.warning(
+                f"账号 {account.alias!r} 登录失败（reason={result.reason}），"
+                f"但这不是账号问题，不标记为无效"
+            )
+        else:
+            pool.mark_account_invalid(account.account_id)
+            logger.warning(f"账号 {account.alias!r} 登录验证失败，已标记无效，reason={result.reason}")
 
     return result
 

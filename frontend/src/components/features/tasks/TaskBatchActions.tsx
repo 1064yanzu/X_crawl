@@ -1,4 +1,4 @@
-import { Download, Loader2, MessageCircleMore, RefreshCcw, Trash2 } from "lucide-react";
+import { Download, Loader2, MessageCircleMore, PlayCircle, RefreshCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function TaskBatchActions({
@@ -11,6 +11,7 @@ export function TaskBatchActions({
     busyAction,
     onToggleSelectAll,
     onClearSelection,
+    onResumeAll,
     onBatchResume,
     onBatchCommentBackfill,
     onBatchExport,
@@ -22,9 +23,10 @@ export function TaskBatchActions({
     resumableSelectedCount: number;
     backfillableSelectedCount: number;
     allVisibleSelected: boolean;
-    busyAction: "resume" | "backfill" | "delete" | "export" | null;
+    busyAction: "resume" | "resumeAll" | "backfill" | "delete" | "export" | null;
     onToggleSelectAll: () => void;
     onClearSelection: () => void;
+    onResumeAll: () => void;
     onBatchResume: () => void;
     onBatchCommentBackfill: () => void;
     onBatchExport: () => void;
@@ -43,6 +45,15 @@ export function TaskBatchActions({
                 </div>
 
                 <div className="flex flex-wrap gap-2">
+                    <Button
+                        className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+                        onClick={onResumeAll}
+                        disabled={busyAction !== null}
+                    >
+                        {busyAction === "resumeAll" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <PlayCircle className="mr-1.5 h-3.5 w-3.5" />}
+                        一键恢复全部
+                    </Button>
+                    <div className="mx-1 hidden h-8 w-px bg-border/60 sm:block" />
                     <Button variant="outline" className="rounded-xl" onClick={onToggleSelectAll}>
                         {allVisibleSelected ? "取消全选" : "全选当前结果"}
                     </Button>

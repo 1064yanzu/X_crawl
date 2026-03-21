@@ -1,7 +1,8 @@
 """
 任务管理路由（v3 - 使用统一线程启动入口）
-GET    /api/v1/tasks           查看所有任务列表
-DELETE /api/v1/tasks/{task_id} 删除任务记录
+GET    /api/v1/tasks                  查看所有任务列表
+POST   /api/v1/tasks/resume-all       一键恢复所有暂停/停止/失败的任务
+DELETE /api/v1/tasks/{task_id}        删除任务记录
 POST   /api/v1/tasks/{task_id}/pause  暂停任务
 POST   /api/v1/tasks/{task_id}/resume 继续任务
 POST   /api/v1/tasks/{task_id}/stop   主动终止任务
@@ -111,6 +112,111 @@ async def stream_task(task_id: str, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post(
+    "/resume-all",
+    summary="一键恢复所有可恢复的任务",
+    description=(
+        "一次性恢复所有暂停/停止/失败的任务。"
+        "对于队列中的任务，会自动通过队列恢复；"
+        "对于独立任务，会逐个调用恢复逻辑。\n\n"
+        "返回恢复成功、跳过、失败的任务 ID 列表。"
+    ),
+)
+async def resume_all_tasks() -> dict:
+    """一键恢复所有暂停/停止/失败的任务"""
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    all_tasks = task_manager.list_tasks(include_payload=False)
+    resumable_statuses = {"paused", "stopped", "failed"}
+    queue_task_map: dict[str, list[dict]] = {}
+
+    for task in all_tasks:
+        queue_id = task.get("queue_id")
+        if queue_id:
+            queue_task_map.setdefault(queue_id, []).append(task)
+
+    resumed_ids: list[str] = []
+    skipped_ids: list[str] = []
+    failed_ids: list[str] = []
+    already_running_ids: list[str] = []
+    processed_queue_ids: set[str] = set()
+
+    for task in all_tasks:
+        task_id = task.get("task_id", "")
+        status = task.get("status", "")
+
+        if status in ("running", "pending"):
+            already_running_ids.append(task_id)
+            continue
+
+        if status not in resumable_statuses:
+            skipped_ids.append(task_id)
+            continue
+
+        # 如果属于队列，通过队列批量恢复（避免重复操作）
+        queue_id = task.get("queue_id")
+        if queue_id and queue_id not in processed_queue_ids:
+            processed_queue_ids.add(queue_id)
+            try:
+                result = task_queue_manager.resume_queue(queue_id)
+                resumed_ids.extend(result.get("resumed", []))
+                already_running_ids.extend(result.get("already_running", []))
+                _logger.info(
+                    "resume_all: queue=%s resumed=%d, already_running=%d",
+                    queue_id[:8], len(result.get("resumed", [])), len(result.get("already_running", [])),
+                )
+            except Exception as e:
+                _logger.error("resume_all: queue=%s 恢复失败: %s", queue_id[:8], e, exc_info=True)
+                failed_ids.extend(
+                    queued_task.get("task_id", "")
+                    for queued_task in queue_task_map.get(queue_id, [])
+                    if queued_task.get("status") in resumable_statuses
+                )
+            continue
+        elif queue_id and queue_id in processed_queue_ids:
+            # 该队列已处理过，跳过
+            continue
+
+        # 独立任务：逐个恢复
+        try:
+            if status in ("done", "stopped", "failed"):
+                success = task_manager.resume_finished_task(task_id)
+                if success:
+                    crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+                    resumed_ids.append(task_id)
+                else:
+                    failed_ids.append(task_id)
+            elif status == "paused":
+                if task_manager.is_thread_alive(task_id):
+                    task_manager.resume_task(task_id)
+                else:
+                    task_manager.resume_task(task_id)
+                    crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
+                resumed_ids.append(task_id)
+        except Exception as e:
+            _logger.error("resume_all: task=%s 恢复失败: %s", task_id[:8], e, exc_info=True)
+            failed_ids.append(task_id)
+
+    # 去重（队列恢复可能已包含某些 task_id）
+    resumed_ids = list(dict.fromkeys(resumed_ids))
+    skipped_ids = list(dict.fromkeys(task_id for task_id in skipped_ids if task_id))
+    failed_ids = list(dict.fromkeys(task_id for task_id in failed_ids if task_id))
+    already_running_ids = list(dict.fromkeys(task_id for task_id in already_running_ids if task_id))
+
+    _logger.info(
+        "resume_all 完成: resumed=%d, already_running=%d, skipped=%d, failed=%d",
+        len(resumed_ids), len(already_running_ids), len(skipped_ids), len(failed_ids),
+    )
+    return {
+        "message": f"已恢复 {len(resumed_ids)} 个任务",
+        "resumed": resumed_ids,
+        "already_running": already_running_ids,
+        "skipped": skipped_ids,
+        "failed": failed_ids,
+    }
 
 
 @router.delete(

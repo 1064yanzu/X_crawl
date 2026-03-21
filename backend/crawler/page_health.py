@@ -190,7 +190,8 @@ def navigate_with_retry(
             # ── 二次验证：过滤 noscript 误判 ──────────────────────────
             # X 的 HTML 始终包含 <noscript>JavaScript is not available.</noscript>
             # 如果 detect_page_state 将其误判为 transient_error，这里兜底修正
-            if state == PageState.TRANSIENT_ERROR:
+            # 注意：JS 未执行空壳页不是误判，必须跳过修正
+            if state == PageState.TRANSIENT_ERROR and "JS 未执行" not in reason:
                 try:
                     import re as _re
                     _raw = tab.html or ""
@@ -239,17 +240,28 @@ def navigate_with_retry(
                     risk_state=_to_risk_state(state),
                     meta={"reason": reason, "hit": challenge_hits},
                 )
+                # 首次就提醒用户操作浏览器完成验证
+                if challenge_hits == 1:
+                    promote_browser_for_manual_interaction(tab, reason=state.value)
                 logger.warning(
                     f"{log_prefix}检测到风险页 state={state.value}, reason={reason}, "
                     f"hit={challenge_hits}/{challenge_retry_times}"
                 )
                 if challenge_hits <= challenge_retry_times:
                     sleep_with_jitter(challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+                    # 冷却后重新检测（不刷新，等用户手动完成验证）
+                    recheck_state, _ = detect_page_state(tab)
+                    if recheck_state == PageState.OK:
+                        _record_success()
+                        logger.info(f"{log_prefix}用户已完成验证，页面恢复正常")
+                        if post_load_wait > 0:
+                            interruptible_sleep(post_load_wait, task_id=task_id)
+                        return True
                     continue
                 if raise_on_risk:
                     promote_browser_for_manual_interaction(tab, reason=state.value)
                     raise ChallengeSignal(
-                        f"检测到 {state.value}，请人工处理后继续",
+                        f"检测到 {state.value}，请在浏览器中完成安全验证后点击继续任务",
                         risk_state=_to_risk_state(state),
                     )
                 if attempt == max_retries:

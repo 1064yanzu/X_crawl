@@ -19,6 +19,8 @@ from api.routers.export import (
     EXPORT_FIELDS,
     _flatten_tweet,
     _collect_all_rows,
+    _dedup_rows,
+    _make_row_dedup_key,
     _build_csv,
 )
 
@@ -31,6 +33,10 @@ class BatchExportRequest(BaseModel):
     merge_mode: Literal["single", "per_task"] = Field(
         default="single",
         description="合并模式: single=合并到一个文件/Sheet, per_task=每个任务独立Sheet(仅Excel)",
+    )
+    deduplicate: bool = Field(
+        default=False,
+        description="是否对导出数据去重（完全相同的帖子/评论只保留一条）",
     )
 
 
@@ -74,6 +80,41 @@ def _build_merged_csv(tasks_data: list[tuple[dict, list[dict]]]) -> bytes:
             row["_source_task_id"] = task.get("task_id", "")
         all_rows.extend(rows)
     return _build_csv_with_source(all_rows)
+
+
+def _deduplicate_tasks_data(
+    tasks_data: list[tuple[dict, list[dict]]],
+    *,
+    merge_mode: Literal["single", "per_task"],
+) -> tuple[list[tuple[dict, list[dict]]], int]:
+    """批量导出去重。
+
+    - single：跨任务全局去重（适用于合并 CSV / 单 Sheet Excel）
+    - per_task：每个任务各自去重（适用于每任务独立 Sheet）
+    """
+    if merge_mode == "per_task":
+        deduped: list[tuple[dict, list[dict]]] = []
+        removed_total = 0
+        for task, rows in tasks_data:
+            unique_rows = _dedup_rows(rows)
+            removed_total += len(rows) - len(unique_rows)
+            deduped.append((task, unique_rows))
+        return deduped, removed_total
+
+    seen: set[tuple[str, str, str, str, str]] = set()
+    deduped = []
+    removed_total = 0
+    for task, rows in tasks_data:
+        unique_rows: list[dict] = []
+        for row in rows:
+            key = _make_row_dedup_key(row)
+            if key in seen:
+                removed_total += 1
+                continue
+            seen.add(key)
+            unique_rows.append(row)
+        deduped.append((task, unique_rows))
+    return deduped, removed_total
 
 
 def _build_csv_with_source(tweets: list[dict]) -> bytes:
@@ -182,6 +223,10 @@ def _build_batch_excel(
 @router.post("/csv", summary="批量导出为 CSV（合并到一个文件）")
 async def batch_export_csv(req: BatchExportRequest):
     tasks_data = _get_tasks_data(req.task_ids)
+    if req.deduplicate:
+        tasks_data, removed = _deduplicate_tasks_data(tasks_data, merge_mode="single")
+        if removed > 0:
+            logger.info("批量导出 CSV 去重: 共移除 %d 条重复数据", removed)
     data = _build_merged_csv(tasks_data)
     tasks = [t for t, _ in tasks_data]
     filename = _make_batch_filename(tasks, "csv")
@@ -197,6 +242,10 @@ async def batch_export_csv(req: BatchExportRequest):
 @router.post("/excel", summary="批量导出为 Excel（支持合并或分Sheet）")
 async def batch_export_excel(req: BatchExportRequest):
     tasks_data = _get_tasks_data(req.task_ids)
+    if req.deduplicate:
+        tasks_data, removed = _deduplicate_tasks_data(tasks_data, merge_mode=req.merge_mode)
+        if removed > 0:
+            logger.info("批量导出 Excel 去重: 共移除 %d 条重复数据, mode=%s", removed, req.merge_mode)
     data = _build_batch_excel(tasks_data, req.merge_mode)
     tasks = [t for t, _ in tasks_data]
     filename = _make_batch_filename(tasks, "xlsx")

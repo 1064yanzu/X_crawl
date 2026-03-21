@@ -31,7 +31,7 @@ export default function TasksPage() {
     const [resumingId, setResumingId] = React.useState<string | null>(null);
     const [backfillingId, setBackfillingId] = React.useState<string | null>(null);
     const [deleteId, setDeleteId] = React.useState<string | null>(null);
-    const [batchAction, setBatchAction] = React.useState<"resume" | "backfill" | "delete" | "export" | null>(null);
+    const [batchAction, setBatchAction] = React.useState<"resume" | "resumeAll" | "backfill" | "delete" | "export" | null>(null);
     const [confirmBatchDelete, setConfirmBatchDelete] = React.useState(false);
     const [showBatchExport, setShowBatchExport] = React.useState(false);
 
@@ -163,6 +163,40 @@ export default function TasksPage() {
         }
     };
 
+    const handleResumeAll = async () => {
+        setBatchAction("resumeAll");
+        try {
+            const result = await api.tasks.resumeAll();
+            const resumedCount = result.resumed.length;
+            const failedCount = result.failed.length;
+
+            if (resumedCount > 0) {
+                await refetch();
+            }
+
+            if (resumedCount === 0 && failedCount === 0) {
+                push({ type: "info", title: "没有需要恢复的任务", description: "所有任务均已完成或正在运行中。" });
+            } else if (failedCount === 0) {
+                push({ type: "success", title: `已恢复 ${resumedCount} 个任务` });
+            } else {
+                push({
+                    type: resumedCount > 0 ? "info" : "error",
+                    title: resumedCount > 0 ? `已恢复 ${resumedCount} 个任务` : "恢复失败",
+                    description: `${failedCount} 个任务恢复失败，请稍后重试。`,
+                });
+            }
+        } catch (err) {
+            console.error(err);
+            push({
+                type: "error",
+                title: "一键恢复失败",
+                description: err instanceof Error ? err.message : String(err),
+            });
+        } finally {
+            setBatchAction(null);
+        }
+    };
+
     const handleBatchResume = async () => {
         if (resumableSelectedCount === 0) {
             push({ type: "info", title: "选中的任务里没有可继续的项目" });
@@ -284,6 +318,7 @@ export default function TasksPage() {
                     busyAction={batchAction}
                     onToggleSelectAll={toggleSelectAllVisible}
                     onClearSelection={clearSelection}
+                    onResumeAll={() => void handleResumeAll()}
                     onBatchResume={() => void handleBatchResume()}
                     onBatchCommentBackfill={() => void handleCreateCommentBackfill(backfillableSelectedTasks.map((task) => task.task_id))}
                     onBatchExport={() => setShowBatchExport(true)}

@@ -230,7 +230,31 @@ def _collect_all_rows(tweets: list[dict], platform: str) -> list[dict]:
     return all_rows
 
 
-def _get_task_data(task_id: str) -> tuple[dict, list[dict]]:
+def _make_row_dedup_key(row: dict) -> tuple[str, str, str, str, str]:
+    """生成导出去重键：平台 + ID + 文本 + 数据类型 + 所属推文 ID。"""
+    return (
+        str(row.get("platform", "")),
+        str(row.get("id", "")),
+        str(row.get("text", "")),
+        str(row.get("row_type", "")),
+        str(row.get("parent_tweet_id", "")),
+    )
+
+
+def _dedup_rows(rows: list[dict]) -> list[dict]:
+    """根据核心字段去重，完全相同的帖子/评论只保留第一条。"""
+    seen: set[tuple[str, str, str, str, str]] = set()
+    unique: list[dict] = []
+    for row in rows:
+        key = _make_row_dedup_key(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(row)
+    return unique
+
+
+def _get_task_data(task_id: str, *, deduplicate: bool = False) -> tuple[dict, list[dict]]:
     """获取任务元信息和推文列表（含回复展平），不存在则抛 404"""
     task = task_manager.get_task_full(task_id)
     if not task:
@@ -252,6 +276,13 @@ def _get_task_data(task_id: str) -> tuple[dict, list[dict]]:
             f"任务 {task_id} 开启了回复抓取但导出回复数为 0，"
             f"请检查推文数据中 replies 字段是否存在"
         )
+
+    if deduplicate:
+        before = len(all_rows)
+        all_rows = _dedup_rows(all_rows)
+        removed = before - len(all_rows)
+        if removed > 0:
+            logger.info(f"导出去重: 移除 {removed} 条重复数据，剩余 {len(all_rows)} 行")
 
     return task, all_rows
 
@@ -284,8 +315,11 @@ def _build_csv(tweets: list[dict]) -> bytes:
 
 
 @router.get("/{task_id}/csv", summary="导出推文为 CSV")
-async def export_csv(task_id: str):
-    task, tweets = _get_task_data(task_id)
+async def export_csv(
+    task_id: str,
+    deduplicate: bool = Query(default=False, description="是否对导出数据去重（完全相同的帖子/评论只保留一条）"),
+):
+    task, tweets = _get_task_data(task_id, deduplicate=deduplicate)
     data = _build_csv(tweets)
     filename = _make_filename(task, "csv")
     return StreamingResponse(
@@ -379,8 +413,11 @@ def _build_excel(tweets: list[dict]) -> bytes:
 
 
 @router.get("/{task_id}/excel", summary="导出推文为 Excel（xlsx）")
-async def export_excel(task_id: str):
-    task, tweets = _get_task_data(task_id)
+async def export_excel(
+    task_id: str,
+    deduplicate: bool = Query(default=False, description="是否对导出数据去重（完全相同的帖子/评论只保留一条）"),
+):
+    task, tweets = _get_task_data(task_id, deduplicate=deduplicate)
     data = _build_excel(tweets)
     filename = _make_filename(task, "xlsx")
     return StreamingResponse(
@@ -396,7 +433,8 @@ async def export_excel(task_id: str):
 async def export_any(
     task_id: str,
     format: Literal["csv", "excel"] = Query(default="csv", description="导出格式"),
+    deduplicate: bool = Query(default=False, description="是否对导出数据去重"),
 ):
     if format == "excel":
-        return await export_excel(task_id)
-    return await export_csv(task_id)
+        return await export_excel(task_id, deduplicate=deduplicate)
+    return await export_csv(task_id, deduplicate=deduplicate)

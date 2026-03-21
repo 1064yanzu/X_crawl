@@ -154,6 +154,26 @@ class AccountPool:
         except Exception as e:
             logger.error(f"写入账号池文件失败: {e}")
 
+    def reload(self) -> None:
+        """从文件重新加载账号列表（运行时热刷新）"""
+        with self._lock:
+            self._accounts = []
+            self._rr_index = 0
+            self._load()
+
+    def reset_account_valid(self, account_id: str) -> bool:
+        """将账号恢复为完全可用状态（is_valid=True, enabled=True, fail_count=0）"""
+        with self._lock:
+            for acc in self._accounts:
+                if acc.account_id == account_id:
+                    acc.is_valid = True
+                    acc.enabled = True
+                    acc.fail_count = 0
+                    self._save()
+                    logger.info(f"账号 {acc.alias!r} 已恢复为有效并启用")
+                    return True
+            return False
+
     # ─── 账号 CRUD ────────────────────────────────────────────────────────
 
     def add_account(self, alias: str, cookies: list[dict]) -> AccountEntry:

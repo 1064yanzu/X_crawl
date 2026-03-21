@@ -30,7 +30,7 @@ export function TaskListCard({
     density: DensityMode;
     selected: boolean;
     focused: boolean;
-    busyAction: "resume" | "backfill" | "delete" | "export" | null;
+    busyAction: "resume" | "resumeAll" | "backfill" | "delete" | "export" | null;
     resumingId: string | null;
     backfillingId: string | null;
     onHover: (taskId: string) => void;

@@ -21,7 +21,7 @@ export function isTaskActive(status: TaskStatus) {
 }
 
 export function canResumeTask(status: TaskStatus) {
-    return status === "done" || status === "failed" || status === "stopped";
+    return status === "paused" || status === "done" || status === "failed" || status === "stopped";
 }
 
 export function getRiskStateLabel(riskState?: string | null) {

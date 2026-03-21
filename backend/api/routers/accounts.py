@@ -105,6 +105,14 @@ async def list_accounts():
     return [_to_account_out(a) for a in pool.list_accounts()]
 
 
+@router.post("/reload", summary="从文件重新加载账号池")
+async def reload_accounts():
+    """从磁盘文件重新加载账号池（用于手动修改文件后同步到内存）"""
+    pool = get_pool()
+    pool.reload()
+    return {"message": f"账号池已重新加载，当前 {len(pool.list_accounts())} 个账号"}
+
+
 @router.post("", response_model=AccountOut, summary="添加账号")
 async def add_account(req: AddAccountRequest):
     """
@@ -144,6 +152,17 @@ async def delete_account(account_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail=f"账号 {account_id} 不存在")
     return {"message": f"账号 {account_id} 已删除"}
+
+
+@router.post("/{account_id}/reset-valid", response_model=AccountOut, summary="恢复账号有效状态")
+async def reset_account_valid(account_id: str):
+    """将账号的 is_valid 恢复为 True（用于修复因 Cloudflare challenge 等非账号原因被误标无效的账号）"""
+    pool = get_pool()
+    ok = pool.reset_account_valid(account_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"账号 {account_id} 不存在")
+    updated = pool.get_account(account_id)
+    return _to_account_out(updated)
 
 
 @router.post("/{account_id}/validate", response_model=AccountOut, summary="验证账号登录状态")

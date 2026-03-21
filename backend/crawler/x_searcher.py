@@ -25,7 +25,7 @@ from crawler.checkpoint_buffer import (
 )
 from crawler.response_saver import save_raw_response
 from crawler.page_health import navigate_with_retry
-from crawler.page_state import detect_page_state, PageState
+from crawler.page_state import detect_page_state, detect_no_results, PageState
 from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body, extract_packet_body_dict
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, LoginRequiredPause, RiskState
@@ -367,6 +367,11 @@ def _to_risk_state(state: PageState) -> RiskState:
     return "challenge"
 
 
+# 搜索无结果哨兵：当页面显示 "No results for ..." 时，
+# _wait_search_packet_with_recovery 返回此对象而非 None（超时）或 packet
+_NO_RESULTS_SENTINEL = object()
+
+
 def _is_search_api_blocked(packet) -> tuple[bool, str]:
     try:
         url = getattr(packet, "url", "") or ""
@@ -426,6 +431,15 @@ def _wait_search_packet_with_recovery(
             return packet
         bump_metric(task_id, "search_packet_timeouts")
 
+        # ── 快速检测搜索无结果页面 ─────────────────────────────────
+        # X 的 "No results for ..." 页面可能不触发 SearchTimeline 请求，
+        # 此时无需浪费时间做软重试/硬刷新，直接返回无结果哨兵
+        if detect_no_results(tab):
+            logger.info(
+                f"第 {page_num} 页检测到搜索无结果页面，跳过重试"
+            )
+            return _NO_RESULTS_SENTINEL
+
         state, reason = detect_page_state(tab)
         if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
             challenge_hits += 1
@@ -435,11 +449,20 @@ def _wait_search_packet_with_recovery(
                     f"第 {page_num} 页检测到 {state.value} 且重试耗尽：{reason}",
                     risk_state=_to_risk_state(state),
                 )
+            # 首次就提醒用户在浏览器中完成验证
+            if challenge_hits == 1:
+                from crawler.browser import promote_browser_for_manual_interaction
+                promote_browser_for_manual_interaction(tab, reason=state.value)
             logger.warning(
                 f"第 {page_num} 页检测到风险状态 state={state.value}，"
-                f"将在冷却后重试（{challenge_hits}/{policy.challenge_retry_times}）"
+                f"等待用户完成验证（{challenge_hits}/{policy.challenge_retry_times}）"
             )
             sleep_with_jitter(policy.challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+            # 冷却后重新检测（不刷新，等用户手动完成验证）
+            recheck_state, _ = detect_page_state(tab)
+            if recheck_state == PageState.OK:
+                logger.info(f"第 {page_num} 页用户已完成验证，页面恢复正常")
+                continue  # 继续软重试流程
 
         if soft_attempt < policy.packet_soft_retries:
             logger.info(f"第 {page_num} 页软恢复重试 {soft_attempt + 1}/{policy.packet_soft_retries}")
@@ -481,6 +504,12 @@ def _wait_search_packet_with_recovery(
         if packet:
             _update_rate_tracker(packet, endpoint="search", task_id=task_id)
             return packet
+        # 硬刷新后仍无包，检测是否为无结果页面
+        if detect_no_results(tab):
+            logger.info(
+                f"第 {page_num} 页硬刷新后检测到搜索无结果页面，跳过后续重试"
+            )
+            return _NO_RESULTS_SENTINEL
 
     return None
 
@@ -577,6 +606,8 @@ def search(
     resumed = False
     _all_failed_records: list[dict] = []  # 收集所有失败的回复记录
     _last_bottom_cursor: Optional[str] = None  # 追踪最后有效 cursor，用于兜底保存
+    _consecutive_empty_pages: int = 0  # 连续空页（API 返回 0 条新推文）计数
+    _MAX_CONSECUTIVE_EMPTY_PAGES: int = 3  # 连续空页上限，超过即停止当前搜索
     _crawl_start_time = time.monotonic()
     _long_rest_done_at = 0.0  # 上次长休息时间戳
     ckpt: Optional[dict] = None
@@ -787,6 +818,14 @@ def search(
             if current_account:
                 account_login = ensure_login_with_pool_detailed(tab, current_account)
                 if not account_login.ok:
+                    # Cloudflare challenge 不是账号问题，回退默认登录也没用，直接暂停
+                    if account_login.reason == "challenge_required":
+                        raise LoginRequiredPause(
+                            _build_login_pause_message(account_login),
+                            reason=account_login.reason,
+                            session_mode=account_login.session_mode,
+                            effective_user_data_path=account_login.effective_user_data_path,
+                        )
                     logger.warning(
                         f"账号池首账号 {current_account.alias!r} 登录失败，"
                         f"reason={account_login.reason}，回退至默认登录"
@@ -882,6 +921,20 @@ def search(
                 )
                 break
 
+            # ── 搜索无结果：立即结束当前时间段 ───────────────────────
+            if packet is _NO_RESULTS_SENTINEL:
+                logger.info(f"第 {page_num} 页搜索无结果（No results），结束当前搜索")
+                if task_id:
+                    _update_phase("当前时间段无搜索结果，准备跳到下一段")
+                    telemetry.record_event(
+                        task_id,
+                        "search_no_results",
+                        status="running",
+                        phase="当前时间段无搜索结果",
+                        page=page_num,
+                    )
+                break
+
             try:
                 body = extract_packet_body_dict(packet)
                 if not isinstance(body, dict):
@@ -900,6 +953,24 @@ def search(
                 new_tweets = [t for t in tweets_page if t.get("id") not in seen_ids]
                 for t in new_tweets:
                     seen_ids.add(t.get("id", ""))
+
+                # ── 连续空页检测 ────────────────────────────────────────
+                if not new_tweets:
+                    _consecutive_empty_pages += 1
+                    bump_metric(task_id, "empty_pages")
+                    if _consecutive_empty_pages >= _MAX_CONSECUTIVE_EMPTY_PAGES:
+                        logger.info(
+                            f"连续 {_MAX_CONSECUTIVE_EMPTY_PAGES} 页无新推文，"
+                            f"当前时间段搜索结果已耗尽，停止翻页"
+                        )
+                        if task_id:
+                            _update_phase("连续多页无新推文，结束当前搜索")
+                        break
+                    logger.info(
+                        f"第 {page_num} 页无新推文（连续空页 {_consecutive_empty_pages}/{_MAX_CONSECUTIVE_EMPTY_PAGES}），继续翻页"
+                    )
+                else:
+                    _consecutive_empty_pages = 0
 
                 # ── 模拟人类阅读：慢慢浏览本页推文 ────────────────────
                 # 当 DFS 回复抓取启用时跳过模拟阅读，回复抓取本身已提供足够的自然延迟

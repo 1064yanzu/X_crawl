@@ -22,6 +22,7 @@ def fetch_nested_replies(
     max_replies_per_tweet: int = 0,
     task_id: Optional[str] = None,
     timeout: Optional[float] = None,
+    browser_instance=None,
 ) -> tuple[list[dict], list[dict]]:
     """
     递归抓取评论的子评论。
@@ -109,6 +110,7 @@ def fetch_nested_replies(
                 task_id=task_id,
                 timeout=timeout,
                 expected_count=reply_count,
+                browser_instance=browser_instance,
             )
 
             reply_copy = dict(reply)
@@ -129,6 +131,7 @@ def fetch_nested_replies(
                     max_replies_per_tweet=max_replies_per_tweet,
                     task_id=task_id,
                     timeout=timeout,
+                    browser_instance=browser_instance,
                 )
                 reply_copy["replies"] = sub_replies
                 failed_records.extend(sub_failed)

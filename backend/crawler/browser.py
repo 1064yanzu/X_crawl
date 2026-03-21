@@ -544,16 +544,25 @@ def _create_browser() -> Chromium:
     return browser
 
 
-def get_new_tab(background: Optional[bool] = None):
-    """获取一个新标签页（用于单次爬虫任务）"""
+def get_new_tab(background: Optional[bool] = None, *, _retried: bool = False):
+    """获取一个新标签页（用于单次爬虫任务）。断连时自动重建浏览器。"""
     if background is None:
         background = bool(settings.browser_background_tabs)
         if not background and sys.platform == "darwin":
             logger.debug("macOS 当前配置为前台打开新标签页，浏览器可能会抢占系统焦点")
-    tab = get_browser().new_tab(background=background)
-    # 始终注入 stealth 脚本（反检测是基本需求，不应默认关闭）
-    apply_stealth_to_tab(tab, enabled=True)
-    return tab
+    try:
+        tab = get_browser().new_tab(background=background)
+        # 始终注入 stealth 脚本（反检测是基本需求，不应默认关闭）
+        apply_stealth_to_tab(tab, enabled=True)
+        return tab
+    except Exception as e:
+        err_name = type(e).__name__
+        if ("Disconnected" in err_name or "disconnected" in str(e).lower()) and not _retried:
+            logger.warning(f"全局浏览器断连，正在重建: {e}")
+            global _browser
+            _browser = None
+            return get_new_tab(background=background, _retried=True)
+        raise
 
 
 def _resolve_browser_app_name() -> Optional[str]:

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Download, FileSpreadsheet, FileText, Loader2, X } from "lucide-react";
+import { Copy, Download, FileSpreadsheet, FileText, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/services/api";
 
@@ -21,18 +21,22 @@ export function BatchExportDialog({
     onError: (message: string) => void;
 }) {
     const [format, setFormat] = React.useState<ExportFormat>("excel_per_task");
+    const [deduplicate, setDeduplicate] = React.useState(false);
     const [exporting, setExporting] = React.useState(false);
+    const deduplicateHint = format === "excel_per_task"
+        ? "会在每个任务各自的 Sheet 内去重，避免单个任务内的重复帖子和评论。"
+        : "会在最终合并导出的结果中去重，跨任务重复的数据也只保留一条。";
 
     const handleExport = async () => {
         if (taskIds.length === 0) return;
         setExporting(true);
         try {
             if (format === "csv") {
-                await api.export.batchDownloadCsv(taskIds);
+                await api.export.batchDownloadCsv(taskIds, deduplicate);
             } else if (format === "excel_single") {
-                await api.export.batchDownloadExcel(taskIds, "single");
+                await api.export.batchDownloadExcel(taskIds, "single", deduplicate);
             } else {
-                await api.export.batchDownloadExcel(taskIds, "per_task");
+                await api.export.batchDownloadExcel(taskIds, "per_task", deduplicate);
             }
             onSuccess(`已导出 ${taskIds.length} 个任务的数据`);
             onClose();
@@ -114,6 +118,30 @@ export function BatchExportDialog({
                         </label>
                     ))}
                 </div>
+
+                <label
+                    className={`mt-4 flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 transition-colors ${
+                        deduplicate
+                            ? "border-primary bg-primary/5"
+                            : "border-border/60 bg-background/60 hover:border-border"
+                    }`}
+                >
+                    <input
+                        type="checkbox"
+                        checked={deduplicate}
+                        onChange={(e) => setDeduplicate(e.target.checked)}
+                        className="h-4 w-4 rounded border-input accent-primary"
+                    />
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                            <Copy className="h-4 w-4" />
+                            导出时去重
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                            {deduplicateHint}
+                        </p>
+                    </div>
+                </label>
 
                 <div className="mt-5 flex items-center justify-end gap-2">
                     <Button variant="outline" size="sm" className="rounded-xl" onClick={onClose} disabled={exporting}>

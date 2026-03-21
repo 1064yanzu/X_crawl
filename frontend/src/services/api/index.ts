@@ -634,6 +634,14 @@ export const api = {
             fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/resume`, { method: "POST" }),
         stop: (taskId: string) =>
             fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/stop`, { method: "POST" }),
+        resumeAll: () =>
+            fetchApi<{
+                message: string;
+                resumed: string[];
+                already_running: string[];
+                skipped: string[];
+                failed: string[];
+            }>("/api/v1/tasks/resume-all", { method: "POST" }),
     },
     checkpoints: {
         list: () => fetchApi<CheckpointInfo[]>("/api/v1/checkpoints"),
@@ -672,25 +680,29 @@ export const api = {
         },
     },
     export: {
-        downloadCsv: async (taskId: string) => {
-            const url = `${API_BASE_URL}/api/v1/export/${taskId}/csv`;
+        downloadCsv: async (taskId: string, deduplicate = false) => {
+            const params = new URLSearchParams();
+            if (deduplicate) params.set("deduplicate", "true");
+            const url = `${API_BASE_URL}/api/v1/export/${taskId}/csv${params.size > 0 ? `?${params.toString()}` : ""}`;
             await downloadBlob(url, `xcrawl_${taskId.substring(0, 8)}.csv`);
         },
-        downloadExcel: async (taskId: string) => {
-            const url = `${API_BASE_URL}/api/v1/export/${taskId}/excel`;
+        downloadExcel: async (taskId: string, deduplicate = false) => {
+            const params = new URLSearchParams();
+            if (deduplicate) params.set("deduplicate", "true");
+            const url = `${API_BASE_URL}/api/v1/export/${taskId}/excel${params.size > 0 ? `?${params.toString()}` : ""}`;
             await downloadBlob(url, `xcrawl_${taskId.substring(0, 8)}.xlsx`);
         },
-        batchDownloadCsv: async (taskIds: string[]) => {
+        batchDownloadCsv: async (taskIds: string[], deduplicate = false) => {
             await downloadPostBlob(
                 "/api/v1/export/batch/csv",
-                { task_ids: taskIds, merge_mode: "single" },
+                { task_ids: taskIds, merge_mode: "single", deduplicate },
                 `batch_${taskIds.length}tasks.csv`,
             );
         },
-        batchDownloadExcel: async (taskIds: string[], mergeMode: "single" | "per_task" = "per_task") => {
+        batchDownloadExcel: async (taskIds: string[], mergeMode: "single" | "per_task" = "per_task", deduplicate = false) => {
             await downloadPostBlob(
                 "/api/v1/export/batch/excel",
-                { task_ids: taskIds, merge_mode: mergeMode },
+                { task_ids: taskIds, merge_mode: mergeMode, deduplicate },
                 `batch_${taskIds.length}tasks.xlsx`,
             );
         },

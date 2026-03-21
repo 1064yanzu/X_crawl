@@ -1,5 +1,65 @@
 # Changelog
 
+## [2026-03-21] 任务一键恢复与批量导出去重
+
+### 新增
+- 新增 `POST /api/v1/tasks/resume-all`，可一键恢复 `paused / stopped / failed` 任务
+- 任务列表页新增“一键恢复全部”按钮
+- 批量导出弹窗新增“导出时去重”选项
+
+### 优化
+- 批量导出在合并模式下支持跨任务全局去重，分 Sheet 模式下支持各任务独立去重
+- 单任务导出 `CSV / Excel` 同步支持 `deduplicate` 参数
+- 暂停任务现在也会在任务列表卡片和快速预览中显示“继续”入口
+
+### 修复
+- 修复任务列表 `busyAction` 类型未覆盖 `resumeAll` 导致的前端类型不一致问题
+- 修复一键恢复队列任务时仅记录首个失败任务的问题，现会聚合整队列失败项
+
+### 测试与文档
+- 新增 `backend/tests/test_resume_all_and_export_dedup.py`
+- 更新 `docs/api.md` 与 `docs/施工文档.md`
+
+---
+
+## [2026-03-20] 搜索无结果时间段快速跳过
+
+### 问题
+- X 搜索某个时间段返回 "No results for ..." 时，爬虫在等待 SearchTimeline 数据包
+- X 的 "No results" 页面可能不触发 SearchTimeline GraphQL 请求，导致爬虫在等不到数据包后进入软重试 → 硬刷新的完整恢复流程，白白浪费数分钟
+- 此外，当 API 返回了数据包但推文列表为空（0 条新推文）且仍带有 bottom_cursor 时，搜索循环会继续无意义翻页
+
+### 修复
+- `page_state.py`：新增 `detect_no_results()` 函数，检测页面可见文本是否包含 "No results for" 等无结果标记
+- `x_searcher.py`：
+  - 新增 `_NO_RESULTS_SENTINEL` 哨兵常量
+  - `_wait_search_packet_with_recovery`：在软重试和硬刷新超时后，立即检测页面是否为无结果页，是则返回哨兵跳过后续重试
+  - `search()` 主循环：识别哨兵后立即 break，让时间分段循环跳到下一个段
+  - `search()` 主循环：新增连续空页计数器（`_consecutive_empty_pages`），连续 3 页无新推文即停止当前时间段搜索
+
+### 修改文件
+- `backend/crawler/page_state.py` - 新增 `detect_no_results()` 函数
+- `backend/crawler/x_searcher.py` - 无结果快速跳过 + 连续空页检测
+
+---
+
+## [2026-03-20] JS 未执行空壳页检测
+
+### 问题
+- 爬取 X 时偶尔出现页面只显示 "JavaScript is not available" 的降级文本
+- 原因是 X.com 为纯 SPA，JS 未执行时页面只剩 `<noscript>` 标签内的降级内容
+- 可能由网络不稳定、CDN 拦截、页面加载超时等原因导致
+
+### 修复
+- `page_state.py`：新增 `_is_js_not_executed()` 检测函数，当可见文本极少（<80字符）且原始 HTML 包含 "javascript is not available" 时，判定为 `TRANSIENT_ERROR`，触发自动刷新重试
+- `page_health.py`：更新二次验证逻辑，当 reason 包含 "JS 未执行" 时跳过 noscript 误判修正，确保空壳页不会被错误放行
+
+### 修改文件
+- `backend/crawler/page_state.py` - 新增空壳页检测逻辑
+- `backend/crawler/page_health.py` - 二次验证兼容性修正
+
+---
+
 ## [2025-03-18] 配置字段缺失修复
 
 ### 问题

@@ -95,6 +95,29 @@ def _normalize_url(tab) -> str:
         return ""
 
 
+# JS 未执行空壳页检测的可见文本长度阈值
+# X.com 是纯 SPA，正常渲染后可见文本至少几百字符；
+# 若去掉 noscript/script/style 后文本极短，说明 JS 根本没执行
+_JS_NOT_EXECUTED_TEXT_THRESHOLD = 80
+
+
+def _is_js_not_executed(tab, visible_text: str) -> bool:
+    """检测页面是否为 JS 未执行的空壳页。
+
+    X.com HTML 始终包含 <noscript>JavaScript is not available.</noscript>，
+    正常情况下 JS 执行后会渲染 SPA 内容，noscript 不可见。
+    但如果 JS 未执行（网络问题、CDN 拦截、加载超时等），
+    页面将只剩 noscript 降级文本，表现为可见内容几乎为空。
+    """
+    if len(visible_text) > _JS_NOT_EXECUTED_TEXT_THRESHOLD:
+        return False
+    try:
+        raw_html = (tab.html or "").lower()
+        return "javascript is not available" in raw_html
+    except Exception:
+        return False
+
+
 def detect_page_state(tab) -> tuple[PageState, str]:
     """基于 URL + 页面可见文本特征判断当前页面状态。"""
     text = _normalize_visible_text(tab)
@@ -115,8 +138,35 @@ def detect_page_state(tab) -> tuple[PageState, str]:
     if any(marker in text for marker in _LOGIN_MARKERS_STRONG):
         return PageState.LOGIN_REQUIRED, "命中登录提示特征"
 
+    # JS 未执行空壳页检测：HTML 包含 noscript 降级文本但 SPA 未渲染
+    if _is_js_not_executed(tab, text):
+        return PageState.TRANSIENT_ERROR, "JS 未执行，页面为 noscript 空壳页"
+
     return PageState.OK, "页面状态正常"
 
 
 def is_error_like_state(state: PageState) -> bool:
     return state in {PageState.TRANSIENT_ERROR, PageState.RATE_LIMITED}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  搜索无结果检测
+# ═══════════════════════════════════════════════════════════════════
+
+_NO_RESULTS_MARKERS = [
+    "no results for",           # 英文 "No results for ..."
+    "没有搜索结果",
+    "没有找到结果",
+    "未找到结果",
+]
+
+
+def detect_no_results(tab) -> bool:
+    """检测 X 搜索页面是否显示 "No results for ..." 无结果提示。
+
+    当某个时间段搜索无结果时，X 前端直接渲染 "No results for ..." 页面，
+    可能不会触发 SearchTimeline GraphQL 请求。
+    爬虫应识别此情况并立即跳到下一个时间段，而非等待数据包超时。
+    """
+    text = _normalize_visible_text(tab)
+    return any(marker in text for marker in _NO_RESULTS_MARKERS)

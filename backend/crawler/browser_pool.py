@@ -130,17 +130,35 @@ class BrowserInstance:
         logger.info(f"[BrowserPool] 浏览器实例 #{self.instance_id} 就绪")
         return browser
 
-    def new_tab(self):
-        """在此实例上创建新 tab（已注入 stealth）。"""
+    def new_tab(self, *, _retried: bool = False):
+        """在此实例上创建新 tab（已注入 stealth）。断连时自动重建浏览器实例。"""
         from crawler.stealth import apply_stealth_to_tab
         from config import settings
-        import sys
 
         background = bool(settings.browser_background_tabs)
-        browser = self.get_browser()
-        tab = browser.new_tab(background=background)
-        apply_stealth_to_tab(tab, enabled=True)
-        return tab
+        try:
+            browser = self.get_browser()
+            tab = browser.new_tab(background=background)
+            apply_stealth_to_tab(tab, enabled=True)
+            return tab
+        except Exception as e:
+            err_name = type(e).__name__
+            if "Disconnected" in err_name or "disconnected" in str(e).lower():
+                if _retried:
+                    raise
+                logger.warning(
+                    f"[BrowserPool] 实例 #{self.instance_id} 页面断连，正在重建浏览器..."
+                )
+                with self._lock:
+                    # 尝试关闭旧实例
+                    if self._browser is not None:
+                        try:
+                            self._browser.quit()
+                        except Exception:
+                            pass
+                        self._browser = None
+                return self.new_tab(_retried=True)
+            raise
 
     def close(self) -> None:
         """关闭浏览器实例。"""

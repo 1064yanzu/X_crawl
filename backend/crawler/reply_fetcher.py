@@ -129,6 +129,9 @@ def _wait_reply_packet_with_recovery(
                 risk_state=_to_risk_state(state),
                 meta={"tweet_url": tweet_url, "hit": risk_hits},
             )
+            # 首次就提醒用户在浏览器中完成验证
+            if risk_hits == 1:
+                promote_browser_for_manual_interaction(tab, reason=state.value)
             if risk_hits > policy.challenge_retry_times:
                 promote_browser_for_manual_interaction(tab, reason=state.value)
                 raise ChallengeSignal(
@@ -137,9 +140,14 @@ def _wait_reply_packet_with_recovery(
                 )
             logger.warning(
                 f"  回复第 {page_num} 页风险状态 state={state.value}，"
-                f"冷却后重试（{risk_hits}/{policy.challenge_retry_times}）"
+                f"等待用户完成验证（{risk_hits}/{policy.challenge_retry_times}）"
             )
             sleep_with_jitter(policy.challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+            # 冷却后重新检测（不刷新，等用户手动完成验证）
+            recheck_state, _ = detect_page_state(tab)
+            if recheck_state == PageState.OK:
+                logger.info(f"  回复第 {page_num} 页用户已完成验证，页面恢复正常")
+                continue
 
         if soft_attempt < policy.packet_soft_retries:
             bump_metric(task_id, "soft_retries")
@@ -680,6 +688,7 @@ def fetch_replies_batch(
                             max_replies_per_tweet=max_replies_per_tweet,
                             task_id=task_id,
                             timeout=timeout,
+                            browser_instance=browser_instance,
                         )
                         failed_records.extend(nested_failed)
                     except StopSignal as e:
