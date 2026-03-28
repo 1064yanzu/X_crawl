@@ -75,10 +75,13 @@ export function TaskFiltersBar({
 
                 <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-background p-1 shadow-sm">
                     <Button type="button" variant={density === "comfortable" ? "default" : "ghost"} size="sm" className="rounded-lg" onClick={() => onDensityChange("comfortable")}>
-                        舒展视图
+                        舒展
                     </Button>
                     <Button type="button" variant={density === "compact" ? "default" : "ghost"} size="sm" className="rounded-lg" onClick={() => onDensityChange("compact")}>
-                        紧凑视图
+                        紧凑
+                    </Button>
+                    <Button type="button" variant={density === "mini" ? "default" : "ghost"} size="sm" className="rounded-lg" onClick={() => onDensityChange("mini")}>
+                        极简
                     </Button>
                 </div>
             </div>

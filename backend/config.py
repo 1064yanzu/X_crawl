@@ -199,10 +199,10 @@ class Settings(BaseSettings):
         default=True, description="是否启用休息节律（防长时间爬取被识别）"
     )
     crawler_micro_break_chance: float = Field(
-        default=0.15, description="微休息触发概率（每批新推文后）"
+        default=0.05, description="微休息触发概率（每批新推文后）"
     )
     crawler_short_break_every_n: int = Field(
-        default=250, description="小憩触发阈值（累计推文数）"
+        default=500, description="小憩触发阈值（累计推文数）"
     )
     crawler_long_rest_interval_hours: float = Field(
         default=2.0, description="长休息间隔（小时），运行满此时间后强制休息 15-25 分钟"
@@ -258,10 +258,10 @@ class Settings(BaseSettings):
         default=True, description="X 搜索是否自动启用时间分割"
     )
     x_time_split_trigger_days: int = Field(
-        default=30, description="X 搜索时间跨度达到多少天后触发自动时间分割"
+        default=7, description="X 搜索时间跨度达到多少天后触发自动时间分割"
     )
     x_time_split_window_days: int = Field(
-        default=14, description="X 限定抓取模式下每个时间窗覆盖天数"
+        default=7, description="X 限定抓取模式下每个时间窗覆盖天数"
     )
     x_time_split_window_days_unlimited: int = Field(
         default=7, description="X 无上限抓取模式下每个时间窗覆盖天数"

@@ -46,6 +46,7 @@ export interface TaskOut {
     task_kind?: TaskKind;
     source_file_name?: string | null;
     source_task_id?: string | null;
+    exclude_count?: number;
     queue_id?: string | null;
     queue_name?: string | null;
     queue_order?: number | null;
@@ -405,6 +406,72 @@ export interface BrowserSelectResponse {
 }
 
 // 原始响应存储相关
+// 浏览器池相关类型
+export interface BrowserPoolSlot {
+    slot_id: number;
+    platforms: Record<string, string>;  // { platform: task_id }
+    alive: boolean;
+}
+
+export interface BrowserPoolStatus {
+    max_size: number;
+    total_slots: number;
+    active_slots: number;
+    idle_slots: number;
+    slots: BrowserPoolSlot[];
+}
+
+export interface BrowserPoolResizeResponse {
+    message: string;
+    previous_max_size: number;
+    new_max_size: number;
+}
+
+// 合并任务相关类型
+export interface MergeTaskSummary {
+    task_id: string;
+    result_count: number;
+    status: string;
+    created_at?: string | null;
+    finished_at?: string | null;
+    is_target: boolean;
+}
+
+export interface MergeGroup {
+    keyword: string;
+    platform: string;
+    task_count: number;
+    target_task_id: string;
+    source_task_ids: string[];
+    tasks_summary: MergeTaskSummary[];
+    total_tweets: number;
+    estimated_unique_tweets: number;
+}
+
+export interface MergePreviewResponse {
+    groups: MergeGroup[];
+    mergeable_group_count: number;
+    total_mergeable_tasks: number;
+    non_mergeable_task_ids: string[];
+}
+
+export interface MergedGroupResult {
+    keyword: string;
+    platform: string;
+    target_task_id: string;
+    deleted_task_ids: string[];
+    original_total_tweets: number;
+    merged_unique_tweets: number;
+}
+
+export interface MergeResponse {
+    message: string;
+    merged_groups: MergedGroupResult[];
+    total_deleted_tasks: number;
+    total_unique_tweets: number;
+    non_mergeable_task_ids: string[];
+}
+
 export interface StorageTask {
     task_id: string;
     page_count: number;
@@ -634,14 +701,49 @@ export const api = {
             fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/resume`, { method: "POST" }),
         stop: (taskId: string) =>
             fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/stop`, { method: "POST" }),
+        pauseAll: () =>
+            fetchApi<{
+                message: string;
+                paused: string[];
+                stopped: string[];
+                skipped: string[];
+                failed: string[];
+            }>("/api/v1/tasks/pause-all", { method: "POST" }),
         resumeAll: () =>
             fetchApi<{
                 message: string;
+                scenario: "user_paused" | "risk_control" | "mixed" | "none";
                 resumed: string[];
                 already_running: string[];
                 skipped: string[];
                 failed: string[];
             }>("/api/v1/tasks/resume-all", { method: "POST" }),
+        recrawl: (taskId: string) =>
+            fetchApi<{
+                message: string;
+                new_task_id: string;
+                source_task_id: string;
+                exclude_count: number;
+            }>(`/api/v1/tasks/${taskId}/recrawl`, { method: "POST" }),
+        recrawlBatch: (taskIds: string[]) =>
+            fetchApi<{
+                message: string;
+                created: Array<{ source_task_id: string; new_task_id: string; exclude_count: number }>;
+                skipped: Array<{ task_id: string; reason: string }>;
+            }>("/api/v1/tasks/recrawl-batch", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds }),
+            }),
+        mergePreview: (taskIds: string[]) =>
+            fetchApi<MergePreviewResponse>("/api/v1/tasks/merge/preview", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds }),
+            }),
+        merge: (taskIds: string[]) =>
+            fetchApi<MergeResponse>("/api/v1/tasks/merge", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds }),
+            }),
     },
     checkpoints: {
         list: () => fetchApi<CheckpointInfo[]>("/api/v1/checkpoints"),
@@ -814,4 +916,81 @@ export const api = {
         validate: (accountId: string) =>
             fetchApi<WeiboAccountOut>(`/api/v1/weibo-accounts/${accountId}/validate`, { method: "POST" }),
     },
+    browserPool: {
+        status: () =>
+            fetchApi<BrowserPoolStatus>("/api/v1/browser-pool/status"),
+        resize: (maxSize: number) =>
+            fetchApi<BrowserPoolResizeResponse>("/api/v1/browser-pool/resize", {
+                method: "PUT",
+                body: JSON.stringify({ max_size: maxSize }),
+            }),
+    },
+    analytics: {
+        overview: () =>
+            fetchApi<AnalyticsOverview>("/api/v1/analytics/overview"),
+        liveRates: () =>
+            fetchApi<LiveRatesResponse>("/api/v1/analytics/live-rates"),
+    },
 };
+
+// ── Analytics 类型 ──
+export interface AnalyticsOverview {
+    summary: {
+        total_tasks: number;
+        total_tweets: number;
+        total_replies: number;
+        active_tasks: number;
+        completed_tasks: number;
+        recrawl_tasks: number;
+        total_new_from_recrawl: number;
+    };
+    daily_volume: Array<{
+        date: string;
+        tweets: number;
+        replies: number;
+        tasks_created: number;
+    }>;
+    platform_distribution: Array<{
+        platform: string;
+        tasks: number;
+        tweets: number;
+        replies: number;
+    }>;
+    top_keywords: Array<{
+        keyword: string;
+        tasks: number;
+        tweets: number;
+        replies: number;
+    }>;
+}
+
+export interface TaskRateItem {
+    task_id: string;
+    keyword: string;
+    platform: string;
+    crawl_phase: string;
+    result_count: number;
+    replies_fetched: number;
+    tweets_per_min_15s: number;
+    tweets_per_min_60s: number;
+    replies_per_min_15s: number;
+    replies_per_min_60s: number;
+    tweets_per_hour: number;
+    replies_per_hour: number;
+    elapsed_sec: number;
+}
+
+export interface LiveRatesResponse {
+    running_count: number;
+    global_rates: {
+        tweets_per_min_15s: number;
+        tweets_per_min_60s: number;
+        replies_per_min_15s: number;
+        replies_per_min_60s: number;
+        tweets_per_hour: number;
+        replies_per_hour: number;
+        total_tweets: number;
+        total_replies: number;
+    };
+    task_rates: TaskRateItem[];
+}

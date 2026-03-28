@@ -1,0 +1,92 @@
+INFO:     Will watch for changes in these directories: ['/Volumes/external disk/develop/X_crawl/backend']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [67342] using WatchFiles
+2026-03-28 14:28:17 [INFO] crawler.log_config - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: INFO
+INFO:     Started server process [67352]
+INFO:     Waiting for application startup.
+2026-03-28 14:28:17 [INFO] api.main - X_crawl API 服务启动...
+2026-03-28 14:28:17 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:28:17 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:28:17 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:28:17 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:28:17 [INFO] crawler.browser_detector - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-03-28 14:28:17 [INFO] crawler.browser_detector - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-03-28 14:28:17 [INFO] api.main - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+INFO:     Application startup complete.
+2026-03-28 14:28:42 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:28:42 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:28:42 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:28:42 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:28:42 [INFO] crawler.browser_detector - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-03-28 14:28:42 [INFO] crawler.browser_detector - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+INFO:     127.0.0.1:63804 - "GET /health HTTP/1.1" 200 OK
+2026-03-28 14:28:46 [INFO] crawler.browser_pool - [BrowserPool] 初始化，max_size=3
+INFO:     127.0.0.1:63835 - "GET /api/v1/browser-pool/status HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63836 - "GET /api/v1/tasks HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'crawler/x_searcher.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-03-28 14:33:17 [INFO] api.main - 正在关闭浏览器并释放资源...
+2026-03-28 14:33:17 [INFO] api.main - X_crawl API 服务已关闭
+INFO:     Application shutdown complete.
+INFO:     Finished server process [67352]
+2026-03-28 14:33:23 [INFO] crawler.log_config - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: INFO
+INFO:     Started server process [67613]
+INFO:     Waiting for application startup.
+2026-03-28 14:33:24 [INFO] api.main - X_crawl API 服务启动...
+2026-03-28 14:33:24 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:33:24 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:33:24 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:33:24 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:33:24 [INFO] crawler.browser_detector - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-03-28 14:33:24 [INFO] crawler.browser_detector - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-03-28 14:33:24 [INFO] api.main - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'crawler/x_time_splitter.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-03-28 14:34:22 [INFO] api.main - 正在关闭浏览器并释放资源...
+2026-03-28 14:34:22 [INFO] crawler.browser_pool - [BrowserPool] 初始化，max_size=3
+2026-03-28 14:34:22 [INFO] api.main - X_crawl API 服务已关闭
+INFO:     Application shutdown complete.
+INFO:     Finished server process [67613]
+2026-03-28 14:34:32 [INFO] crawler.log_config - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: INFO
+INFO:     Started server process [68491]
+INFO:     Waiting for application startup.
+2026-03-28 14:34:32 [INFO] api.main - X_crawl API 服务启动...
+2026-03-28 14:34:32 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:34:32 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:34:32 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:34:32 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:34:32 [INFO] crawler.browser_detector - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-03-28 14:34:32 [INFO] crawler.browser_detector - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-03-28 14:34:32 [INFO] api.main - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'crawler/x_searcher.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-03-28 14:35:04 [INFO] api.main - 正在关闭浏览器并释放资源...
+2026-03-28 14:35:04 [INFO] crawler.browser_pool - [BrowserPool] 初始化，max_size=3
+2026-03-28 14:35:04 [INFO] api.main - X_crawl API 服务已关闭
+INFO:     Application shutdown complete.
+INFO:     Finished server process [68491]
+2026-03-28 14:35:14 [INFO] crawler.log_config - 日志系统已初始化 | 文件: /Volumes/external disk/develop/X_crawl/backend/logs/xcrawl.log | 级别: INFO
+INFO:     Started server process [68534]
+INFO:     Waiting for application startup.
+2026-03-28 14:35:15 [INFO] api.main - X_crawl API 服务启动...
+2026-03-28 14:35:15 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:35:15 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:35:15 [INFO] crawler.browser_detector - 检测到 3 个已安装浏览器: ['Google Chrome', 'Microsoft Edge', 'Safari']
+2026-03-28 14:35:15 [INFO] crawler.browser_detector - 自动选择兼容浏览器: Google Chrome → /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+2026-03-28 14:35:15 [INFO] crawler.browser_detector - 找到浏览器用户数据目录: /Users/chen/Library/Application Support/Google/Chrome
+2026-03-28 14:35:15 [INFO] crawler.browser_detector - 浏览器检测结果: {'browser_path': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', 'user_data_path': '/Users/chen/Library/Application Support/Google/Chrome', 'platform': 'darwin'}
+2026-03-28 14:35:15 [INFO] api.main - 浏览器检测: path=✅ | user_data=✅ | platform=darwin
+INFO:     Application startup complete.
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-03-28 14:42:32 [INFO] api.main - 正在关闭浏览器并释放资源...
+2026-03-28 14:42:32 [INFO] crawler.browser_pool - [BrowserPool] 初始化，max_size=3
+2026-03-28 14:42:32 [INFO] api.main - X_crawl API 服务已关闭
+INFO:     Application shutdown complete.
+INFO:     Finished server process [68534]
+INFO:     Stopping reloader process [67342]

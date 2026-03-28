@@ -62,6 +62,7 @@ def _build_worker_payload(
         task_kind=task.get("task_kind", "search"),
         source_file_name=task.get("source_file_name"),
         source_task_id=task.get("source_task_id"),
+        exclude_tweet_ids=task.get("exclude_tweet_ids") or [],
     )
 
 
@@ -105,6 +106,7 @@ def run_search_task(
     source_file_name: Optional[str] = None,
     source_task_id: Optional[str] = None,
     account_id: Optional[str] = None,
+    exclude_tweet_ids: Optional[list[str]] = None,
 ) -> None:
     final_status = "failed"
     task_manager.update_task_status(task_id, "running")
@@ -249,6 +251,7 @@ def run_search_task(
                 crawl_strategy=crawl_strategy,
                 browser_instance=_browser_instance,
                 slot_id=_slot_id,
+                exclude_ids=set(exclude_tweet_ids) if exclude_tweet_ids else None,
             )
             runtime_metrics = get_metrics(task_id)
             quality_state = "partial" if result.failed_replies else "complete"
@@ -376,6 +379,12 @@ def run_search_task(
         if final_status in ("done", "failed", "stopped"):
             task_queue_manager.notify_task_terminal(task_id, final_status)
         clear_metrics(task_id)
+        # 清理按任务隔离的速率状态和错误计数，防止内存泄漏
+        try:
+            from crawler.rate_tracker import get_tracker
+            get_tracker().cleanup_task(task_id)
+        except Exception:
+            pass
 
 
 def _run_weibo_task(

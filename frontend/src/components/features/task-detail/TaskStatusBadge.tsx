@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 type Props = {
     status: string;
     riskState: string;
-    size?: "default" | "sm";
+    size?: "default" | "sm" | "xs";
     className?: string;
 };
 
@@ -81,12 +81,12 @@ export function TaskStatusBadge({ status, riskState, size = "default", className
         <Badge
             className={cn(
                 "font-medium",
-                size === "sm" ? "h-6 rounded-full px-2.5 text-[11px]" : "py-1 text-sm",
+                size === "xs" ? "h-5 rounded px-1.5 text-[10px]" : size === "sm" ? "h-6 rounded-full px-2.5 text-[11px]" : "py-1 text-sm",
                 meta.className,
                 className,
             )}
         >
-            <Icon className={cn("mr-1.5", size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4", (status === "running" || status === "pending") && "animate-spin")} />
+            <Icon className={cn(size === "xs" ? "mr-1 h-3 w-3" : "mr-1.5", size === "sm" ? "h-3.5 w-3.5" : size === "xs" ? "" : "h-4 w-4", (status === "running" || status === "pending") && "animate-spin")} />
             {meta.label}
         </Badge>
     );

@@ -408,14 +408,17 @@ def resume_queue(queue_id: str) -> dict:
                 crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
             resumed_ids.append(task_id)
 
-        elif status in ("done", "stopped", "failed"):
-            # 已结束的任务：从断点恢复
+        elif status in ("stopped", "failed"):
+            # 已结束但未完成的任务：从断点恢复
             success = task_manager.resume_finished_task(task_id)
             if success:
                 crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
                 resumed_ids.append(task_id)
             else:
                 skipped_ids.append(task_id)
+        elif status == "done":
+            # 已完成的任务不自动重启
+            skipped_ids.append(task_id)
         else:
             skipped_ids.append(task_id)
 

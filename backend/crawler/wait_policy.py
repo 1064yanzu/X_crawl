@@ -51,5 +51,5 @@ def before_scroll_wait(task_id: str | None = None) -> None:
     翻页前的轻量等待：仅让 DOM 稳定，不叠加翻页间隔。
     翻页节奏由 x_searcher/reply_fetcher 各自的动态间隔统一管理。
     """
-    base = max(0.2, min(0.8, float(getattr(settings, "crawler_reply_wait", 2.0)) * 0.15))
+    base = max(0.1, min(0.4, float(getattr(settings, "crawler_reply_wait", 2.0)) * 0.08))
     interruptible_sleep(base, task_id=task_id)

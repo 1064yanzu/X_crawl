@@ -219,6 +219,8 @@ def _search_with_time_splits(
     checkpoint: Optional[dict] = None,
     browser_instance=None,
     slot_id: Optional[int] = None,
+    exclude_ids: Optional[set[str]] = None,
+    recrawl_mode: bool = False,
 ) -> SearchResult:
     shared_tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
     try:
@@ -228,14 +230,17 @@ def _search_with_time_splits(
             aggregated = checkpoint.get("aggregated_tweets", []) or []
             start_index = int(checkpoint.get("current_segment_index", 0))
         else:
+            # 复爬模式：强制使用更细的时间窗口（3 天），提高数据覆盖率
+            _recrawl_window = int(getattr(settings, "x_recrawl_window_days", 3))
             plan = build_time_split_plan(
                 keyword,
                 max_count=max_count,
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=int(getattr(settings, "x_time_split_window_days", 14)),
-                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                trigger_days=1 if recrawl_mode else int(getattr(settings, "x_time_split_trigger_days", 30)),
+                window_days=_recrawl_window if recrawl_mode else int(getattr(settings, "x_time_split_window_days", 14)),
+                unlimited_window_days=_recrawl_window if recrawl_mode else int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
                 max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
+                force_window=recrawl_mode,
             )
             if not plan.enabled:
                 raise RuntimeError("时间分割计划未启用，不能进入分段搜索")
@@ -243,8 +248,12 @@ def _search_with_time_splits(
             segments = plan.segments
             aggregated = []
             start_index = 0
+            if recrawl_mode:
+                logger.info(f"复爬模式：时间分割粒度 {_recrawl_window} 天，共 {len(segments)} 段")
 
         seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
+        if exclude_ids:
+            seen_ids |= exclude_ids
         total_segments = len(segments)
 
         for seg_idx in range(start_index, total_segments):
@@ -283,6 +292,7 @@ def _search_with_time_splits(
                 existing_tab=shared_tab,
                 browser_instance=browser_instance,
                 slot_id=slot_id,
+                exclude_ids=seen_ids,  # 将已有推文 ID 传入每个 segment 用于去重
                 _time_split_context={
                     "root_keyword": keyword,
                     "base_query": base_query,
@@ -293,6 +303,18 @@ def _search_with_time_splits(
                     "parent_tweets": aggregated,
                 },
             )
+
+            # ── 复爬段落级快跳：如果本段 0 条新增，说明已完全覆盖，跳到下段 ──
+            if recrawl_mode and len(segment_result.tweets) == 0:
+                logger.info(
+                    f"复爬快跳：段 {seg_idx + 1}/{total_segments} "
+                    f"({segment.since} ~ {segment.until}) 无新增，跳过"
+                )
+                if task_id:
+                    _task_mgr.update_task_phase(
+                        task_id,
+                        f"复爬快跳段 {seg_idx + 1}/{total_segments}（无新增），下一段...",
+                    )
             aggregated = _merge_tweets_by_id(aggregated, segment_result.tweets)
             seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
 
@@ -487,7 +509,7 @@ def _wait_search_packet_with_recovery(
             tab.url,
             max_retries=1,
             base_wait=2.5,
-            post_load_wait=settings.crawler_initial_wait,
+            post_load_wait=min(1.5, settings.crawler_initial_wait * 0.5),
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -520,7 +542,7 @@ def _update_rate_tracker(packet, endpoint: str, task_id: Optional[str] = None) -
     result = extract_rate_headers(packet)
     if result:
         ep, remaining, limit, reset_ts = result
-        get_tracker().update(ep, remaining, limit, reset_ts)
+        get_tracker().update(ep, remaining, limit, reset_ts, task_id=task_id)
         get_tracker().maybe_wait_for_reset(ep, task_id=task_id)
 
 
@@ -572,6 +594,7 @@ def search(
     _time_split_context: Optional[dict] = None,
     browser_instance=None,
     slot_id: Optional[int] = None,
+    exclude_ids: Optional[set[str]] = None,
 ) -> SearchResult:
     """
     搜索 X 推文（含断点续爬 + 可选回复抓取 + 可暂停/可终止）
@@ -600,14 +623,17 @@ def search(
 
     # ── 1. 尝试加载检查点 ───────────────────────────────────────────
     all_tweets: list[dict] = []
-    seen_ids: set[str] = set()
+    seen_ids: set[str] = set(exclude_ids) if exclude_ids else set()
+    _exclude_count = len(seen_ids)  # 复爬时预加载的排除 ID 数
     start_cursor: Optional[str] = None
     page_fetched: int = 0
     resumed = False
     _all_failed_records: list[dict] = []  # 收集所有失败的回复记录
     _last_bottom_cursor: Optional[str] = None  # 追踪最后有效 cursor，用于兜底保存
     _consecutive_empty_pages: int = 0  # 连续空页（API 返回 0 条新推文）计数
-    _MAX_CONSECUTIVE_EMPTY_PAGES: int = 3  # 连续空页上限，超过即停止当前搜索
+    # ── 复爬模式自动检测：有 exclude_ids 即为复爬，降低空页容忍加速跳过 ──
+    _recrawl_mode = bool(exclude_ids)
+    _MAX_CONSECUTIVE_EMPTY_PAGES: int = 2 if _recrawl_mode else 5
     _crawl_start_time = time.monotonic()
     _long_rest_done_at = 0.0  # 上次长休息时间戳
     ckpt: Optional[dict] = None
@@ -677,9 +703,19 @@ def search(
             _task_mgr.update_task_segment_progress(task_id, segment_progress)
         _task_mgr.update_task_phase(task_id, f"{segment_prefix}{message}" if segment_prefix else message)
 
+    _last_progress_persist: float = 0.0  # checkpoint 节流计时器
+    _PROGRESS_THROTTLE_SEC = 3.0  # 最低写入间隔
+
     def _update_progress(current_page: int, tweets_so_far: list[dict]) -> None:
+        nonlocal _last_progress_persist
         if not task_id:
             return
+        now = time.monotonic()
+        # 节流：距上次落盘 <3s 时仅更新内存中的 preview
+        if now - _last_progress_persist < _PROGRESS_THROTTLE_SEC:
+            _task_mgr.update_preview_tweets(task_id, current_page, _combine_for_task(tweets_so_far))
+            return
+        _last_progress_persist = now
         _task_mgr.update_task_progress(task_id, current_page, _combine_for_task(tweets_so_far))
         if segment_progress:
             _task_mgr.update_task_segment_progress(task_id, segment_progress)
@@ -697,14 +733,17 @@ def search(
     def _get_time_split_plan():
         nonlocal _time_split_plan_cache
         if _time_split_plan_cache is None:
+            # 复爬模式：trigger_days=1 强制触发时间分割，窗口用更细粒度
+            _recrawl_win = int(getattr(settings, "x_recrawl_window_days", 3))
             _time_split_plan_cache = build_time_split_plan(
                 keyword,
                 max_count=max_count,
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=int(getattr(settings, "x_time_split_window_days", 14)),
-                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                trigger_days=1 if _recrawl_mode else int(getattr(settings, "x_time_split_trigger_days", 30)),
+                window_days=_recrawl_win if _recrawl_mode else int(getattr(settings, "x_time_split_window_days", 14)),
+                unlimited_window_days=_recrawl_win if _recrawl_mode else int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
                 max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
+                force_window=_recrawl_mode,
             )
         return _time_split_plan_cache
 
@@ -722,6 +761,8 @@ def search(
             crawl_strategy=crawl_strategy,
             browser_instance=browser_instance,
             slot_id=slot_id,
+            exclude_ids=exclude_ids,
+            recrawl_mode=_recrawl_mode,
         )
 
     if task_id and resume:
@@ -741,6 +782,8 @@ def search(
                 checkpoint=ckpt,
                 browser_instance=browser_instance,
                 slot_id=slot_id,
+                exclude_ids=exclude_ids,
+                recrawl_mode=_recrawl_mode,
             )
         if (
             not time_split_active
@@ -854,6 +897,7 @@ def search(
             f"max_count={max_count}, strategy=unified_dfs, "
             f"fetch_replies={fetch_replies}, 从断点={resumed}, "
             f"高级搜索={'是' if _has_search_operators(keyword) else '否'}, "
+            f"排除已有={_exclude_count if _exclude_count else 0}, "
             f"账号={'池(' + str(pool.get_active_account_count()) + '个)' if current_account else '默认'}"
         )
         telemetry.record_event(
@@ -974,7 +1018,8 @@ def search(
 
                 # ── 模拟人类阅读：慢慢浏览本页推文 ────────────────────
                 # 当 DFS 回复抓取启用时跳过模拟阅读，回复抓取本身已提供足够的自然延迟
-                if new_tweets and not fetch_replies:
+                # 复爬模式也跳过模拟阅读，全速推进
+                if new_tweets and not fetch_replies and not _recrawl_mode:
                     simulate_reading(tab, task_id=task_id, tweet_count=len(new_tweets))
 
                 # ── 每批新推文立即抓取回复（统一 DFS 策略） ───────────
@@ -1031,14 +1076,6 @@ def search(
                             )
                             if flushed:
                                 _update_progress(page_num, interim_tweets)
-
-                        # DFS 期间让搜索页保持微滚动（模拟人类偶尔回来看看）
-                        # 优化：每 3 条推文回复完成才滚动一次，减少不必要的开销
-                        if _dfs_reply_progress_counter % 3 == 0:
-                            try:
-                                idle_scroll(tab, task_id=task_id)
-                            except Exception:
-                                pass
 
                     try:
                         new_tweets, _dfs_failed = _fetch_replies_for_tweets(
@@ -1100,11 +1137,12 @@ def search(
                     break
 
                 # ── 休息节律（长时间爬虫专项，防连续爬取被识别） ──────────
-                if getattr(settings, "crawler_enable_break_rhythm", True) and new_tweets:
+                # 复爬模式全速推进：跳过所有休息节律（微休息 / 小憩 / 长休息）
+                if getattr(settings, "crawler_enable_break_rhythm", True) and new_tweets and not _recrawl_mode:
                     _total_fetched_now = len(all_tweets)
                     # 微休息（5% 概率，8-20 秒）
                     if random.random() < getattr(settings, "crawler_micro_break_chance", 0.05):
-                        _micro_wait = random.uniform(8, 20)
+                        _micro_wait = random.uniform(5, 12)
                         logger.info(f"微休息 {_micro_wait:.0f}s（模拟阅读有趣内容暂停）...")
                         if task_id:
                             _update_phase(f"微休息中 ({_micro_wait:.0f}s)，稍后继续...")
@@ -1114,7 +1152,7 @@ def search(
                     if _short_n > 0 and _total_fetched_now > 0:
                         prev_count = _total_fetched_now - len(new_tweets)
                         if prev_count // _short_n < _total_fetched_now // _short_n:
-                            _short_wait = random.uniform(60, 120)
+                            _short_wait = random.uniform(30, 60)
                             logger.info(
                                 f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条，模拟起身休息）..."
                             )
@@ -1152,7 +1190,7 @@ def search(
             _rotation_threshold = getattr(settings, "account_rotation_multiplier_threshold", 2.0)
             _pool_enabled = getattr(settings, "account_pool_enabled", True)
             if _pool_enabled and pool.total_count() > 1 and current_account:
-                _rate_mult = get_tracker().get_sleep_multiplier("search")
+                _rate_mult = get_tracker().get_sleep_multiplier("search", task_id=task_id)
                 if _rate_mult >= _rotation_threshold:
                     rotated = _try_rotate_account(
                         tab, current_account, pool,
@@ -1163,7 +1201,7 @@ def search(
                         # 切换后 seen_ids 保持不变，新账号继续去重搜索
 
             # ── 动态间隔：根据账号数 + rate_multiplier 计算等待时间 ──
-            _rate_mult = get_tracker().get_sleep_multiplier("search")
+            _rate_mult = get_tracker().get_sleep_multiplier("search", task_id=task_id)
             min_s, max_s, _ = compute_dynamic_interval("search")
             _sleep_time = random.uniform(min_s, max_s) * _rate_mult
             logger.debug(
@@ -1316,7 +1354,7 @@ def _navigate_direct(
         max_retries=policy.refresh_max_retries,
         base_wait=3.0,
         load_timeout=30.0,
-        post_load_wait=settings.crawler_initial_wait,
+        post_load_wait=min(1.5, settings.crawler_initial_wait * 0.5),
         challenge_retry_times=policy.challenge_retry_times,
         challenge_cooldown=policy.challenge_cooldown,
         raise_on_risk=True,
@@ -1338,7 +1376,7 @@ def _navigate_direct(
             max_retries=max(1, policy.refresh_max_retries // 2),
             base_wait=4.0,
             load_timeout=35.0,
-            post_load_wait=max(settings.crawler_initial_wait, 3.0),
+            post_load_wait=min(1.5, settings.crawler_initial_wait * 0.5),
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=max(policy.challenge_cooldown, 10.0),
             raise_on_risk=True,

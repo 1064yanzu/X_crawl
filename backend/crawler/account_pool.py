@@ -33,9 +33,9 @@ _ENDPOINT_CONFIG = {
     "tweet_detail": {"window": 900, "limit": 150},
 }
 
-# 安全系数：单账号稍保守(1.15)，多账号有天然错峰可激进一点(1.05)
-_SAFETY_SINGLE = 1.15
-_SAFETY_MULTI = 1.05
+# 安全系数：单账号适度保守(1.05)，多账号有天然错峰更激进(1.0)
+_SAFETY_SINGLE = 1.05
+_SAFETY_MULTI = 1.0
 
 
 @dataclass
@@ -365,7 +365,7 @@ def compute_dynamic_interval(endpoint: str) -> tuple[float, float, float]:
     safe_interval = window / limit / active_count * safety_factor
 
     min_sec = safe_interval * 0.75
-    max_sec = safe_interval * 1.25
+    max_sec = safe_interval * 1.15
     return min_sec, max_sec, safety_factor
 
 

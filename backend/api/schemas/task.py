@@ -14,7 +14,7 @@ TaskKind = Literal["search", "comment_backfill"]
 class SearchRequest(BaseModel):
     keyword: str = Field(description="搜索关键词", min_length=1, max_length=200)
     max_count: int = Field(default=0, ge=0, description="最多获取的推文数量（0 表示不限制）")
-    product: Literal["Top", "Latest", "Photos", "Videos"] = Field(default="Top")
+    product: Literal["Top", "Latest", "Photos", "Videos"] = Field(default="Latest")
     resume: bool = Field(default=True, description="是否从断点继续（若有检查点）")
     task_id: Optional[str] = Field(default=None, description="若指定，复用该 task_id 断点继续爬取")
     # ── 回复抓取 ──
@@ -98,6 +98,7 @@ class TaskOut(BaseModel):
     task_kind: TaskKind = Field(default="search", description="任务类型：search/comment_backfill")
     source_file_name: Optional[str] = Field(default=None, description="评论补采任务的来源文件名")
     source_task_id: Optional[str] = Field(default=None, description="评论补采任务的源帖子任务 ID（从历史任务创建时有值）")
+    exclude_count: int = Field(default=0, description="复爬任务排除的原始推文数（即原始任务的推文总量）")
     queue_id: Optional[str] = Field(default=None, description="所属任务队列 ID")
     queue_name: Optional[str] = Field(default=None, description="所属任务队列名称")
     queue_order: Optional[int] = Field(default=None, description="当前任务在队列中的顺序（从 1 开始）")
@@ -116,3 +117,58 @@ class TaskOut(BaseModel):
     start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
     end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
     debug_screenshot: Optional[str] = Field(default=None, description="错误诊断截图 URL")
+
+
+# ── 合并任务相关模型 ──
+
+
+class MergePreviewRequest(BaseModel):
+    task_ids: list[str] = Field(description="要合并的任务 ID 列表", min_length=2)
+
+
+class MergeTaskSummary(BaseModel):
+    task_id: str
+    result_count: int = 0
+    status: str = ""
+    created_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    is_target: bool = False
+
+
+class MergeGroup(BaseModel):
+    keyword: str
+    platform: str = "x"
+    task_count: int
+    target_task_id: str
+    source_task_ids: list[str]
+    tasks_summary: list[MergeTaskSummary]
+    total_tweets: int = Field(description="合并前推文总数（含重复）")
+    estimated_unique_tweets: int = Field(description="预估去重后推文数")
+
+
+class MergePreviewResponse(BaseModel):
+    groups: list[MergeGroup]
+    mergeable_group_count: int
+    total_mergeable_tasks: int
+    non_mergeable_task_ids: list[str]
+
+
+class MergeRequest(BaseModel):
+    task_ids: list[str] = Field(description="要合并的任务 ID 列表", min_length=2)
+
+
+class MergedGroupResult(BaseModel):
+    keyword: str
+    platform: str = "x"
+    target_task_id: str
+    deleted_task_ids: list[str]
+    original_total_tweets: int
+    merged_unique_tweets: int
+
+
+class MergeResponse(BaseModel):
+    message: str
+    merged_groups: list[MergedGroupResult]
+    total_deleted_tasks: int
+    total_unique_tweets: int
+    non_mergeable_task_ids: list[str]

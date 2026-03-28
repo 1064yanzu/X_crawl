@@ -34,9 +34,9 @@ def human_like_scroll(
     min_pause: float = 0.6,
     max_pause: float = 1.5,
     steps: int = 0,
-    scroll_back_chance: float = 0.18,
+    scroll_back_chance: float = 0.10,
     scroll_back_px_range: tuple[int, int] = (50, 150),
-    finish_at_bottom: bool = True,
+    finish_at_bottom: bool = False,
 ) -> None:
     """
     翻页滚动：模拟真人慢慢往下滑、触发 API 加载新数据。
@@ -56,15 +56,15 @@ def human_like_scroll(
         finish_at_bottom:   最后是否滚到底部确保触发懒加载
     """
     if steps <= 0:
-        steps = random.randint(3, 5)
+        steps = random.randint(2, 4)
 
     for i in range(steps):
         px = random.randint(min_step_px, max_step_px)
         safe_scroll_down(tab, px, task_id=task_id)
 
         # 大部分时候短停顿，偶尔长停顿（假装在看某条帖子）
-        if random.random() < 0.12:
-            pause = random.uniform(1.2, 2.2)  # 12% 概率长停顿
+        if random.random() < 0.06:
+            pause = random.uniform(0.8, 1.5)  # 6% 概率长停顿
         else:
             pause = random.uniform(min_pause, min(max_pause, 1.0))
         interruptible_sleep(pause, task_id=task_id)

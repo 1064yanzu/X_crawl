@@ -7,7 +7,7 @@ import { canResumeTask, getTaskPhase, isTaskActive } from "@/lib/task-ui";
 const DENSITY_STORAGE_KEY = "tasks-density-mode";
 
 export type SortMode = "newest" | "oldest" | "results_desc" | "results_asc" | "status";
-export type DensityMode = "comfortable" | "compact";
+export type DensityMode = "comfortable" | "compact" | "mini";
 
 function sortTasks<T extends { created_at: string; result_count: number; status: string }>(tasks: T[], mode: SortMode) {
     const sorted = [...tasks];
@@ -60,6 +60,8 @@ export function useTaskListState(tasks: TaskOut[], onOpenTask: (taskId: string) 
     }, [tasks]);
 
     const activeCount = React.useMemo(() => tasks.filter((task) => isTaskActive(task.status)).length, [tasks]);
+    const runningCount = React.useMemo(() => tasks.filter((task) => task.status === "running" || task.status === "pending").length, [tasks]);
+    const pausedCount = React.useMemo(() => tasks.filter((task) => task.status === "paused").length, [tasks]);
     const completedCount = React.useMemo(() => tasks.filter((task) => task.status === "done").length, [tasks]);
     const riskCount = React.useMemo(() => tasks.filter((task) => task.risk_state !== "none").length, [tasks]);
     const hasSearch = query.trim().length > 0;
@@ -91,7 +93,7 @@ export function useTaskListState(tasks: TaskOut[], onOpenTask: (taskId: string) 
     React.useEffect(() => {
         if (typeof window === "undefined") return;
         const saved = window.localStorage.getItem(DENSITY_STORAGE_KEY);
-        if (saved === "comfortable" || saved === "compact") {
+        if (saved === "comfortable" || saved === "compact" || saved === "mini") {
             setDensity(saved);
         }
     }, []);
@@ -237,6 +239,8 @@ export function useTaskListState(tasks: TaskOut[], onOpenTask: (taskId: string) 
         searchedTasks,
         platformCounts,
         activeCount,
+        runningCount,
+        pausedCount,
         completedCount,
         riskCount,
         hasSearch,

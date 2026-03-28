@@ -44,7 +44,7 @@ def _get_tasks_data(task_ids: list[str]) -> list[tuple[dict, list[dict]]]:
     """批量获取任务元信息和推文列表，跳过不存在或无数据的任务"""
     results = []
     for task_id in task_ids:
-        task = task_manager.get_task_full(task_id)
+        task = task_manager.get_task_export_payload(task_id)
         if not task:
             logger.warning(f"批量导出: 任务 {task_id} 不存在，跳过")
             continue

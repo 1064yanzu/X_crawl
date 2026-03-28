@@ -1,7 +1,8 @@
 """
-任务管理路由（v3 - 使用统一线程启动入口）
+任务管理路由（v4 - 新增一键暂停/智能恢复）
 GET    /api/v1/tasks                  查看所有任务列表
-POST   /api/v1/tasks/resume-all       一键恢复所有暂停/停止/失败的任务
+POST   /api/v1/tasks/pause-all        一键暂停所有活跃任务
+POST   /api/v1/tasks/resume-all       智能恢复任务（区分用户暂停/风控暂停）
 DELETE /api/v1/tasks/{task_id}        删除任务记录
 POST   /api/v1/tasks/{task_id}/pause  暂停任务
 POST   /api/v1/tasks/{task_id}/resume 继续任务
@@ -14,8 +15,9 @@ import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from api.schemas.task import TaskOut
+from api.schemas.task import TaskOut, MergePreviewRequest, MergePreviewResponse, MergeRequest, MergeResponse
 from api.services import task_manager, crawl_service, task_queue_manager
+from api.services import merge_service
 from config import settings
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
@@ -115,23 +117,123 @@ async def stream_task(task_id: str, request: Request):
 
 
 @router.post(
-    "/resume-all",
-    summary="一键恢复所有可恢复的任务",
+    "/pause-all",
+    summary="一键暂停所有活跃任务",
     description=(
-        "一次性恢复所有暂停/停止/失败的任务。"
-        "对于队列中的任务，会自动通过队列恢复；"
-        "对于独立任务，会逐个调用恢复逻辑。\n\n"
-        "返回恢复成功、跳过、失败的任务 ID 列表。"
+        "暂停所有正在运行和等待中的任务。\n\n"
+        "- **running** 任务 → 发送暂停信号，状态变为 `paused`\n"
+        "- **pending** 任务 → 发送终止信号，状态变为 `stopped`\n\n"
+        "返回各类操作的任务 ID 列表。"
     ),
 )
-async def resume_all_tasks() -> dict:
-    """一键恢复所有暂停/停止/失败的任务"""
+async def pause_all_tasks() -> dict:
+    """一键暂停所有活跃任务（running → paused, pending → stopped）"""
     import logging
     _logger = logging.getLogger(__name__)
 
     all_tasks = task_manager.list_tasks(include_payload=False)
+
+    paused_ids: list[str] = []
+    stopped_ids: list[str] = []
+    skipped_ids: list[str] = []
+    failed_ids: list[str] = []
+
+    for task in all_tasks:
+        task_id = task.get("task_id", "")
+        status = task.get("status", "")
+
+        if status == "running":
+            try:
+                success = task_manager.pause_task(task_id)
+                if success:
+                    task_queue_manager.mark_task_paused(task_id)
+                    paused_ids.append(task_id)
+                else:
+                    failed_ids.append(task_id)
+            except Exception as e:
+                _logger.error("pause_all: task=%s 暂停失败: %s", task_id[:8], e, exc_info=True)
+                failed_ids.append(task_id)
+        elif status == "pending":
+            try:
+                success = task_manager.stop_task(task_id)
+                if success:
+                    stopped_ids.append(task_id)
+                else:
+                    failed_ids.append(task_id)
+            except Exception as e:
+                _logger.error("pause_all: task=%s 停止失败: %s", task_id[:8], e, exc_info=True)
+                failed_ids.append(task_id)
+        else:
+            skipped_ids.append(task_id)
+
+    total_affected = len(paused_ids) + len(stopped_ids)
+    _logger.info(
+        "pause_all 完成: paused=%d, stopped=%d, skipped=%d, failed=%d",
+        len(paused_ids), len(stopped_ids), len(skipped_ids), len(failed_ids),
+    )
+    return {
+        "message": f"已暂停 {total_affected} 个任务",
+        "paused": paused_ids,
+        "stopped": stopped_ids,
+        "skipped": skipped_ids,
+        "failed": failed_ids,
+    }
+
+
+def _classify_resumable_tasks(
+    all_tasks: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """将可恢复任务分为"用户主动暂停"和"风控暂停"两类。
+
+    用户主动暂停：
+      - status == "paused" 且 risk_state == "none"
+      - status == "stopped"（程序重启中断 or 用户主动停止）
+      - status == "failed" 且 risk_state == "none"
+    风控暂停：
+      - status in ("paused", "failed") 且 risk_state != "none"
+    """
+    user_paused: list[dict] = []
+    risk_paused: list[dict] = []
+
+    for task in all_tasks:
+        status = task.get("status", "")
+        risk_state = task.get("risk_state", "none")
+
+        if status in ("running", "pending", "done"):
+            continue
+
+        # 风控导致的暂停/失败
+        if risk_state != "none" and status in ("paused", "failed"):
+            risk_paused.append(task)
+            continue
+
+        # 用户主动暂停
+        if status == "paused" and risk_state == "none":
+            user_paused.append(task)
+            continue
+
+        # 被程序重启中断停止的、或用户主动 stop 的
+        if status == "stopped":
+            user_paused.append(task)
+            continue
+
+        # 其余 failed（非风控），也归入用户暂停类
+        if status == "failed" and risk_state == "none":
+            user_paused.append(task)
+            continue
+
+    return user_paused, risk_paused
+
+
+def _do_resume_tasks(
+    target_tasks: list[dict],
+    all_tasks: list[dict],
+    _logger,
+) -> tuple[list[str], list[str], list[str]]:
+    """对目标任务执行恢复操作，返回 (resumed_ids, already_running_ids, failed_ids)。"""
     resumable_statuses = {"paused", "stopped", "failed"}
     queue_task_map: dict[str, list[dict]] = {}
+    target_ids = {t.get("task_id", "") for t in target_tasks}
 
     for task in all_tasks:
         queue_id = task.get("queue_id")
@@ -139,12 +241,11 @@ async def resume_all_tasks() -> dict:
             queue_task_map.setdefault(queue_id, []).append(task)
 
     resumed_ids: list[str] = []
-    skipped_ids: list[str] = []
-    failed_ids: list[str] = []
     already_running_ids: list[str] = []
+    failed_ids: list[str] = []
     processed_queue_ids: set[str] = set()
 
-    for task in all_tasks:
+    for task in target_tasks:
         task_id = task.get("task_id", "")
         status = task.get("status", "")
 
@@ -153,7 +254,6 @@ async def resume_all_tasks() -> dict:
             continue
 
         if status not in resumable_statuses:
-            skipped_ids.append(task_id)
             continue
 
         # 如果属于队列，通过队列批量恢复（避免重复操作）
@@ -173,16 +273,16 @@ async def resume_all_tasks() -> dict:
                 failed_ids.extend(
                     queued_task.get("task_id", "")
                     for queued_task in queue_task_map.get(queue_id, [])
-                    if queued_task.get("status") in resumable_statuses
+                    if queued_task.get("task_id", "") in target_ids
+                    and queued_task.get("status") in resumable_statuses
                 )
             continue
         elif queue_id and queue_id in processed_queue_ids:
-            # 该队列已处理过，跳过
             continue
 
-        # 独立任务：逐个恢复
+        # 独立任务：逐个恢复（done 不参与一键恢复）
         try:
-            if status in ("done", "stopped", "failed"):
+            if status in ("stopped", "failed"):
                 success = task_manager.resume_finished_task(task_id)
                 if success:
                     crawl_service.start_crawler_thread(task_id, task, force_new_browser=True)
@@ -200,23 +300,86 @@ async def resume_all_tasks() -> dict:
             _logger.error("resume_all: task=%s 恢复失败: %s", task_id[:8], e, exc_info=True)
             failed_ids.append(task_id)
 
-    # 去重（队列恢复可能已包含某些 task_id）
-    resumed_ids = list(dict.fromkeys(resumed_ids))
-    skipped_ids = list(dict.fromkeys(task_id for task_id in skipped_ids if task_id))
-    failed_ids = list(dict.fromkeys(task_id for task_id in failed_ids if task_id))
-    already_running_ids = list(dict.fromkeys(task_id for task_id in already_running_ids if task_id))
+    return (
+        list(dict.fromkeys(resumed_ids)),
+        list(dict.fromkeys(tid for tid in already_running_ids if tid)),
+        list(dict.fromkeys(tid for tid in failed_ids if tid)),
+    )
+
+
+@router.post(
+    "/resume-all",
+    summary="智能恢复所有可恢复的任务",
+    description=(
+        "智能检测当前任务状态，区分恢复场景：\n\n"
+        "- **user_paused**：存在用户主动暂停的任务（配合一键暂停使用），仅恢复这些任务\n"
+        "- **risk_control**：仅存在因风控暂停的任务，恢复并重试这些任务\n"
+        "- **mixed**：两种都有，全部恢复\n\n"
+        "返回恢复结果和触发的场景类型。"
+    ),
+)
+async def resume_all_tasks() -> dict:
+    """智能恢复任务：自动区分用户暂停 vs 风控暂停场景"""
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    all_tasks = task_manager.list_tasks(include_payload=False)
+    user_paused, risk_paused = _classify_resumable_tasks(all_tasks)
+
+    has_user = len(user_paused) > 0
+    has_risk = len(risk_paused) > 0
+
+    # 判断恢复场景
+    if has_user and has_risk:
+        scenario = "mixed"
+        target_tasks = user_paused + risk_paused
+    elif has_user:
+        scenario = "user_paused"
+        target_tasks = user_paused
+    elif has_risk:
+        scenario = "risk_control"
+        target_tasks = risk_paused
+    else:
+        scenario = "none"
+        target_tasks = []
+
+    if not target_tasks:
+        return {
+            "message": "没有需要恢复的任务",
+            "scenario": scenario,
+            "resumed": [],
+            "already_running": [],
+            "skipped": [],
+            "failed": [],
+        }
+
+    resumed_ids, already_running_ids, failed_ids = _do_resume_tasks(
+        target_tasks, all_tasks, _logger,
+    )
+
+    # 计算跳过的（不在 target 中的可恢复状态任务）
+    target_id_set = {t.get("task_id", "") for t in target_tasks}
+    skipped_ids = list(dict.fromkeys(
+        t.get("task_id", "")
+        for t in all_tasks
+        if t.get("task_id", "") not in target_id_set
+        and t.get("status") not in ("running", "pending")
+        and t.get("task_id")
+    ))
 
     _logger.info(
-        "resume_all 完成: resumed=%d, already_running=%d, skipped=%d, failed=%d",
-        len(resumed_ids), len(already_running_ids), len(skipped_ids), len(failed_ids),
+        "resume_all 完成: scenario=%s, resumed=%d, already_running=%d, skipped=%d, failed=%d",
+        scenario, len(resumed_ids), len(already_running_ids), len(skipped_ids), len(failed_ids),
     )
     return {
         "message": f"已恢复 {len(resumed_ids)} 个任务",
+        "scenario": scenario,
         "resumed": resumed_ids,
         "already_running": already_running_ids,
         "skipped": skipped_ids,
         "failed": failed_ids,
     }
+
 
 
 @router.delete(
@@ -341,6 +504,120 @@ def _auto_resume_queue_siblings(task: dict) -> None:
         _logger.error("_auto_resume_queue_siblings 失败: queue=%s, error=%s", queue_id, e, exc_info=True)
 
 
+def _do_recrawl_task(task_id: str) -> tuple[str | None, int, str | None]:
+    """增量复爬单个任务的核心逻辑。
+
+    Returns:
+        (new_task_id, exclude_count, error_message)
+        - 成功时 error_message 为 None
+        - 失败时 new_task_id 为 None
+    """
+    original = task_manager.get_task_summary(task_id)
+    if not original:
+        return None, 0, f"任务不存在: {task_id}"
+
+    if original["status"] not in ("done", "stopped", "failed"):
+        return None, 0, f"仅已完成/已停止/已失败的任务可复爬，当前状态: {original['status']}"
+
+    if original.get("platform") != "x":
+        return None, 0, "增量复爬目前仅支持 X 平台"
+
+    # 加载原始推文 ID 用于增量去重
+    original_tweets = task_manager._get_task_result_snapshot(task_id, load=True)
+    exclude_ids = [str(t.get("id", "")) for t in original_tweets if t.get("id")]
+
+    # 创建新任务
+    new_task_id = task_manager.create_task(
+        keyword=original["keyword"],
+        max_count=original["max_count"],
+        product=original["product"],
+        fetch_replies=original.get("fetch_replies", False),
+        max_replies_per_tweet=original.get("max_replies_per_tweet", 20),
+        reply_depth=original.get("reply_depth", 2),
+        crawl_strategy=original.get("crawl_strategy", "dfs"),
+        platform="x",
+        source_task_id=task_id,
+        exclude_tweet_ids=exclude_ids,
+    )
+
+    # 启动爬虫线程
+    new_task = task_manager.get_task_summary(new_task_id)
+    if not new_task:
+        return None, 0, "复爬任务创建失败"
+
+    crawl_service.start_crawler_thread(
+        task_id=new_task_id,
+        task=new_task,
+        resume=False,
+    )
+
+    return new_task_id, len(exclude_ids), None
+
+
+@router.post(
+    "/{task_id}/recrawl",
+    summary="增量复爬任务",
+    description=(
+        "基于已完成的任务创建新的增量爬取任务。\n\n"
+        "- 继承原始任务的全部配置（关键词、product、回复设置等）\n"
+        "- 原始数据完全不动，增量数据存储在独立的新任务中\n"
+        "- 自动排除原始任务中已有的推文，仅收集新增推文\n"
+        "- 支持 `done / stopped / failed` 状态的任务"
+    ),
+)
+async def recrawl_task(task_id: str) -> dict:
+    """增量复爬：创建新任务继承原始配置，排除已有推文"""
+    new_task_id, exclude_count, error = _do_recrawl_task(task_id)
+    if error:
+        raise HTTPException(status_code=409, detail=error)
+    return {
+        "message": f"增量复爬任务已创建，排除 {exclude_count} 条已有推文",
+        "new_task_id": new_task_id,
+        "source_task_id": task_id,
+        "exclude_count": exclude_count,
+    }
+
+
+from pydantic import BaseModel as _BaseModel, Field as _Field
+
+
+class RecrawlBatchRequest(_BaseModel):
+    task_ids: list[str] = _Field(description="要批量复爬的任务 ID 列表", min_length=1)
+
+
+@router.post(
+    "/recrawl-batch",
+    summary="批量增量复爬",
+    description=(
+        "批量对多个已完成任务执行增量复爬。\n\n"
+        "- 每个原始任务独立创建新的增量任务\n"
+        "- 跳过不符合条件的任务（运行中、非 X 平台等）\n"
+        "- 返回所有新创建任务的 ID 列表和跳过/失败详情"
+    ),
+)
+async def recrawl_batch(req: RecrawlBatchRequest) -> dict:
+    """批量增量复爬：对多个任务分别创建增量爬取任务"""
+    created: list[dict] = []
+    skipped: list[dict] = []
+
+    for task_id in req.task_ids:
+        new_task_id, exclude_count, error = _do_recrawl_task(task_id)
+        if error:
+            skipped.append({"task_id": task_id, "reason": error})
+        else:
+            created.append({
+                "source_task_id": task_id,
+                "new_task_id": new_task_id,
+                "exclude_count": exclude_count,
+            })
+
+    return {
+        "message": f"已创建 {len(created)} 个复爬任务，跳过 {len(skipped)} 个",
+        "created": created,
+        "skipped": skipped,
+    }
+
+
 @router.post(
     "/{task_id}/stop",
     summary="主动终止任务",
@@ -362,3 +639,52 @@ async def stop_task(task_id: str) -> dict:
             detail=f"任务当前状态为 '{task['status']}'，无法终止（仅运行中/已暂停/等待中任务可终止）",
         )
     return {"message": f"任务 {task_id} 终止信号已发送", "status": "stopping"}
+
+
+@router.post(
+    "/merge/preview",
+    response_model=MergePreviewResponse,
+    summary="合并任务预览",
+    description=(
+        "预览合并操作的结果。按关键词+平台分组，显示每组的任务数、推文总量和去重后的估计数量。\n\n"
+        "- 仅已完成/已停止/已失败的任务参与合并\n"
+        "- 运行中/排队中/已暂停的任务不参与\n"
+        "- 每组至少需要 2 个同关键词任务才能合并"
+    ),
+)
+async def merge_preview(req: MergePreviewRequest) -> MergePreviewResponse:
+    """合并预览：返回分组和去重统计"""
+    result = merge_service.preview_merge(req.task_ids)
+    return MergePreviewResponse(**result)
+
+
+@router.post(
+    "/merge",
+    response_model=MergeResponse,
+    summary="合并任务",
+    description=(
+        "执行任务合并操作（不可逆）。\n\n"
+        "- 同关键词+平台的任务将合并为一个\n"
+        "- 保留最早创建的任务作为目标任务\n"
+        "- 推文数据按 ID 去重，保留信息更完整的版本\n"
+        "- 被吸收的任务将被删除\n"
+        "- 仅已完成/已停止/已失败的任务参与合并"
+    ),
+)
+async def merge_tasks(req: MergeRequest) -> MergeResponse:
+    """执行合并操作：合并同关键词任务、去重推文、删除源任务"""
+    result = merge_service.execute_merge(req.task_ids)
+
+    if not result["merged_groups"]:
+        return MergeResponse(
+            message="没有可合并的任务组——需要至少 2 个相同关键词的非活跃任务",
+            **result,
+        )
+
+    total_groups = len(result["merged_groups"])
+    total_deleted = result["total_deleted_tasks"]
+    return MergeResponse(
+        message=f"已合并 {total_groups} 组任务，删除了 {total_deleted} 个源任务",
+        **result,
+    )
+

@@ -1,0 +1,13 @@
+
+> frontend@0.1.0 dev
+> next dev -p 3721 --port 3721
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3721
+- Network:       http://10.23.247.141:3721
+- Environments: .env
+
+✓ Starting...
+✓ Ready in 3.4s
+ GET / 200 in 4.1s (compile: 3.1s, render: 955ms)
+[?25h

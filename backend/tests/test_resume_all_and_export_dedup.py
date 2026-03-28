@@ -68,16 +68,64 @@ def test_build_merged_csv_keeps_source_columns_after_dedup():
     assert rows[1]["来源关键词"] == "Anthropic"
 
 
+def test_collect_all_rows_tolerates_none_reply_to_and_fills_parent_author():
+    from api.routers.export import _collect_all_rows
+
+    tweets = [
+        {
+            "id": "tweet-1",
+            "text": "post",
+            "author": {"name": "Parent Author"},
+            "replies": [
+                {
+                    "id": "reply-1",
+                    "text": "reply",
+                    "reply_to": None,
+                    "author": {"name": "Reply Author"},
+                }
+            ],
+        }
+    ]
+
+    rows = _collect_all_rows(tweets, "x")
+
+    assert len(rows) == 2
+    assert rows[1]["reply_to"]["screen_name"] == "Parent Author"
+    assert rows[1]["parent_tweet_id"] == "tweet-1"
+
+
+def test_batch_export_uses_lightweight_task_payload(monkeypatch):
+    from api.routers import batch_export
+
+    payload_calls: list[str] = []
+
+    monkeypatch.setattr(
+        batch_export.task_manager,
+        "get_task_export_payload",
+        lambda task_id: payload_calls.append(task_id) or {
+            "task_id": task_id,
+            "keyword": "kw",
+            "platform": "x",
+            "tweets": [{"id": "1", "text": "hello"}],
+        },
+    )
+
+    tasks_data = batch_export._get_tasks_data(["task-1", "task-2"])
+
+    assert payload_calls == ["task-1", "task-2"]
+    assert len(tasks_data) == 2
+
+
 def test_resume_all_resumes_standalone_and_queue_tasks_once(monkeypatch):
     from api.routers import tasks as tasks_router
 
     all_tasks = [
-        {"task_id": "queue-1-a", "status": "paused", "queue_id": "queue-1"},
-        {"task_id": "queue-1-b", "status": "stopped", "queue_id": "queue-1"},
-        {"task_id": "solo-paused", "status": "paused"},
-        {"task_id": "solo-stopped", "status": "stopped"},
-        {"task_id": "running-task", "status": "running"},
-        {"task_id": "done-task", "status": "done"},
+        {"task_id": "queue-1-a", "status": "paused", "queue_id": "queue-1", "risk_state": "none"},
+        {"task_id": "queue-1-b", "status": "stopped", "queue_id": "queue-1", "risk_state": "none"},
+        {"task_id": "solo-paused", "status": "paused", "risk_state": "none"},
+        {"task_id": "solo-stopped", "status": "stopped", "risk_state": "none"},
+        {"task_id": "running-task", "status": "running", "risk_state": "none"},
+        {"task_id": "done-task", "status": "done", "risk_state": "none"},
     ]
 
     queue_calls: list[str] = []
@@ -114,9 +162,11 @@ def test_resume_all_resumes_standalone_and_queue_tasks_once(monkeypatch):
     assert resume_calls == ["solo-paused"]
     assert resume_finished_calls == ["solo-stopped"]
     assert thread_starts == ["solo-stopped"]
+    assert result["scenario"] == "user_paused"
     assert result["resumed"] == ["queue-1-a", "queue-1-b", "solo-paused", "solo-stopped"]
-    assert result["already_running"] == ["running-task"]
-    assert result["skipped"] == ["done-task"]
+    # done 任务不在 target 中，属于 skipped；running 任务被排除在 skipped 计算外
+    assert "done-task" in result["skipped"]
+    assert "running-task" not in result["skipped"]
     assert result["failed"] == []
 
 
@@ -124,8 +174,8 @@ def test_resume_all_marks_all_queue_tasks_failed_when_queue_resume_errors(monkey
     from api.routers import tasks as tasks_router
 
     all_tasks = [
-        {"task_id": "queue-1-a", "status": "paused", "queue_id": "queue-1"},
-        {"task_id": "queue-1-b", "status": "failed", "queue_id": "queue-1"},
+        {"task_id": "queue-1-a", "status": "paused", "queue_id": "queue-1", "risk_state": "none"},
+        {"task_id": "queue-1-b", "status": "failed", "queue_id": "queue-1", "risk_state": "none"},
     ]
 
     monkeypatch.setattr(tasks_router.task_manager, "list_tasks", lambda include_payload=False: all_tasks)
@@ -141,3 +191,188 @@ def test_resume_all_marks_all_queue_tasks_failed_when_queue_resume_errors(monkey
     assert result["already_running"] == []
     assert result["skipped"] == []
     assert result["failed"] == ["queue-1-a", "queue-1-b"]
+
+
+# ── pause-all ──────────────────────────────────────────────────────────
+
+def test_pause_all_pauses_running_and_pending_tasks(monkeypatch):
+    from api.routers import tasks as tasks_router
+
+    all_tasks = [
+        {"task_id": "running-1", "status": "running"},
+        {"task_id": "running-2", "status": "running"},
+        {"task_id": "pending-1", "status": "pending"},
+        {"task_id": "done-1", "status": "done"},
+        {"task_id": "paused-1", "status": "paused"},
+    ]
+
+    paused_calls: list[str] = []
+    stopped_calls: list[str] = []
+    mark_paused_calls: list[str] = []
+
+    monkeypatch.setattr(tasks_router.task_manager, "list_tasks", lambda include_payload=False: all_tasks)
+    monkeypatch.setattr(
+        tasks_router.task_manager, "pause_task",
+        lambda task_id: paused_calls.append(task_id) or True,
+    )
+    monkeypatch.setattr(
+        tasks_router.task_manager, "stop_task",
+        lambda task_id: stopped_calls.append(task_id) or True,
+    )
+    monkeypatch.setattr(
+        tasks_router.task_queue_manager, "mark_task_paused",
+        lambda task_id: mark_paused_calls.append(task_id),
+    )
+
+    result = asyncio.run(tasks_router.pause_all_tasks())
+
+    assert paused_calls == ["running-1", "running-2"]
+    assert stopped_calls == ["pending-1"]
+    assert mark_paused_calls == ["running-1", "running-2"]
+    assert result["paused"] == ["running-1", "running-2"]
+    assert result["stopped"] == ["pending-1"]
+    assert "done-1" in result["skipped"]
+    assert "paused-1" in result["skipped"]
+    assert result["failed"] == []
+
+
+def test_pause_all_skips_non_active_tasks(monkeypatch):
+    from api.routers import tasks as tasks_router
+
+    all_tasks = [
+        {"task_id": "done-1", "status": "done"},
+        {"task_id": "failed-1", "status": "failed"},
+        {"task_id": "stopped-1", "status": "stopped"},
+    ]
+
+    monkeypatch.setattr(tasks_router.task_manager, "list_tasks", lambda include_payload=False: all_tasks)
+
+    result = asyncio.run(tasks_router.pause_all_tasks())
+
+    assert result["paused"] == []
+    assert result["stopped"] == []
+    assert len(result["skipped"]) == 3
+    assert result["failed"] == []
+
+
+# ── classify_resumable_tasks ──────────────────────────────────────────
+
+def test_classify_user_paused_vs_risk_paused():
+    from api.routers.tasks import _classify_resumable_tasks
+
+    all_tasks = [
+        {"task_id": "user-paused", "status": "paused", "risk_state": "none"},
+        {"task_id": "user-stopped", "status": "stopped", "risk_state": "none", "quality_state": "interrupted"},
+        {"task_id": "risk-paused", "status": "paused", "risk_state": "challenge"},
+        {"task_id": "risk-failed", "status": "failed", "risk_state": "rate_limited"},
+        {"task_id": "normal-failed", "status": "failed", "risk_state": "none"},
+        {"task_id": "running-1", "status": "running", "risk_state": "none"},
+        {"task_id": "done-1", "status": "done", "risk_state": "none"},
+    ]
+
+    user_paused, risk_paused = _classify_resumable_tasks(all_tasks)
+
+    user_ids = {t["task_id"] for t in user_paused}
+    risk_ids = {t["task_id"] for t in risk_paused}
+
+    assert user_ids == {"user-paused", "user-stopped", "normal-failed"}
+    assert risk_ids == {"risk-paused", "risk-failed"}
+
+
+# ── smart resume-all scenarios ────────────────────────────────────────
+
+def _setup_resume_mocks(monkeypatch, tasks_router, all_tasks):
+    """Common mock setup for resume-all tests."""
+    resume_calls: list[str] = []
+    resume_finished_calls: list[str] = []
+    thread_starts: list[str] = []
+
+    monkeypatch.setattr(tasks_router.task_manager, "list_tasks", lambda include_payload=False: all_tasks)
+    monkeypatch.setattr(tasks_router.task_manager, "resume_task", lambda task_id: resume_calls.append(task_id) or True)
+    monkeypatch.setattr(tasks_router.task_manager, "is_thread_alive", lambda task_id: False)
+    monkeypatch.setattr(
+        tasks_router.task_manager, "resume_finished_task",
+        lambda task_id: resume_finished_calls.append(task_id) or True,
+    )
+    monkeypatch.setattr(
+        tasks_router.crawl_service, "start_crawler_thread",
+        lambda task_id, task, force_new_browser=False: thread_starts.append(task_id),
+    )
+    monkeypatch.setattr(
+        tasks_router.task_queue_manager, "resume_queue",
+        lambda queue_id: {"resumed": [], "already_running": [], "skipped": []},
+    )
+
+    return resume_calls, resume_finished_calls, thread_starts
+
+
+def test_resume_all_scenario_user_paused_only(monkeypatch):
+    from api.routers import tasks as tasks_router
+
+    all_tasks = [
+        {"task_id": "user-paused", "status": "paused", "risk_state": "none"},
+        {"task_id": "user-stopped", "status": "stopped", "risk_state": "none"},
+        {"task_id": "done-1", "status": "done", "risk_state": "none"},
+    ]
+
+    resume_calls, resume_finished_calls, thread_starts = _setup_resume_mocks(monkeypatch, tasks_router, all_tasks)
+
+    result = asyncio.run(tasks_router.resume_all_tasks())
+
+    assert result["scenario"] == "user_paused"
+    assert "user-paused" in result["resumed"]
+    assert "user-stopped" in result["resumed"]
+    # done-1 should be skipped (not in target set)
+    assert "done-1" in result["skipped"]
+
+
+def test_resume_all_scenario_risk_only(monkeypatch):
+    from api.routers import tasks as tasks_router
+
+    all_tasks = [
+        {"task_id": "risk-paused", "status": "paused", "risk_state": "challenge"},
+        {"task_id": "risk-failed", "status": "failed", "risk_state": "rate_limited"},
+        {"task_id": "done-1", "status": "done", "risk_state": "none"},
+    ]
+
+    resume_calls, resume_finished_calls, thread_starts = _setup_resume_mocks(monkeypatch, tasks_router, all_tasks)
+
+    result = asyncio.run(tasks_router.resume_all_tasks())
+
+    assert result["scenario"] == "risk_control"
+    assert "risk-paused" in result["resumed"]
+    assert "risk-failed" in result["resumed"]
+
+
+def test_resume_all_scenario_mixed(monkeypatch):
+    from api.routers import tasks as tasks_router
+
+    all_tasks = [
+        {"task_id": "user-paused", "status": "paused", "risk_state": "none"},
+        {"task_id": "risk-paused", "status": "paused", "risk_state": "challenge"},
+        {"task_id": "running-1", "status": "running", "risk_state": "none"},
+    ]
+
+    resume_calls, resume_finished_calls, thread_starts = _setup_resume_mocks(monkeypatch, tasks_router, all_tasks)
+
+    result = asyncio.run(tasks_router.resume_all_tasks())
+
+    assert result["scenario"] == "mixed"
+    assert "user-paused" in result["resumed"]
+    assert "risk-paused" in result["resumed"]
+
+
+def test_resume_all_scenario_none(monkeypatch):
+    from api.routers import tasks as tasks_router
+
+    all_tasks = [
+        {"task_id": "running-1", "status": "running", "risk_state": "none"},
+        {"task_id": "done-1", "status": "done", "risk_state": "none"},
+    ]
+
+    monkeypatch.setattr(tasks_router.task_manager, "list_tasks", lambda include_payload=False: all_tasks)
+
+    result = asyncio.run(tasks_router.resume_all_tasks())
+
+    assert result["scenario"] == "none"
+    assert result["resumed"] == []

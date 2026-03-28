@@ -9,6 +9,7 @@ GraphQL 响应完整解析模块（工业级）
 - @提及用户列表（user_mentions）
 - 高亮关键词位置（text_highlights）
 - 翻页 cursor（Bottom / Top）
+- 兼容 TimelineReplaceEntry / TimelineTimelineModule 等新式结构
 """
 import logging
 import re
@@ -50,23 +51,14 @@ def parse_search_response(raw_json: dict) -> tuple[list[dict], Optional[str], Op
         return tweets, bottom_cursor, top_cursor
 
     for instruction in instructions:
-        entries = instruction.get("entries", [])
-        for entry in entries:
-            content = entry.get("content", {})
-            typename = content.get("__typename", "")
-
-            if typename == "TimelineTimelineItem":
-                tweet = _parse_timeline_item(content)
-                if tweet:
-                    tweets.append(tweet)
-
-            elif typename == "TimelineTimelineCursor":
-                cursor_type = content.get("cursorType", "")
-                cursor_val = content.get("value")
-                if cursor_type == "Bottom" and cursor_val:
-                    bottom_cursor = cursor_val
-                elif cursor_type == "Top" and cursor_val:
-                    top_cursor = cursor_val
+        for entry in _iter_instruction_entries(instruction):
+            entry_tweets, entry_bottom_cursor, entry_top_cursor = _parse_timeline_entry(entry)
+            if entry_tweets:
+                tweets.extend(entry_tweets)
+            if entry_bottom_cursor:
+                bottom_cursor = entry_bottom_cursor
+            if entry_top_cursor:
+                top_cursor = entry_top_cursor
 
     logger.info(
         f"解析完成：{len(tweets)} 条推文，"
@@ -81,7 +73,10 @@ def parse_search_response(raw_json: dict) -> tuple[list[dict], Optional[str], Op
 # ═══════════════════════════════════════════════════════════════════
 
 def _parse_timeline_item(content: dict) -> Optional[dict]:
-    item_content = content.get("itemContent", {})
+    return _parse_timeline_item_content(content.get("itemContent", {}))
+
+
+def _parse_timeline_item_content(item_content: dict) -> Optional[dict]:
     if item_content.get("__typename") != "TimelineTweet":
         return None
 
@@ -105,6 +100,65 @@ def _parse_timeline_item(content: dict) -> Optional[dict]:
     if tweet and highlights:
         tweet["text_highlights"] = highlights
     return tweet
+
+
+def _iter_instruction_entries(instruction: dict) -> list[dict]:
+    """兼容 TimelineAddEntries / TimelineReplaceEntry 两种 instruction 结构。"""
+    entries: list[dict] = []
+
+    raw_entries = instruction.get("entries", [])
+    if isinstance(raw_entries, list):
+        entries.extend(entry for entry in raw_entries if isinstance(entry, dict))
+
+    raw_entry = instruction.get("entry")
+    if isinstance(raw_entry, dict):
+        entries.append(raw_entry)
+
+    return entries
+
+
+def _parse_timeline_entry(entry: dict) -> tuple[list[dict], Optional[str], Optional[str]]:
+    """解析单个 timeline entry。"""
+    content = entry.get("content", {})
+    typename = content.get("__typename", "")
+
+    if typename == "TimelineTimelineItem":
+        tweet = _parse_timeline_item(content)
+        return ([tweet] if tweet else []), None, None
+
+    if typename == "TimelineTimelineModule":
+        return _parse_timeline_module(content), None, None
+
+    if typename == "TimelineTimelineCursor":
+        return [], *_extract_cursor(content)
+
+    return [], None, None
+
+
+def _parse_timeline_module(content: dict) -> list[dict]:
+    """兼容搜索页中以 module 形式返回的推文列表。"""
+    tweets: list[dict] = []
+    for item in content.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        item_node = item.get("item", {}) if isinstance(item.get("item"), dict) else {}
+        item_content = item_node.get("itemContent") or item.get("itemContent") or {}
+        if not isinstance(item_content, dict):
+            continue
+        tweet = _parse_timeline_item_content(item_content)
+        if tweet:
+            tweets.append(tweet)
+    return tweets
+
+
+def _extract_cursor(content: dict) -> tuple[Optional[str], Optional[str]]:
+    cursor_type = content.get("cursorType", "")
+    cursor_val = content.get("value")
+    if cursor_type == "Bottom" and cursor_val:
+        return cursor_val, None
+    if cursor_type == "Top" and cursor_val:
+        return None, cursor_val
+    return None, None
 
 
 # ═══════════════════════════════════════════════════════════════════

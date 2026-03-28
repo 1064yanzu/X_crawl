@@ -1,13 +1,13 @@
+import * as React from "react";
 import Link from "next/link";
-import { Eye, ExternalLink, Loader2, RefreshCcw, Trash2 } from "lucide-react";
+import { Eye, ExternalLink, Loader2, MessageCircleMore, RefreshCcw, RotateCcw, Trash2 } from "lucide-react";
 import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
-import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskCommentBackfillButton";
 import { TaskMetaBlock } from "@/components/features/tasks/TaskMetaBlock";
 import { getPlatformMeta } from "@/lib/platformRegistry";
-import { canCreateCommentBackfillFromTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, canRecrawlTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 import type { DensityMode } from "@/hooks/useTaskListState";
 
@@ -19,27 +19,115 @@ export function TaskListCard({
     busyAction,
     resumingId,
     backfillingId,
+    recrawlingId,
     onHover,
     onSelect,
     onPreview,
     onResume,
     onCommentBackfill,
+    onRecrawl,
     onDelete,
 }: {
     task: TaskOut;
     density: DensityMode;
     selected: boolean;
     focused: boolean;
-    busyAction: "resume" | "resumeAll" | "backfill" | "delete" | "export" | null;
+    busyAction: "resume" | "resumeAll" | "pauseAll" | "backfill" | "recrawl" | "delete" | "export" | null;
     resumingId: string | null;
     backfillingId: string | null;
+    recrawlingId: string | null;
     onHover: (taskId: string) => void;
     onSelect: (taskId: string, checked: boolean) => void;
     onPreview: (taskId: string) => void;
     onResume: (taskId: string) => void;
     onCommentBackfill: (taskId: string) => void;
+    onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
+    if (density === "mini") {
+        return (
+            <TaskListCardMini
+                task={task}
+                selected={selected}
+                focused={focused}
+                busyAction={busyAction}
+                resumingId={resumingId}
+                backfillingId={backfillingId}
+                recrawlingId={recrawlingId}
+                onHover={onHover}
+                onSelect={onSelect}
+                onPreview={onPreview}
+                onResume={onResume}
+                onCommentBackfill={onCommentBackfill}
+                onRecrawl={onRecrawl}
+                onDelete={onDelete}
+            />
+        );
+    }
+
+    if (density === "compact") {
+        return (
+            <TaskListCardCompact
+                task={task}
+                selected={selected}
+                focused={focused}
+                busyAction={busyAction}
+                resumingId={resumingId}
+                backfillingId={backfillingId}
+                recrawlingId={recrawlingId}
+                onHover={onHover}
+                onSelect={onSelect}
+                onPreview={onPreview}
+                onResume={onResume}
+                onCommentBackfill={onCommentBackfill}
+                onRecrawl={onRecrawl}
+                onDelete={onDelete}
+            />
+        );
+    }
+
+    return (
+        <TaskListCardComfortable
+            task={task}
+            selected={selected}
+            focused={focused}
+            busyAction={busyAction}
+            resumingId={resumingId}
+            backfillingId={backfillingId}
+            recrawlingId={recrawlingId}
+            onHover={onHover}
+            onSelect={onSelect}
+            onPreview={onPreview}
+            onResume={onResume}
+            onCommentBackfill={onCommentBackfill}
+            onRecrawl={onRecrawl}
+            onDelete={onDelete}
+        />
+    );
+}
+
+/* ───────────────────────── 共享 Props 类型 ───────────────────────── */
+
+type CardInnerProps = Omit<Parameters<typeof TaskListCard>[0], "density">;
+
+/* ────────────────────── Comfortable（原始大卡片） ────────────────── */
+
+function TaskListCardComfortable({
+    task,
+    selected,
+    focused,
+    busyAction,
+    resumingId,
+    backfillingId,
+    recrawlingId,
+    onHover,
+    onSelect,
+    onPreview,
+    onResume,
+    onCommentBackfill,
+    onRecrawl,
+    onDelete,
+}: CardInnerProps) {
     const platformMeta = getPlatformMeta(task.platform);
     const phase = getTaskPhase(task);
     const lastUpdated = formatDateTime(getTaskLastUpdated(task));
@@ -48,21 +136,21 @@ export function TaskListCard({
     const progressSummary = getCommentBackfillSummary(task);
     const queueLabel = getTaskQueueLabel(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
+    const showRecrawl = canRecrawlTask(task);
 
     return (
         <Card
             id={`task-card-${task.task_id}`}
             className={cn(
-                "overflow-hidden border-border/60 bg-card/90 shadow-sm transition-all",
-                density === "compact" ? "rounded-[1.25rem]" : "rounded-[1.5rem]",
+                "overflow-hidden rounded-[1.5rem] border-border/60 bg-card/90 shadow-sm transition-all",
                 selected && "border-primary/50 ring-2 ring-primary/10",
                 focused && "border-sky-400/60 ring-2 ring-sky-500/15",
             )}
             onMouseEnter={() => onHover(task.task_id)}
         >
             <div className="flex flex-col lg:flex-row">
-                <Link href={`/tasks/${task.task_id}`} className={cn("flex-1", density === "compact" ? "p-4 sm:p-5" : "p-5 sm:p-6")}>
-                    <div className={cn("flex flex-col", density === "compact" ? "gap-3" : "gap-4")}>
+                <Link href={`/tasks/${task.task_id}`} className="flex-1 p-5 sm:p-6">
+                    <div className="flex flex-col gap-4">
                         <div className="flex flex-wrap items-center gap-2">
                             {focused ? <span className="rounded-full bg-sky-500/10 px-2.5 py-1 text-[11px] font-medium text-sky-700 dark:text-sky-300">当前焦点</span> : null}
                             <span className={cn("inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium", platformMeta.badgeClass)}>
@@ -78,25 +166,31 @@ export function TaskListCard({
                         </div>
 
                         <div>
-                            <h3 className={cn("line-clamp-2 font-semibold tracking-tight text-foreground", density === "compact" ? "text-lg" : "text-xl")}>{task.keyword}</h3>
-                            <p className={cn("line-clamp-2 text-sm text-muted-foreground", density === "compact" ? "mt-1.5 leading-5" : "mt-2 leading-6")}>{phase}</p>
+                            <h3 className="line-clamp-2 text-xl font-semibold tracking-tight text-foreground">{task.keyword}</h3>
+                            <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{phase}</p>
                         </div>
 
-                        <div className={cn("grid md:grid-cols-2 xl:grid-cols-4", density === "compact" ? "gap-2" : "gap-3")}>
-                            <TaskMetaBlock label="结果数" value={`${task.result_count}`} compact={density === "compact"} />
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                            <TaskMetaBlock
+                                label="结果数"
+                                value={
+                                    task.source_task_id && (task.exclude_count ?? 0) > 0
+                                        ? `原始 ${(task.exclude_count ?? 0).toLocaleString()} · 新增 ${task.result_count.toLocaleString()}`
+                                        : `${task.result_count.toLocaleString()}`
+                                }
+                            />
                             <TaskMetaBlock
                                 label={isBackfill ? "补采进度" : "当前页"}
                                 value={isBackfill ? (progressSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
-                                compact={density === "compact"}
                             />
-                            <TaskMetaBlock label="覆盖时间" value={coverage} compact={density === "compact"} />
-                            <TaskMetaBlock label="最近更新" value={lastUpdated} compact={density === "compact"} />
+                            <TaskMetaBlock label="覆盖时间" value={coverage} />
+                            <TaskMetaBlock label="最近更新" value={lastUpdated} />
                         </div>
                     </div>
                 </Link>
 
-                <div className={cn("border-t border-border/50 bg-muted/15 lg:border-l lg:border-t-0", density === "compact" ? "p-3 lg:w-[220px]" : "p-4 lg:w-[236px]")}>
-                    <div className={cn("flex h-full flex-col", density === "compact" ? "gap-2.5" : "gap-3")}>
+                <div className="border-t border-border/50 bg-muted/15 p-4 lg:w-[236px] lg:border-l lg:border-t-0">
+                    <div className="flex h-full flex-col gap-3">
                         <label className="inline-flex items-center gap-2 self-start rounded-full border border-border/60 bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
                             <input
                                 type="checkbox"
@@ -120,14 +214,16 @@ export function TaskListCard({
                             </Button>
 
                             {canBackfill ? (
-                                <TaskCommentBackfillButton
+                                <Button
                                     variant="outline"
                                     size="sm"
                                     className="justify-start rounded-xl"
                                     disabled={busyAction !== null}
-                                    loading={backfillingId === task.task_id}
                                     onClick={() => onCommentBackfill(task.task_id)}
-                                />
+                                >
+                                    {backfillingId === task.task_id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <MessageCircleMore className="mr-1.5 h-3.5 w-3.5" />}
+                                    补采评论
+                                </Button>
                             ) : null}
 
                             {canResumeTask(task.status) ? (
@@ -140,6 +236,19 @@ export function TaskListCard({
                                 >
                                     {resumingId === task.task_id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />}
                                     继续
+                                </Button>
+                            ) : null}
+
+                            {showRecrawl ? (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="justify-start rounded-xl"
+                                    disabled={recrawlingId === task.task_id || busyAction !== null}
+                                    onClick={() => onRecrawl(task.task_id)}
+                                >
+                                    {recrawlingId === task.task_id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
+                                    增量复爬
                                 </Button>
                             ) : null}
                         </div>
@@ -165,5 +274,246 @@ export function TaskListCard({
                 </div>
             </div>
         </Card>
+    );
+}
+
+/* ────────────────────── Compact（紧凑行式布局） ─────────────────── */
+
+function TaskListCardCompact({
+    task,
+    selected,
+    focused,
+    busyAction,
+    resumingId,
+    backfillingId,
+    recrawlingId,
+    onHover,
+    onSelect,
+    onPreview,
+    onResume,
+    onCommentBackfill,
+    onRecrawl,
+    onDelete,
+}: CardInnerProps) {
+    const [hovered, setHovered] = React.useState(false);
+    const platformMeta = getPlatformMeta(task.platform);
+    const phase = getTaskPhase(task);
+    const lastUpdated = formatDateTime(getTaskLastUpdated(task));
+    const isBackfill = task.task_kind === "comment_backfill";
+    const progressSummary = getCommentBackfillSummary(task);
+    const queueLabel = getTaskQueueLabel(task);
+    const canBackfill = canCreateCommentBackfillFromTask(task);
+    const showRecrawl = canRecrawlTask(task);
+
+    return (
+        <Card
+            id={`task-card-${task.task_id}`}
+            className={cn(
+                "group relative overflow-hidden rounded-2xl border-border/60 bg-card/90 shadow-sm transition-all hover:shadow-md",
+                selected && "border-primary/50 ring-2 ring-primary/10",
+                focused && "border-sky-400/60 ring-2 ring-sky-500/15",
+            )}
+            onMouseEnter={() => { onHover(task.task_id); setHovered(true); }}
+            onMouseLeave={() => setHovered(false)}
+        >
+            <div className="flex items-center gap-3 px-4 py-3">
+                {/* 复选框 */}
+                <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={(event) => onSelect(task.task_id, event.target.checked)}
+                    className="h-4 w-4 shrink-0 rounded border-input text-primary focus:ring-primary"
+                />
+
+                {/* 状态 badge */}
+                <TaskStatusBadge status={task.status} riskState={task.risk_state} size="sm" />
+
+                {/* 平台 badge */}
+                <span className={cn("inline-flex shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium", platformMeta.badgeClass)}>
+                    {platformMeta.label}
+                </span>
+
+                {/* 关键词 & 阶段 */}
+                <Link href={`/tasks/${task.task_id}`} className="min-w-0 flex-1">
+                    <div className="flex items-baseline gap-2">
+                        <h3 className="truncate text-sm font-semibold text-foreground">{task.keyword}</h3>
+                        <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">{getTaskKindLabel(task)}</span>
+                        {queueLabel ? <span className="hidden shrink-0 rounded-full bg-primary/8 px-2 py-0.5 text-[10px] font-medium text-primary lg:inline">队列 {queueLabel}</span> : null}
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{phase}</p>
+                </Link>
+
+                {/* 指标区域 */}
+                <div className="hidden shrink-0 items-center gap-4 text-xs text-muted-foreground md:flex">
+                    <div className="text-right">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">结果</p>
+                        <p className="font-medium tabular-nums text-foreground">
+                            {task.source_task_id && (task.exclude_count ?? 0) > 0
+                                ? `${(task.exclude_count ?? 0).toLocaleString()}+${task.result_count.toLocaleString()}`
+                                : task.result_count.toLocaleString()}
+                        </p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{isBackfill ? "进度" : "页码"}</p>
+                        <p className="font-medium tabular-nums text-foreground">
+                            {isBackfill ? (progressSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
+                        </p>
+                    </div>
+                    <div className="hidden text-right lg:block">
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">更新</p>
+                        <p className="font-medium text-foreground">{lastUpdated}</p>
+                    </div>
+                </div>
+
+                {/* 操作按钮（hover 时显示） */}
+                <div className={cn(
+                    "flex shrink-0 items-center gap-1 transition-opacity duration-150",
+                    hovered ? "opacity-100" : "pointer-events-none opacity-0",
+                )}>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => onPreview(task.task_id)} title="快速预览">
+                        <Eye className="h-3.5 w-3.5" />
+                    </Button>
+                    {canResumeTask(task.status) ? (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 rounded-lg"
+                            disabled={resumingId === task.task_id || busyAction !== null}
+                            onClick={() => onResume(task.task_id)}
+                            title="继续"
+                        >
+                            {resumingId === task.task_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+                        </Button>
+                    ) : null}
+                    {canBackfill ? (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 rounded-lg"
+                            disabled={busyAction !== null}
+                            onClick={() => onCommentBackfill(task.task_id)}
+                            title="补采评论"
+                        >
+                            {backfillingId === task.task_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MessageCircleMore className="h-3.5 w-3.5" />}
+                        </Button>
+                    ) : null}
+                    {showRecrawl ? (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 rounded-lg"
+                            disabled={recrawlingId === task.task_id || busyAction !== null}
+                            onClick={() => onRecrawl(task.task_id)}
+                            title="增量复爬"
+                        >
+                            {recrawlingId === task.task_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
+                        </Button>
+                    ) : null}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 rounded-lg text-muted-foreground hover:text-red-600"
+                        onClick={() => onDelete(task.task_id)}
+                        disabled={busyAction !== null}
+                        title="删除"
+                    >
+                        <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                </div>
+            </div>
+        </Card>
+    );
+}
+
+/* ──────────────────────── Mini（极简表格行） ─────────────────────── */
+
+function TaskListCardMini({
+    task,
+    selected,
+    focused,
+    busyAction,
+    resumingId,
+    backfillingId,
+    recrawlingId,
+    onHover,
+    onSelect,
+    onPreview,
+    onResume,
+    onCommentBackfill,
+    onRecrawl,
+    onDelete,
+}: CardInnerProps) {
+    const [hovered, setHovered] = React.useState(false);
+    const platformMeta = getPlatformMeta(task.platform);
+    const canBackfill = canCreateCommentBackfillFromTask(task);
+    const showRecrawl = canRecrawlTask(task);
+    const lastUpdated = formatDateTime(getTaskLastUpdated(task));
+
+    return (
+        <div
+            id={`task-card-${task.task_id}`}
+            className={cn(
+                "group flex items-center gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm transition-all hover:bg-muted/40",
+                selected && "border-primary/40 bg-primary/5",
+                focused && "border-sky-400/50 bg-sky-500/5",
+            )}
+            onMouseEnter={() => { onHover(task.task_id); setHovered(true); }}
+            onMouseLeave={() => setHovered(false)}
+        >
+            <input
+                type="checkbox"
+                checked={selected}
+                onChange={(event) => onSelect(task.task_id, event.target.checked)}
+                className="h-3.5 w-3.5 shrink-0 rounded border-input text-primary focus:ring-primary"
+            />
+
+            <TaskStatusBadge status={task.status} riskState={task.risk_state} size="xs" />
+
+            <span className={cn("inline-flex shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium", platformMeta.badgeClass)}>
+                {platformMeta.label}
+            </span>
+
+            <Link href={`/tasks/${task.task_id}`} className="min-w-0 flex-1 truncate font-medium text-foreground hover:underline">
+                {task.keyword}
+            </Link>
+
+            <span className="hidden shrink-0 tabular-nums text-xs text-muted-foreground sm:inline">
+                {task.result_count.toLocaleString()} 条
+            </span>
+
+            <span className="hidden shrink-0 text-xs text-muted-foreground lg:inline">
+                {lastUpdated}
+            </span>
+
+            <code className="hidden shrink-0 text-[10px] text-muted-foreground/60 xl:inline">{task.task_id.slice(0, 8)}</code>
+
+            {/* hover 操作 */}
+            <div className={cn(
+                "flex shrink-0 items-center gap-0.5 transition-opacity duration-100",
+                hovered ? "opacity-100" : "pointer-events-none opacity-0",
+            )}>
+                <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" onClick={() => onPreview(task.task_id)} title="预览">
+                    <Eye className="h-3 w-3" />
+                </Button>
+                {canResumeTask(task.status) ? (
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" disabled={resumingId === task.task_id || busyAction !== null} onClick={() => onResume(task.task_id)} title="继续">
+                        {resumingId === task.task_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
+                    </Button>
+                ) : null}
+                {canBackfill ? (
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" disabled={busyAction !== null} onClick={() => onCommentBackfill(task.task_id)} title="补采评论">
+                        {backfillingId === task.task_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <MessageCircleMore className="h-3 w-3" />}
+                    </Button>
+                ) : null}
+                {showRecrawl ? (
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" disabled={recrawlingId === task.task_id || busyAction !== null} onClick={() => onRecrawl(task.task_id)} title="复爬">
+                        {recrawlingId === task.task_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />}
+                    </Button>
+                ) : null}
+                <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md text-muted-foreground hover:text-red-600" onClick={() => onDelete(task.task_id)} disabled={busyAction !== null} title="删除">
+                    <Trash2 className="h-3 w-3" />
+                </Button>
+            </div>
+        </div>
     );
 }

@@ -118,7 +118,7 @@ def _rebuild_weibo_tab(account_cookies: Optional[list[dict]] = None, browser_ins
     from .auth import _get_account_cookies
     cookies = _get_account_cookies(account_cookies)
     if cookies:
-        tab.get("https://s.weibo.com")
+        tab.get("https://s.weibo.com", timeout=15)
         time.sleep(1)
         inject_cookies_to_tab(tab, cookies)
         time.sleep(1)
@@ -178,7 +178,7 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 3.0) -> tuple[Optional[s
         (html, error) — 成功时 error 为 None，失败时 html 为 None
     """
     try:
-        tab.get(url)
+        tab.get(url, timeout=20)
         time.sleep(wait_seconds)
 
         # 检查是否被重定向到非搜索页面

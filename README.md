@@ -58,7 +58,7 @@ pip install -r requirements.txt
 
 ```bash
 # 确保在已激活的 .venv 环境下，在 backend 目录运行：
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8080
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 启动后可以在 `http://localhost:8000/docs` 查看由 FastAPI 自动生成的 Swagger API 文档。
 

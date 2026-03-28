@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { Activity, ArrowRight, Database, History } from "lucide-react";
+import { Activity, ArrowRight, Database, History, Pause } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -40,7 +40,11 @@ function TaskCompactCard({ task }: { task: TaskOut }) {
                 <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-foreground" />
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-                <span>结果 {task.result_count}</span>
+                <span>
+                    {task.source_task_id && (task.exclude_count ?? 0) > 0
+                        ? `原始 ${(task.exclude_count ?? 0).toLocaleString()} · 新增 ${task.result_count.toLocaleString()}`
+                        : `结果 ${task.result_count.toLocaleString()}`}
+                </span>
                 {task.current_page > 0 ? <span>页数 {task.current_page}</span> : null}
                 <span>更新 {lastUpdated}</span>
             </div>
@@ -76,20 +80,36 @@ export function DashboardTasks() {
         );
     }
 
-    const activeTasks = tasks.filter((task) => isTaskActive(task.status));
+    const runningTasks = tasks.filter((task) => task.status === "running" || task.status === "pending");
+    const pausedTasks = tasks.filter((task) => task.status === "paused");
     const historyTasks = tasks.filter((task) => !isTaskActive(task.status));
 
     return (
         <div className="space-y-6">
-            {activeTasks.length > 0 ? (
+            {runningTasks.length > 0 ? (
                 <section className="space-y-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                         <Activity className="h-4 w-4 text-primary" />
                         进行中任务
-                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{activeTasks.length}</span>
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{runningTasks.length}</span>
                     </div>
                     <div className="space-y-3">
-                        {activeTasks.slice(0, 3).map((task) => (
+                        {runningTasks.slice(0, 3).map((task) => (
+                            <TaskCompactCard key={task.task_id} task={task} />
+                        ))}
+                    </div>
+                </section>
+            ) : null}
+
+            {pausedTasks.length > 0 ? (
+                <section className="space-y-3">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                        <Pause className="h-4 w-4 text-amber-500" />
+                        已暂停任务
+                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-400">{pausedTasks.length}</span>
+                    </div>
+                    <div className="space-y-3">
+                        {pausedTasks.slice(0, 3).map((task) => (
                             <TaskCompactCard key={task.task_id} task={task} />
                         ))}
                     </div>

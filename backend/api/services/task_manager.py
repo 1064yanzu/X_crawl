@@ -100,6 +100,7 @@ def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: 
         "task_kind": "search",
         "source_file_name": None,
         "source_task_id": None,
+        "exclude_count": 0,
         "queue_id": None,
         "queue_name": None,
         "queue_order": None,
@@ -170,7 +171,10 @@ def _parse_iso(value: object) -> Optional[datetime]:
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"
     try:
-        return datetime.fromisoformat(text)
+        dt = datetime.fromisoformat(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
     except ValueError:
         return None
 
@@ -433,6 +437,9 @@ def pause_task(task_id: str) -> bool:
         if not task or task["status"] not in ("running",):
             return False
         task["status"] = "paused"
+        # 保留暂停前的阶段描述，供恢复时还原
+        task["_paused_phase"] = task.get("crawl_phase", "")
+        task["crawl_phase"] = "任务已暂停，等待继续信号"
         _touch(task)
     send_signal(task_id, "pause")
     telemetry.record_event(task_id, "task_paused", status="paused", phase="任务已暂停，等待继续信号")
@@ -453,9 +460,15 @@ def resume_task(task_id: str) -> bool:
             return False
         task["status"] = "running"
         task["risk_state"] = "none"
+        # 恢复暂停前的阶段描述
+        saved_phase = task.pop("_paused_phase", None)
+        if saved_phase:
+            task["crawl_phase"] = saved_phase
+        else:
+            task["crawl_phase"] = "任务已恢复运行"
         _touch(task)
     send_signal(task_id, "run")
-    telemetry.record_event(task_id, "task_resumed", status="running", phase="任务已恢复运行")
+    telemetry.record_event(task_id, "task_resumed", status="running", phase=task.get("crawl_phase", "任务已恢复运行"))
     _persist_force(task_id, full=False)
     return True
 
@@ -523,6 +536,7 @@ def create_task(
     queue_order: Optional[int] = None,
     queue_total: Optional[int] = None,
     comment_backfill_progress: Optional[dict] = None,
+    exclude_tweet_ids: Optional[list[str]] = None,
 ) -> str:
     _ensure_db()
     from crawler import telemetry
@@ -572,6 +586,8 @@ def create_task(
             "start_date": start_date,
             "end_date": end_date,
             "crawl_phase": "已加入调度队列，等待执行...",
+            "exclude_tweet_ids": exclude_tweet_ids or [],
+            "exclude_count": len(exclude_tweet_ids) if exclude_tweet_ids else 0,
         }
     send_signal(tid, "run")
     telemetry.init_task(tid, status="pending", phase="已加入调度队列，等待执行...")
@@ -622,6 +638,22 @@ def get_task(task_id: str) -> Optional[dict]:
 def get_task_summary(task_id: str) -> Optional[dict]:
     _ensure_db()
     return _build_task_view(task_id, include_tweets=False)
+
+
+def get_task_export_payload(task_id: str) -> Optional[dict]:
+    """为导出提供轻量任务视图，避免不必要的运行态装饰开销。"""
+    _ensure_db()
+    summary = _get_task_summary_snapshot(task_id)
+    if not summary:
+        return None
+
+    return {
+        "task_id": summary.get("task_id", task_id),
+        "keyword": summary.get("keyword", ""),
+        "platform": summary.get("platform", "x"),
+        "fetch_replies": bool(summary.get("fetch_replies", False)),
+        "tweets": _get_task_result_snapshot(task_id, load=True),
+    }
 
 
 def get_task_full(task_id: str) -> Optional[dict]:

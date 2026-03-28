@@ -92,6 +92,16 @@ export function canCreateCommentBackfillFromTask(
     return !task.fetch_replies || (task.replies_fetched ?? 0) <= 0;
 }
 
+/** 判断任务是否可增量复爬（X 平台 + 已完成/已停止/已失败 + 帖子采集） */
+export function canRecrawlTask(
+    task: Pick<TaskOut, "task_kind" | "status" | "platform" | "result_count">,
+) {
+    if (task.task_kind === "comment_backfill") return false;
+    if ((task.platform ?? "x") !== "x") return false;
+    if (!["done", "stopped", "failed"].includes(task.status)) return false;
+    return task.result_count > 0;
+}
+
 export function getTaskModeLabel(task: Pick<TaskOut, "task_kind" | "product">) {
     if (task.task_kind === "comment_backfill") return "评论补采";
     return task.product || "采集任务";

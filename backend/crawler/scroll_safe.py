@@ -60,15 +60,7 @@ def safe_scroll_up(tab, px: int, *, task_id: Optional[str] = None) -> bool:
 
 
 def safe_scroll_to_bottom(tab, *, task_id: Optional[str] = None) -> None:
-    """两步策略：先 JS 接近底部，再带超时保护调用 to_bottom()"""
-    try:
-        tab.run_js(
-            "window.scrollTo(0, Math.max(0, document.body.scrollHeight - window.innerHeight - 800))"
-        )
-        interruptible_sleep(0.3, task_id=task_id)
-    except Exception as e:
-        logger.debug(f"接近底部 JS 滚动失败: {e}")
-
+    """单步策略：带超时保护调用 to_bottom()，超时回退 JS"""
     try:
         future = _SCROLL_EXECUTOR.submit(tab.scroll.to_bottom)
         future.result(timeout=_SCROLL_TIMEOUT_SEC)

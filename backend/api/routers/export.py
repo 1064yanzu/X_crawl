@@ -157,6 +157,11 @@ def _flatten_tweet(tweet: dict) -> dict:
     return flat
 
 
+def _as_dict(value: object) -> dict:
+    """将可能为 None/非 dict 的字段安全归一化为 dict。"""
+    return value if isinstance(value, dict) else {}
+
+
 def _collect_replies(
     replies: list[dict],
     parent_id: str,
@@ -177,10 +182,11 @@ def _collect_replies(
 
         # 如果评论自身没有 reply_to 信息（一级评论）,
         # 自动填充为原帖/父级作者
-        existing_reply_to = reply_copy.get("reply_to") or {}
+        existing_reply_to = _as_dict(reply_copy.get("reply_to"))
         if not existing_reply_to.get("screen_name") and parent_author_name:
-            reply_copy.setdefault("reply_to", {})
-            reply_copy["reply_to"]["screen_name"] = parent_author_name
+            normalized_reply_to = dict(existing_reply_to)
+            normalized_reply_to["screen_name"] = parent_author_name
+            reply_copy["reply_to"] = normalized_reply_to
 
         all_replies.append(reply_copy)
 
@@ -256,7 +262,7 @@ def _dedup_rows(rows: list[dict]) -> list[dict]:
 
 def _get_task_data(task_id: str, *, deduplicate: bool = False) -> tuple[dict, list[dict]]:
     """获取任务元信息和推文列表（含回复展平），不存在则抛 404"""
-    task = task_manager.get_task_full(task_id)
+    task = task_manager.get_task_export_payload(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     tweets = task.get("tweets", [])

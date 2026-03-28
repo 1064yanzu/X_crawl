@@ -23,11 +23,12 @@ logger = logging.getLogger(__name__)
 # 调试快照保存目录
 _DEBUG_DIR = Path(__file__).resolve().parent.parent / "logs" / "debug"
 
-# ── 连续错误自适应冷却 ────────────────────────────────────────────
-# 追踪跨导航的连续 transient_error 次数，当错误密集出现时自动升级等待时间
+# ── 连续错误自适应冷却（按任务隔离） ───────────────────────────────
+# 追踪每个任务独立的连续 transient_error 次数，避免并发任务之间互相影响
 import threading
 
-_consecutive_errors = 0
+# task_id -> 连续错误次数（None 键用于无 task_id 的场景）
+_per_task_errors: dict[str | None, int] = {}
 _error_lock = threading.Lock()
 
 # 连续错误次数 → 额外冷却秒数（递增缓冲，给 X 服务端恢复时间）
@@ -39,28 +40,28 @@ _COOLDOWN_TIERS = [
 ]
 
 
-def _record_error() -> float:
-    """记录一次错误，返回当前应追加的冷却时间（秒）。"""
-    global _consecutive_errors
+def _record_error(task_id: str | None = None) -> float:
+    """记录一次错误，返回当前任务应追加的冷却时间（秒）。"""
     with _error_lock:
-        _consecutive_errors += 1
-        count = _consecutive_errors
+        _per_task_errors[task_id] = _per_task_errors.get(task_id, 0) + 1
+        count = _per_task_errors[task_id]
     extra = 0.0
     for threshold, cooldown in _COOLDOWN_TIERS:
         if count >= threshold:
             extra = cooldown
     if extra > 0:
-        logger.info(f"连续错误页累计 {count} 次，追加冷却 {extra:.0f}s")
+        tag = f"task={task_id[:8]}" if task_id else "no-task"
+        logger.info(f"[{tag}] 连续错误页累计 {count} 次，追加冷却 {extra:.0f}s")
     return extra
 
 
-def _record_success() -> None:
-    """页面加载成功，重置连续错误计数。"""
-    global _consecutive_errors
+def _record_success(task_id: str | None = None) -> None:
+    """页面加载成功，重置该任务的连续错误计数。"""
     with _error_lock:
-        if _consecutive_errors > 0:
-            logger.debug(f"页面恢复正常，重置连续错误计数（之前 {_consecutive_errors} 次）")
-            _consecutive_errors = 0
+        prev = _per_task_errors.pop(task_id, 0)
+        if prev > 0:
+            tag = f"task={task_id[:8]}" if task_id else "no-task"
+            logger.debug(f"[{tag}] 页面恢复正常，重置连续错误计数（之前 {prev} 次）")
 
 
 def _save_debug_snapshot(tab, state: PageState, reason: str, attempt: int, task_id: Optional[str] = None) -> None:
@@ -222,7 +223,7 @@ def navigate_with_retry(
                 _save_debug_snapshot(tab, state, reason, attempt, task_id)
 
             if state == PageState.OK:
-                _record_success()
+                _record_success(task_id)
                 if post_load_wait > 0:
                     interruptible_sleep(post_load_wait, task_id=task_id)
                 if attempt > 0:
@@ -252,7 +253,7 @@ def navigate_with_retry(
                     # 冷却后重新检测（不刷新，等用户手动完成验证）
                     recheck_state, _ = detect_page_state(tab)
                     if recheck_state == PageState.OK:
-                        _record_success()
+                        _record_success(task_id)
                         logger.info(f"{log_prefix}用户已完成验证，页面恢复正常")
                         if post_load_wait > 0:
                             interruptible_sleep(post_load_wait, task_id=task_id)
@@ -270,7 +271,7 @@ def navigate_with_retry(
                 continue
 
             if is_error_like_state(state):
-                extra_cooldown = _record_error()
+                extra_cooldown = _record_error(task_id)
                 if extra_cooldown > 0:
                     sleep_with_jitter(extra_cooldown, jitter_ratio=0.15, minimum=2.0)
                 if attempt == max_retries:
@@ -279,7 +280,7 @@ def navigate_with_retry(
                 continue  # 继续重试
 
             # 兜底：未知状态视为可继续
-            _record_success()
+            _record_success(task_id)
             if post_load_wait > 0:
                 interruptible_sleep(post_load_wait, task_id=task_id)
             return True

@@ -2,6 +2,7 @@ import { Activity, Database } from "lucide-react";
 import { CrawlerTaskBuilder } from "@/components/features/CrawlerTaskBuilder";
 import { ServerStatus } from "@/components/features/ServerStatus";
 import { DashboardTasks } from "@/components/features/DashboardTasks";
+import { DashboardLiveRates } from "@/components/features/DashboardLiveRates";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -21,6 +22,8 @@ export default function Home() {
         <div className="space-y-6">
           <ServerStatus />
 
+          <DashboardLiveRates />
+
           <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
             <CardHeader className="pb-4">
               <CardTitle className="flex items-center gap-2 text-xl">
@@ -37,3 +40,4 @@ export default function Home() {
     </div>
   );
 }
+

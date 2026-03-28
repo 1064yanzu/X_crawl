@@ -35,8 +35,8 @@ def sleep_with_jitter(seconds: float, *, jitter_ratio: float = 0.2, minimum: flo
 
 def soft_recover_for_packet(tab, attempt: int) -> None:
     """超时后的轻量恢复：小步滚动 + 短等待。"""
-    wait = backoff_seconds(attempt, base=0.8, cap=4.0)
-    sleep_with_jitter(wait, jitter_ratio=0.25, minimum=0.4)
+    wait = backoff_seconds(attempt, base=0.5, cap=2.5)
+    sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.3)
     try:
         tab.scroll.down(280)
     except Exception:

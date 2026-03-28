@@ -100,7 +100,7 @@ def _wait_reply_packet_with_recovery(
     if packet:
         if ignored:
             logger.debug(f"  回复第 {page_num} 页快速探测过滤无关包 {ignored} 个")
-        _update_reply_rate_tracker(packet)
+        _update_reply_rate_tracker(packet, task_id=task_id)
         return packet
 
     for soft_attempt in range(policy.packet_soft_retries + 1):
@@ -112,7 +112,7 @@ def _wait_reply_packet_with_recovery(
         if packet:
             if ignored:
                 logger.debug(f"  回复第 {page_num} 页过滤无关包 {ignored} 个")
-            _update_reply_rate_tracker(packet)
+            _update_reply_rate_tracker(packet, task_id=task_id)
             return packet
         bump_metric(task_id, "reply_packet_timeouts")
 
@@ -172,7 +172,7 @@ def _wait_reply_packet_with_recovery(
             tweet_url,
             max_retries=1,
             base_wait=2.5,
-            post_load_wait=min(3.0, settings.crawler_reply_wait),
+            post_load_wait=min(1.5, settings.crawler_reply_wait * 0.4),
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -187,18 +187,18 @@ def _wait_reply_packet_with_recovery(
             accept_body=is_tweet_detail_body,
         )
         if packet:
-            _update_reply_rate_tracker(packet)
+            _update_reply_rate_tracker(packet, task_id=task_id)
             return packet
 
     return None
 
 
-def _update_reply_rate_tracker(packet) -> None:
+def _update_reply_rate_tracker(packet, *, task_id: Optional[str] = None) -> None:
     """从 TweetDetail 数据包提取速率限制头并更新 tracker。"""
     result = extract_rate_headers(packet)
     if result:
         ep, remaining, limit, reset_ts = result
-        get_tracker().update(ep, remaining, limit, reset_ts)
+        get_tracker().update(ep, remaining, limit, reset_ts, task_id=task_id)
 
 
 def _get_rate_limit_wait_sec(endpoint: str = "tweet_detail") -> float:
@@ -287,7 +287,7 @@ def fetch_replies(
             max_retries=policy.refresh_max_retries,
             base_wait=3.0,
             load_timeout=30.0,
-            post_load_wait=min(3.0, settings.crawler_reply_wait),
+            post_load_wait=min(1.5, settings.crawler_reply_wait * 0.4),
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -403,6 +403,12 @@ def fetch_replies(
                 # 更新连续空页计数
                 if len(new_replies) == 0:
                     empty_page_count += 1
+                    # 低评论推文快速放弃：预期 ≤3 条但首页就没数据，不值得重试
+                    if expected_count > 0 and expected_count <= 3 and page_num == 1:
+                        logger.info(
+                            f"  低评论推文首页无数据（预期 {expected_count} 条），直接跳过"
+                        )
+                        break
                     bump_metric(task_id, "empty_pages")
                     if empty_page_count >= _MAX_EMPTY_PAGES:
                         logger.info(
@@ -412,19 +418,19 @@ def fetch_replies(
                 else:
                     empty_page_count = 0  # 有新数据则重置计数
 
-                # ── 快速退出：评论数较少的帖子第一页即可完成 ────────
-                if page_num == 1 and expected_count > 0:
+                # ── 快速退出：评论数已达标时立即完成 ────────
+                if expected_count > 0:
                     # 条件1：已获取评论数已达到或超过预期数量
                     if len(all_replies) >= expected_count:
                         logger.info(
-                            f"  ✅ 快速完成：第一页已获取 {len(all_replies)} 条评论"
+                            f"  ✅ 快速完成：已获取 {len(all_replies)} 条评论"
                             f"（预期 {expected_count} 条），无需翻页"
                         )
                         telemetry.record_event(
                             task_id,
                             "reply_quick_complete",
                             status="running",
-                            phase="回复第一页已达到预期，快速完成",
+                            phase="回复已达到预期，快速完成",
                             page=page_num,
                             meta={"tweet_id": tweet_id, "fetched": len(all_replies), "expected": expected_count},
                         )
@@ -564,6 +570,17 @@ def fetch_replies_batch(
     updated_tweets = []
     failed_records: list[dict] = []
 
+    # ── 创建 batch 级共享 tab（避免每条推文都开关 tab） ──────────────
+    _shared_reply_tab = None
+    _owns_shared_tab = False
+    if browser_instance is not None:
+        _shared_reply_tab = browser_instance.new_tab()
+        _owns_shared_tab = True
+    elif reply_depth <= 1:
+        # 非嵌套模式：batch 内共享同一个 tab
+        _shared_reply_tab = get_new_tab()
+        _owns_shared_tab = True
+
     for i, tweet in enumerate(tweets):
         # 每条推文前检查信号
         try:
@@ -657,78 +674,77 @@ def fetch_replies_batch(
         if need_nested:
             reply_tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
         else:
-            reply_tab = None
+            reply_tab = _shared_reply_tab  # 复用 batch 级共享 tab
 
         try:
-            try:
-                replies, failure_info = fetch_replies(
-                    tweet_id=tweet_id,
-                    screen_name=screen_name,
-                    max_count=max_replies_per_tweet,
-                    task_id=task_id,
-                    timeout=timeout,
-                    expected_count=expected_count,
-                    existing_tab=reply_tab,  # 传入外部 tab，fetch_replies 不会关闭它
-                    browser_instance=browser_instance,
-                )
-                tweet = dict(tweet)  # 浅拷贝，防止污染原对象
-                tweet["replies"] = replies
-                if failure_info:
-                    failure_info["task_id"] = task_id or ""
-                    failed_records.append(failure_info)
+            replies, failure_info = fetch_replies(
+                tweet_id=tweet_id,
+                screen_name=screen_name,
+                max_count=max_replies_per_tweet,
+                task_id=task_id,
+                timeout=timeout,
+                expected_count=expected_count,
+                existing_tab=reply_tab,  # 传入外部 tab，fetch_replies 不会关闭它
+                browser_instance=browser_instance,
+            )
+            tweet = dict(tweet)  # 浅拷贝，防止污染原对象
+            tweet["replies"] = replies
+            if failure_info:
+                failure_info["task_id"] = task_id or ""
+                failed_records.append(failure_info)
 
-                # ── 二级评论递归抓取（一级评论标签页保持打开） ─────────
-                if replies and need_nested:
-                    from crawler.nested_reply_fetcher import fetch_nested_replies
-                    try:
-                        tweet["replies"], nested_failed = fetch_nested_replies(
-                            replies,
-                            current_depth=1,
-                            max_depth=reply_depth,
-                            max_replies_per_tweet=max_replies_per_tweet,
-                            task_id=task_id,
-                            timeout=timeout,
-                            browser_instance=browser_instance,
-                        )
-                        failed_records.extend(nested_failed)
-                    except StopSignal as e:
-                        updated_tweets.append(tweet)
-                        merge_remaining(updated_tweets, tweets, i + 1)
-                        raise StopSignal(str(e), partial_tweets=updated_tweets)
-                    except ChallengeSignal:
-                        raise
-                    except Exception as e:
-                        logger.error(f"拓展抓取 tweet_id={tweet_id} 的子评论失败: {e}", exc_info=True)
-            except StopSignal as e:
-                # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
-                tweet = dict(tweet)
-                tweet["replies"] = []
-                updated_tweets.append(tweet)
-                merge_remaining(updated_tweets, tweets, i + 1)
-                raise StopSignal(str(e), partial_tweets=updated_tweets)
-            except ChallengeSignal:
-                raise
-            except Exception as e:
-                import traceback
-                error_msg = str(e).lower()
-                if "disconnected" in error_msg or "connection lost" in error_msg or "target closed" in error_msg:
-                    logger.warning(f"检测到浏览器断开连接，尝试恢复浏览器: {e}")
-                    from crawler.browser import ensure_browser_alive
-                    ensure_browser_alive()
-                logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
-                tweet = dict(tweet)
-                tweet["replies"] = []
-                failed_records.append({
-                    "task_id": task_id or "",
-                    "tweet_id": tweet_id,
-                    "screen_name": screen_name,
-                    "expected_count": expected_count,
-                    "fetched_count": 0,
-                    "error_reason": f"异常: {str(e)[:200]}",
-                })
+            # ── 二级评论递归抓取（一级评论标签页保持打开） ─────────
+            if replies and need_nested:
+                from crawler.nested_reply_fetcher import fetch_nested_replies
+                try:
+                    tweet["replies"], nested_failed = fetch_nested_replies(
+                        replies,
+                        current_depth=1,
+                        max_depth=reply_depth,
+                        max_replies_per_tweet=max_replies_per_tweet,
+                        task_id=task_id,
+                        timeout=timeout,
+                        browser_instance=browser_instance,
+                    )
+                    failed_records.extend(nested_failed)
+                except StopSignal as e:
+                    updated_tweets.append(tweet)
+                    merge_remaining(updated_tweets, tweets, i + 1)
+                    raise StopSignal(str(e), partial_tweets=updated_tweets)
+                except ChallengeSignal:
+                    raise
+                except Exception as e:
+                    logger.error(f"拓展抓取 tweet_id={tweet_id} 的子评论失败: {e}", exc_info=True)
+        except StopSignal as e:
+            # 当前推文的回复抓取被中断，标记空回复后携带已处理数据抛出
+            tweet = dict(tweet)
+            tweet["replies"] = []
+            updated_tweets.append(tweet)
+            merge_remaining(updated_tweets, tweets, i + 1)
+            raise StopSignal(str(e), partial_tweets=updated_tweets)
+        except ChallengeSignal:
+            raise
+        except Exception as e:
+            import traceback
+            error_msg = str(e).lower()
+            if "disconnected" in error_msg or "connection lost" in error_msg or "target closed" in error_msg:
+                logger.warning(f"检测到浏览器断开连接，尝试恢复浏览器: {e}")
+                from crawler.browser import ensure_browser_alive
+                ensure_browser_alive()
+            logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)
+            tweet = dict(tweet)
+            tweet["replies"] = []
+            failed_records.append({
+                "task_id": task_id or "",
+                "tweet_id": tweet_id,
+                "screen_name": screen_name,
+                "expected_count": expected_count,
+                "fetched_count": 0,
+                "error_reason": f"异常: {str(e)[:200]}",
+            })
         finally:
-            # 二级评论全部抓完后，关闭一级评论标签页
-            if reply_tab:
+            # 二级评论全部抓完后，关闭一级评论标签页（仅嵌套模式独立 tab）
+            if reply_tab and need_nested:
                 try:
                     reply_tab.close()
                 except Exception:
@@ -743,11 +759,21 @@ def fetch_replies_batch(
                 pass
 
         # 礼貌性间隔：基于 tweet_detail 动态间隔，多账号时自动缩短
+        # 页面导航+加载本身已占 3-4s，仅需补足最小安全间隔差值
         from crawler.account_pool import compute_dynamic_interval
-        _rate_mult_reply = get_tracker().get_sleep_multiplier("tweet_detail")
+        _rate_mult_reply = get_tracker().get_sleep_multiplier("tweet_detail", task_id=task_id)
         _min_r, _max_r, _ = compute_dynamic_interval("tweet_detail")
-        _reply_interval = random.uniform(_min_r, _max_r) * _rate_mult_reply
-        interruptible_sleep(_reply_interval, task_id=task_id)
+        _nav_latency_compensation = 5.0  # 导航+页面加载+首次包等待实际消耗
+        _target_interval = random.uniform(_min_r, _max_r) * _rate_mult_reply
+        _actual_sleep = max(0.3, _target_interval - _nav_latency_compensation)
+        interruptible_sleep(_actual_sleep, task_id=task_id)
+
+    # ── 清理 batch 级共享 tab ──────────────────────────────────────
+    if _owns_shared_tab and _shared_reply_tab:
+        try:
+            _shared_reply_tab.close()
+        except Exception:
+            pass
 
     # ── 批次完成后注册指纹（供后续任务去重复用） ──────────────────
     if dedup_enabled and task_id:

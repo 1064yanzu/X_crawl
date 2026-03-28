@@ -1,11 +1,11 @@
 import Link from "next/link";
-import { ExternalLink, Loader2, RefreshCcw, Trash2, X } from "lucide-react";
+import { ExternalLink, Loader2, RefreshCcw, RotateCcw, Trash2, X } from "lucide-react";
 import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskCommentBackfillButton";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
-import { canCreateCommentBackfillFromTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, canRecrawlTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
 
@@ -23,15 +23,19 @@ function TaskPreviewBody({
     task,
     resumingId,
     backfillingId,
+    recrawlingId,
     onResume,
     onCommentBackfill,
+    onRecrawl,
     onDelete,
 }: {
     task: TaskOut;
     resumingId: string | null;
     backfillingId: string | null;
+    recrawlingId: string | null;
     onResume: (taskId: string) => void;
     onCommentBackfill: (taskId: string) => void;
+    onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     const platformMeta = getPlatformMeta(task.platform);
@@ -40,6 +44,7 @@ function TaskPreviewBody({
     const active = isTaskActive(task.status);
     const backfillSummary = getCommentBackfillSummary(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
+    const canRecrawl = canRecrawlTask(task);
 
     return (
         <>
@@ -64,7 +69,15 @@ function TaskPreviewBody({
                 </div>
 
                 <div className="grid gap-3 sm:grid-cols-2">
-                    <PreviewStat label="结果数" value={`${task.result_count}`} hint={task.max_count > 0 ? `目标 ${task.max_count}` : "未设上限"} />
+                    <PreviewStat
+                        label="结果数"
+                        value={
+                            task.source_task_id && (task.exclude_count ?? 0) > 0
+                                ? `原始 ${(task.exclude_count ?? 0).toLocaleString()} · 新增 ${task.result_count.toLocaleString()}`
+                                : `${task.result_count.toLocaleString()}`
+                        }
+                        hint={task.max_count > 0 ? `目标 ${task.max_count}` : "未设上限"}
+                    />
                     <PreviewStat
                         label={task.task_kind === "comment_backfill" ? "补采进度" : "当前页"}
                         value={task.task_kind === "comment_backfill" ? (backfillSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
@@ -80,7 +93,11 @@ function TaskPreviewBody({
                         <span className="rounded-full bg-muted px-2.5 py-1">平台 {platformMeta.label}</span>
                         <span className="rounded-full bg-muted px-2.5 py-1">状态 {task.status}</span>
                         <span className="rounded-full bg-muted px-2.5 py-1">类型 {getTaskKindLabel(task)}</span>
-                        <span className="rounded-full bg-muted px-2.5 py-1">结果 {task.result_count}</span>
+                        <span className="rounded-full bg-muted px-2.5 py-1">
+                            {task.source_task_id && (task.exclude_count ?? 0) > 0
+                                ? `原始 ${(task.exclude_count ?? 0).toLocaleString()} · 新增 ${task.result_count.toLocaleString()}`
+                                : `结果 ${task.result_count.toLocaleString()}`}
+                        </span>
                         {task.fetch_replies ? <span className="rounded-full bg-muted px-2.5 py-1">已抓评论</span> : null}
                         {task.resumed ? <span className="rounded-full bg-muted px-2.5 py-1">曾恢复过</span> : null}
                     </div>
@@ -117,6 +134,18 @@ function TaskPreviewBody({
                         />
                     ) : null}
 
+                    {canRecrawl ? (
+                        <Button
+                            variant="outline"
+                            className="rounded-xl"
+                            disabled={recrawlingId === task.task_id}
+                            onClick={() => onRecrawl(task.task_id)}
+                        >
+                            {recrawlingId === task.task_id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-1.5 h-4 w-4" />}
+                            增量复爬
+                        </Button>
+                    ) : null}
+
                     <Button variant="outline" className="rounded-xl text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10" onClick={() => onDelete(task.task_id)}>
                         <Trash2 className="mr-1.5 h-4 w-4" />
                         删除
@@ -131,15 +160,19 @@ export function TaskPreviewPanel({
     task,
     resumingId,
     backfillingId,
+    recrawlingId,
     onResume,
     onCommentBackfill,
+    onRecrawl,
     onDelete,
 }: {
     task: TaskOut | null;
     resumingId: string | null;
     backfillingId: string | null;
+    recrawlingId: string | null;
     onResume: (taskId: string) => void;
     onCommentBackfill: (taskId: string) => void;
+    onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     if (!task) {
@@ -166,7 +199,7 @@ export function TaskPreviewPanel({
                 <h2 className="mt-1 text-xl font-semibold text-foreground">右侧任务预览</h2>
                 <p className="mt-1 text-sm text-muted-foreground">当前任务概览。</p>
             </div>
-            <TaskPreviewBody task={task} resumingId={resumingId} backfillingId={backfillingId} onResume={onResume} onCommentBackfill={onCommentBackfill} onDelete={onDelete} />
+            <TaskPreviewBody task={task} resumingId={resumingId} backfillingId={backfillingId} recrawlingId={recrawlingId} onResume={onResume} onCommentBackfill={onCommentBackfill} onRecrawl={onRecrawl} onDelete={onDelete} />
         </Card>
     );
 }
@@ -175,17 +208,21 @@ export function TaskPreviewDrawer({
     task,
     resumingId,
     backfillingId,
+    recrawlingId,
     onClose,
     onResume,
     onCommentBackfill,
+    onRecrawl,
     onDelete,
 }: {
     task: TaskOut | null;
     resumingId: string | null;
     backfillingId: string | null;
+    recrawlingId: string | null;
     onClose: () => void;
     onResume: (taskId: string) => void;
     onCommentBackfill: (taskId: string) => void;
+    onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
 }) {
     if (!task) return null;
@@ -204,7 +241,7 @@ export function TaskPreviewDrawer({
                 </div>
 
                 <div className="max-h-[calc(92vh-84px)] overflow-y-auto">
-                    <TaskPreviewBody task={task} resumingId={resumingId} backfillingId={backfillingId} onResume={onResume} onCommentBackfill={onCommentBackfill} onDelete={onDelete} />
+                    <TaskPreviewBody task={task} resumingId={resumingId} backfillingId={backfillingId} recrawlingId={recrawlingId} onResume={onResume} onCommentBackfill={onCommentBackfill} onRecrawl={onRecrawl} onDelete={onDelete} />
                 </div>
             </div>
         </div>

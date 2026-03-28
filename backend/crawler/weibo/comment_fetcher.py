@@ -332,7 +332,7 @@ def fetch_comments(
     try:
         # ─── 阶段 1：访问帖子页面 + 网络拦截首批评论 ────────────────
         tab.listen.start(COMMENT_API_PATTERN)
-        tab.get(page_url)
+        tab.get(page_url, timeout=20)
         interruptible_sleep(random.uniform(2.0, 3.5), task_id=task_id)
 
         # 检查重定向

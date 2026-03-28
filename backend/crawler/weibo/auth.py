@@ -64,7 +64,7 @@ def ensure_weibo_login(tab, account_cookies: Optional[list[dict]] = None) -> boo
 
     # 先导航到 weibo.com，让浏览器处于正确域名下，Cookie 才能被正确设置
     try:
-        tab.get("https://weibo.com")
+        tab.get("https://weibo.com", timeout=15)
         time.sleep(1)
     except Exception as e:
         logger.warning(f"导航到 weibo.com 失败: {e}")
@@ -75,7 +75,7 @@ def ensure_weibo_login(tab, account_cookies: Optional[list[dict]] = None) -> boo
 
     # 刷新页面让 Cookie 生效
     try:
-        tab.get("https://weibo.com")
+        tab.get("https://weibo.com", timeout=15)
         time.sleep(2)
     except Exception as e:
         logger.warning(f"刷新 weibo.com 失败: {e}")
@@ -113,7 +113,7 @@ def ensure_search_cookies(tab, account_cookies: Optional[list[dict]] = None) -> 
 
     try:
         # 先导航到 s.weibo.com 触发域名下的 Cookie 设置
-        tab.get("https://s.weibo.com")
+        tab.get("https://s.weibo.com", timeout=15)
         time.sleep(1)
         # 在 s.weibo.com 域名下再次注入 Cookie，确保生效
         inject_cookies_to_tab(tab, cookies)

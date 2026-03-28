@@ -81,6 +81,7 @@ def build_time_split_plan(
     window_days: int,
     unlimited_window_days: int,
     max_segments: int,
+    force_window: bool = False,
 ) -> TimeSplitPlan:
     base_query, since, until = parse_query_time_range(query)
     if not enabled or not since or not until:
@@ -96,12 +97,15 @@ def build_time_split_plan(
         return TimeSplitPlan(False, base_query, since, until, ())
 
     configured_window = max(1, unlimited_window_days if max_count == 0 else window_days)
-    adaptive_window = _compute_adaptive_window(span_days, configured_window)
 
-    # 当跨度 ≥ 90 天时使用按自然月分割，否则仍按固定天数分割
-    if span_days >= _MONTHLY_SPLIT_THRESHOLD_DAYS:
+    # force_window=True（复爬模式）：不自适应升级，强制使用 configured_window
+    if force_window:
+        segments = _split_by_fixed_days(start, end, window_days=configured_window, max_segments=max_segments)
+    elif span_days >= _MONTHLY_SPLIT_THRESHOLD_DAYS:
+        # 当跨度 ≥ 90 天时使用按自然月分割
         segments = _split_by_calendar_month(start, end, max_segments=max_segments)
     else:
+        adaptive_window = _compute_adaptive_window(span_days, configured_window)
         segments = _split_by_fixed_days(start, end, window_days=adaptive_window, max_segments=max_segments)
 
     if len(segments) <= 1:

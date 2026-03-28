@@ -161,14 +161,16 @@ def fetch_nested_replies(
                 "error_reason": f"异常: {str(e)[:200]}",
             })
 
-        # 礼貌性间隔：基于 tweet_detail 动态间隔
+        # 礼貌性间隔：嵌套评论间隔缩短，导航本身已贡献延迟，且同属一次用户浏览行为
         from crawler.account_pool import compute_dynamic_interval
         from crawler.rate_tracker import get_tracker as _get_tracker
+        from crawler.utils import interruptible_sleep as _interruptible_sleep
         import random as _random
-        _rate_mult_nested = _get_tracker().get_sleep_multiplier("tweet_detail")
+        _rate_mult_nested = _get_tracker().get_sleep_multiplier("tweet_detail", task_id=task_id)
         _min_n, _max_n, _ = compute_dynamic_interval("tweet_detail")
-        _nested_interval = _random.uniform(_min_n, _max_n) * _rate_mult_nested
-        jittered_sleep(_nested_interval, task_id=task_id)
+        # 嵌套评论使用缩短的间隔，导航本身已贡献 3-5s 延迟
+        _nested_interval = _random.uniform(_min_n * 0.3, _max_n * 0.4) * _rate_mult_nested
+        _interruptible_sleep(max(0.5, _nested_interval - 4.0), task_id=task_id)
 
     total_sub = sum(
         len(r.get("replies", []))
