@@ -263,6 +263,7 @@ def search(
     _session_ready: bool = False,
     _query_plan_resolved: bool = False,
     browser_instance=None,
+    comment_browser_instance=None,
     slot_id: Optional[int] = None,
     exclude_ids: Optional[set[str]] = None,
     seed_posts: Optional[list[dict]] = None,
@@ -335,6 +336,7 @@ def search(
                             _session_ready=True,
                             _query_plan_resolved=True,
                             browser_instance=browser_instance,
+                            comment_browser_instance=comment_browser_instance,
                             slot_id=slot_id,
                             exclude_ids=exclude_ids,
                         )
@@ -396,6 +398,7 @@ def search(
             _comment_pipeline = WeiboCommentPipeline(
                 task_id=task_id,
                 browser_instance=browser_instance,
+                comment_browser_instance=comment_browser_instance,
             )
 
         # ── 日期范围分割（突破 50 页限制）────────────────────────
@@ -474,6 +477,7 @@ def search(
                             _tab=tab,
                             _session_ready=True,
                             browser_instance=browser_instance,
+                            comment_browser_instance=comment_browser_instance,
                             slot_id=slot_id,
                             exclude_ids=exclude_ids,
                         )

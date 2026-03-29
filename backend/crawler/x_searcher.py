@@ -218,6 +218,7 @@ def _search_with_time_splits(
     crawl_strategy: CrawlStrategy,
     checkpoint: Optional[dict] = None,
     browser_instance=None,
+    reply_browser_instance=None,
     slot_id: Optional[int] = None,
     exclude_ids: Optional[set[str]] = None,
     recrawl_mode: bool = False,
@@ -288,6 +289,7 @@ def _search_with_time_splits(
                 crawl_strategy=crawl_strategy,
                 existing_tab=shared_tab,
                 browser_instance=browser_instance,
+                reply_browser_instance=reply_browser_instance,
                 slot_id=slot_id,
                 exclude_ids=seen_ids,  # 将已有推文 ID 传入每个 segment 用于去重
                 _time_split_context={
@@ -590,6 +592,7 @@ def search(
     existing_tab=None,
     _time_split_context: Optional[dict] = None,
     browser_instance=None,
+    reply_browser_instance=None,
     slot_id: Optional[int] = None,
     exclude_ids: Optional[set[str]] = None,
     recrawl_mode: bool = False,
@@ -723,6 +726,7 @@ def search(
             max_replies_per_tweet=max_replies_per_tweet,
             reply_depth=reply_depth,
             browser_instance=browser_instance,
+            reply_browser_instance=reply_browser_instance,
             on_reply_done=_on_reply_done_pipeline,
         )
 
@@ -778,6 +782,7 @@ def search(
             reply_depth=reply_depth,
             crawl_strategy=crawl_strategy,
             browser_instance=browser_instance,
+            reply_browser_instance=reply_browser_instance,
             slot_id=slot_id,
             exclude_ids=exclude_ids,
             recrawl_mode=_recrawl_mode,
@@ -799,6 +804,7 @@ def search(
                 crawl_strategy=crawl_strategy,
                 checkpoint=ckpt,
                 browser_instance=browser_instance,
+                reply_browser_instance=reply_browser_instance,
                 slot_id=slot_id,
                 exclude_ids=exclude_ids,
                 recrawl_mode=_recrawl_mode,

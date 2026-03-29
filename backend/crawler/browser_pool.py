@@ -396,6 +396,7 @@ class BrowserPool:
     - 默认优先为任务分配独占 slot；池打满后才允许不同平台共享同一个实例
     - 同一个 slot 内同一平台只能有一个任务
     - acquire(task_id, platform) 找到一个该平台空闲的 slot，借出其实例
+    - acquire_aux(task_id, purpose) 为同一任务借出一个辅助浏览器实例（如 reply/comment worker）
     - release(task_id) 从 slot 中移除该任务，slot 可被复用
     """
 
@@ -408,6 +409,10 @@ class BrowserPool:
         # task_id -> slot_id（快速反查）
         self._task_slot: dict[str, int] = {}
         self._next_id = 0
+        # ── 辅助浏览器实例（Pipeline reply/comment worker 专用）──
+        # task_id -> list[BrowserInstance]  同一任务可借出多个辅助实例
+        self._aux_instances: dict[str, list[BrowserInstance]] = {}
+        self._aux_next_id = 10000  # 辅助实例 ID 从 10000 开始，避免与 slot ID 冲突
 
     def _find_slot_for(self, platform: str) -> Optional[_Slot]:
         """
@@ -475,8 +480,57 @@ class BrowserPool:
                     )
                 self._condition.wait(timeout=min(remaining, 2.0))
 
+    def acquire_aux(self, task_id: str, purpose: str = "reply") -> BrowserInstance:
+        """
+        为指定任务借出一个辅助浏览器实例（独立 Chrome 进程）。
+
+        用于 Pipeline 的 reply/comment worker，使其与搜索 tab 完全并行
+        （不共享 WebSocket 连接，避免 CDP 命令串行化）。
+
+        辅助实例不占用 slot，而是独立管理，在 release(task_id) 时一并关闭。
+
+        Args:
+            task_id: 任务 ID（用于追踪和释放）
+            purpose: 用途描述（reply/comment，仅用于日志）
+
+        Returns:
+            BrowserInstance: 独立的浏览器实例
+        """
+        with self._lock:
+            aux_id = self._aux_next_id
+            self._aux_next_id += 1
+
+        inst = BrowserInstance(aux_id)
+        with self._lock:
+            if task_id not in self._aux_instances:
+                self._aux_instances[task_id] = []
+            self._aux_instances[task_id].append(inst)
+
+        logger.info(
+            f"[BrowserPool] task={task_id[:8]} 借出辅助浏览器实例 #{aux_id}（{purpose}）"
+        )
+        return inst
+
     def release(self, task_id: str) -> None:
-        """释放任务占用的 slot；空闲 slot 可按配置自动关闭浏览器实例。"""
+        """释放任务占用的 slot 和所有辅助实例。"""
+        # ── 释放辅助实例 ──
+        aux_to_close: list[BrowserInstance] = []
+        with self._lock:
+            aux_to_close = self._aux_instances.pop(task_id, [])
+
+        # 在锁外关闭辅助实例（避免持锁时做 I/O）
+        for inst in aux_to_close:
+            try:
+                inst.close()
+                logger.info(
+                    f"[BrowserPool] task={task_id[:8]} 关闭辅助浏览器实例 #{inst.instance_id}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[BrowserPool] 关闭辅助实例 #{inst.instance_id} 失败: {e}"
+                )
+
+        # ── 释放 slot ──
         with self._condition:
             slot_id = self._task_slot.pop(task_id, None)
             if slot_id is None:
@@ -493,13 +547,22 @@ class BrowserPool:
         self._prune_idle_slots()
 
     def close_all(self) -> None:
-        """关闭所有浏览器实例（服务关闭时调用）。"""
+        """关闭所有浏览器实例（主 slot + 辅助实例，服务关闭时调用）。"""
         with self._lock:
             all_slots = list(self._slots.values())
             self._slots.clear()
             self._task_slot.clear()
+            all_aux = []
+            for inst_list in self._aux_instances.values():
+                all_aux.extend(inst_list)
+            self._aux_instances.clear()
         for slot in all_slots:
             slot.instance.close()
+        for inst in all_aux:
+            try:
+                inst.close()
+            except Exception:
+                pass
 
     def resize(self, new_max: int) -> None:
         """动态调整池大小（通常在配置变更时调用）。"""
@@ -564,9 +627,11 @@ class BrowserPool:
                     "platforms": dict(slot.platforms),
                     "alive": slot.instance.is_alive,
                 })
+            aux_count = sum(len(v) for v in self._aux_instances.values())
             return {
                 "max_size": self._max_size,
                 "total_slots": len(self._slots),
+                "aux_instances": aux_count,
                 "slots": slots_info,
             }
 
