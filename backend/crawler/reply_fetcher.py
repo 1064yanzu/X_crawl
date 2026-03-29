@@ -784,3 +784,139 @@ def fetch_replies_batch(
             )
 
     return updated_tweets, failed_records
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  单条推文回复抓取（供 pipeline.CrawlPipeline reply_worker 调用）
+# ═══════════════════════════════════════════════════════════════════
+
+def fetch_replies_single(
+    tweet: dict,
+    *,
+    task_id: Optional[str] = None,
+    timeout: Optional[float] = None,
+    max_replies_per_tweet: int = 20,
+    reply_depth: int = 2,
+    existing_tab=None,
+    browser_instance=None,
+) -> tuple[dict, dict | None]:
+    """
+    对单条推文抓取回复，返回 (updated_tweet, failure_info)。
+
+    供 crawler.pipeline.CrawlPipeline 的 reply_worker 逐条调用。
+    与 fetch_replies_batch 的区别：仅处理一条推文，不管理 tab 生命周期，
+    由调用方（pipeline）提供并复用 reply_tab。
+
+    Args:
+        tweet:                 推文 dict（需含 id 和 author.screen_name）
+        task_id:               任务 ID
+        timeout:               超时（秒）
+        max_replies_per_tweet: 最多抓取的回复数
+        reply_depth:           回复层级深度（>1 抓二级评论）
+        existing_tab:          复用的已有标签页（不传则新开）
+        browser_instance:      浏览器池实例
+
+    Returns:
+        (updated_tweet, failure_info)
+        - updated_tweet: 附有 replies 字段的推文 dict
+        - failure_info:  失败 dict 或 None
+    """
+    from config import settings as _settings
+
+    tweet_id = str(tweet.get("id", ""))
+    screen_name = (tweet.get("author") or {}).get("screen_name", "")
+    expected_count = (tweet.get("metrics") or {}).get("replies", 0)
+
+    # 已有回复数据，直接返回（断点续爬时跳过）
+    if tweet.get("replies") is not None:
+        return tweet, None
+
+    # 0 评论，无需打开详情页
+    if expected_count == 0:
+        updated = dict(tweet)
+        updated["replies"] = []
+        return updated, None
+
+    if timeout is None:
+        timeout = _settings.crawler_timeout
+
+    # ── 跨任务去重检查（与 fetch_replies_batch 保持一致） ──
+    dedup_enabled = getattr(_settings, "crawler_dedup_enabled", True)
+    if dedup_enabled:
+        from crawler.tweet_dedup import check_dedup
+        hit, cached_replies = check_dedup(tweet)
+        if hit and cached_replies is not None:
+            updated = dict(tweet)
+            updated["replies"] = cached_replies
+            logger.info(
+                f"[Pipeline] 去重命中 tweet_id={tweet_id}，"
+                f"复用 {len(cached_replies)} 条缓存评论"
+            )
+            return updated, None
+
+    if not tweet_id or not screen_name:
+        logger.warning(f"[Pipeline] 推文缺少 id 或 screen_name，跳过 tweet_id={tweet_id}")
+        updated = dict(tweet)
+        updated["replies"] = []
+        return updated, None
+
+    try:
+        replies, failure_info = fetch_replies(
+            tweet_id=tweet_id,
+            screen_name=screen_name,
+            max_count=max_replies_per_tweet,
+            task_id=task_id,
+            timeout=timeout,
+            existing_tab=existing_tab,
+            expected_count=expected_count,
+            browser_instance=browser_instance,
+        )
+    except Exception as e:
+        # 非致命异常：记录失败，返回空回复
+        from crawler.crawl_signals import StopSignal, ChallengeSignal
+        if isinstance(e, (StopSignal, ChallengeSignal)):
+            raise
+        logger.error(f"[Pipeline] fetch_replies_single: tweet_id={tweet_id} 失败: {e}", exc_info=True)
+        updated = dict(tweet)
+        updated["replies"] = []
+        failure_info = {
+            "task_id": task_id or "",
+            "tweet_id": tweet_id,
+            "screen_name": screen_name,
+            "expected_count": expected_count,
+            "fetched_count": 0,
+            "error_reason": f"pipeline 异常: {str(e)[:200]}",
+        }
+        return updated, failure_info
+
+    # ── 二级评论递归抓取 ──────────────────────────────────────
+    need_nested = (reply_depth > 1)
+    updated = dict(tweet)
+    updated["replies"] = replies
+
+    if replies and need_nested:
+        from crawler.nested_reply_fetcher import fetch_nested_replies
+        try:
+            updated["replies"], nested_failed = fetch_nested_replies(
+                replies,
+                current_depth=1,
+                max_depth=reply_depth,
+                max_replies_per_tweet=max_replies_per_tweet,
+                task_id=task_id,
+                timeout=timeout,
+                browser_instance=browser_instance,
+            )
+        except Exception as nested_e:
+            from crawler.crawl_signals import StopSignal, ChallengeSignal
+            if isinstance(nested_e, (StopSignal, ChallengeSignal)):
+                raise
+            logger.error(f"[Pipeline] 二级评论抓取失败 tweet_id={tweet_id}: {nested_e}", exc_info=True)
+        else:
+            # nested_failed 合并到 failure_info 之外（调用方通过 pipeline.failed_records 收集）
+            if failure_info is None and nested_failed:
+                pass  # nested_failed 由调用者通过 on_reply_done 机制统计
+
+    if failure_info:
+        failure_info["task_id"] = task_id or ""
+
+    return updated, failure_info

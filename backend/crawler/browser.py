@@ -506,8 +506,11 @@ def _create_browser() -> Chromium:
     co.set_argument("--window-size", "1366,860")
     co.set_argument("--lang", "zh-CN,zh,en,en-GB,en-US")
     co.set_argument("--accept-lang", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
-    # 2) 尽量降低 webdriver 痕迹（对不同版本 Chromium 生效程度不同）
-    co.set_argument("--disable-blink-features", "AutomationControlled")
+    # 2) 尽量降低 webdriver 痕迹。
+    # 注意：Chrome 有界面模式下开启 AutomationControlled 会显示“使用了不受支持的命令行标记”提示条。
+    # 当前改为仅在无头模式下附加该参数；有界面模式依赖 stealth 注入避免显眼提示。
+    if effective_headless:
+        co.set_argument("--disable-blink-features", "AutomationControlled")
     co.set_argument("--disable-infobars")
     co.set_argument("--no-first-run")
     co.set_argument("--no-default-browser-check")

@@ -36,15 +36,15 @@ def test_weibo_segment_search_reuses_same_tab_and_session(monkeypatch):
     tab = _DummyTab()
     tab_calls = {"get_tab": 0, "login": 0, "search_cookie": 0, "safe_get_html": 0}
 
-    def fake_get_tab_with_retry(max_retries: int = 2):
+    def fake_get_tab_with_retry(max_retries: int = 2, browser_instance=None):
         tab_calls["get_tab"] += 1
         return tab
 
-    def fake_ensure_weibo_login(_tab):
+    def fake_ensure_weibo_login(_tab, account_cookies=None):
         tab_calls["login"] += 1
         return True
 
-    def fake_ensure_search_cookies(_tab):
+    def fake_ensure_search_cookies(_tab, account_cookies=None):
         tab_calls["search_cookie"] += 1
 
     def fake_split_date_range(*args, **kwargs):

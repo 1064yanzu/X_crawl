@@ -125,6 +125,23 @@ def test_task_db_persists_source_task_id_in_summary(task_db_module):
     assert summaries[0]["source_task_id"] == "origin-001"
 
 
+def test_task_db_persists_recrawl_flags_in_summary(task_db_module):
+    task_db, _db_path = task_db_module
+    task = {
+        **_base_task("recrawl-task"),
+        "source_task_id": "origin-002",
+        "is_recrawl": True,
+        "exclude_count": 42,
+    }
+
+    task_db.save_task(task)
+
+    summaries = task_db.load_all_tasks()
+    assert len(summaries) == 1
+    assert summaries[0]["is_recrawl"] is True
+    assert summaries[0]["exclude_count"] == 42
+
+
 def test_task_db_lazy_migrates_legacy_tweets_json(task_db_module):
     task_db, db_path = task_db_module
     task = _base_task("legacy-task")
@@ -194,6 +211,36 @@ def test_task_manager_set_task_seed_tweets_persists_full_result(task_manager_mod
     assert summary["result_count"] == 1
     assert full is not None
     assert full["tweets"] == tweets
+
+
+def test_task_manager_can_rebuild_recrawl_exclude_ids_from_source_task(task_manager_module):
+    manager = task_manager_module
+    source_task_id = manager.create_task("source", 100, "Top")
+    manager.set_task_seed_tweets(
+        source_task_id,
+        [
+            {"id": "1", "text": "one"},
+            {"id": "2", "text": "two"},
+            {"mid": "3", "text": "three"},
+        ],
+        current_page=0,
+    )
+
+    recrawl_task_id = manager.create_task(
+        "source",
+        100,
+        "Top",
+        source_task_id=source_task_id,
+        is_recrawl=True,
+    )
+
+    exclude_ids = manager.ensure_task_exclude_tweet_ids(recrawl_task_id)
+    summary = manager.get_task_summary(recrawl_task_id)
+
+    assert exclude_ids == ["1", "2", "3"]
+    assert summary is not None
+    assert summary["is_recrawl"] is True
+    assert summary["exclude_count"] == 3
 
 
 def test_search_route_uses_summary_path_for_lightweight_polling(monkeypatch):

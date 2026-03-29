@@ -92,12 +92,11 @@ export function canCreateCommentBackfillFromTask(
     return !task.fetch_replies || (task.replies_fetched ?? 0) <= 0;
 }
 
-/** 判断任务是否可增量复爬（X 平台 + 已完成/已停止/已失败 + 帖子采集） */
+/** 判断任务是否可增量复爬（X/微博 + 已完成/已停止/已失败 + 帖子采集） */
 export function canRecrawlTask(
     task: Pick<TaskOut, "task_kind" | "status" | "platform" | "result_count">,
 ) {
     if (task.task_kind === "comment_backfill") return false;
-    if ((task.platform ?? "x") !== "x") return false;
     if (!["done", "stopped", "failed"].includes(task.status)) return false;
     return task.result_count > 0;
 }
@@ -118,4 +117,16 @@ export function getTaskQueueLabel(task: Pick<TaskOut, "queue_total" | "queue_ord
     if (!task.queue_total || task.queue_total <= 1 || !task.queue_order) return "";
     const prefix = task.queue_name ? `${task.queue_name} · ` : "";
     return `${prefix}${task.queue_order}/${task.queue_total}`;
+}
+
+export function isTaskWithReplyCollection(task: Pick<TaskOut, "fetch_replies" | "reply_depth">) {
+    return Boolean(task.fetch_replies) && (task.reply_depth ?? 1) >= 1;
+}
+
+export function canBatchUpdateReplyCollection(
+    task: Pick<TaskOut, "task_kind" | "status" | "platform">,
+) {
+    if (task.task_kind === "comment_backfill") return false;
+    if (!["x", "weibo"].includes(task.platform ?? "x")) return false;
+    return ["done", "stopped", "failed"].includes(task.status);
 }

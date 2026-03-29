@@ -55,7 +55,7 @@ def test_weibo_resume_can_migrate_legacy_page_checkpoint_to_date_split(monkeypat
         },
     )
 
-    monkeypatch.setattr(searcher, "_get_tab_with_retry", lambda max_retries=2: tab)
+    monkeypatch.setattr(searcher, "_get_tab_with_retry", lambda max_retries=2, browser_instance=None: tab)
     monkeypatch.setattr(auth, "ensure_weibo_login", lambda _tab: True)
     monkeypatch.setattr(auth, "ensure_search_cookies", lambda _tab: None)
     monkeypatch.setattr(date_splitter, "split_date_range", lambda *args, **kwargs: [("2023-01-01", "2023-01-31"), ("2023-02-01", "2023-02-28")])

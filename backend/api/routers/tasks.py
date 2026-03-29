@@ -11,16 +11,33 @@ GET    /api/v1/tasks/{task_id}/stream SSE 实时事件流
 """
 import asyncio
 import json
+import re
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from api.schemas.task import TaskOut, MergePreviewRequest, MergePreviewResponse, MergeRequest, MergeResponse
+from api.schemas.task import (
+    TaskOut,
+    MergePreviewRequest,
+    MergePreviewResponse,
+    MergeRequest,
+    MergeResponse,
+    BatchUpdateReplyCollectionRequest,
+    BatchUpdateReplyCollectionResponse,
+)
 from api.services import task_manager, crawl_service, task_queue_manager
-from api.services import merge_service
+from api.services import merge_service, task_reply_collection_service
 from config import settings
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
+
+
+def _strip_weibo_time_syntax(keyword: str) -> str:
+    text = re.sub(r"\s+", " ", (keyword or "").strip())
+    text = re.sub(r"\bsince:\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\buntil:\S+", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def _stream_snapshot(task: dict) -> dict:
@@ -504,7 +521,7 @@ def _auto_resume_queue_siblings(task: dict) -> None:
         _logger.error("_auto_resume_queue_siblings 失败: queue=%s, error=%s", queue_id, e, exc_info=True)
 
 
-def _do_recrawl_task(task_id: str) -> tuple[str | None, int, str | None]:
+def _do_recrawl_task(task_id: str) -> tuple[str | None, int, str | None, bool]:
     """增量复爬单个任务的核心逻辑。
 
     Returns:
@@ -514,67 +531,83 @@ def _do_recrawl_task(task_id: str) -> tuple[str | None, int, str | None]:
     """
     original = task_manager.get_task_summary(task_id)
     if not original:
-        return None, 0, f"任务不存在: {task_id}"
+        return None, 0, f"任务不存在: {task_id}", False
 
     if original["status"] not in ("done", "stopped", "failed"):
-        return None, 0, f"仅已完成/已停止/已失败的任务可复爬，当前状态: {original['status']}"
+        return None, 0, f"仅已完成/已停止/已失败的任务可复爬，当前状态: {original['status']}", False
 
-    if original.get("platform") != "x":
-        return None, 0, "增量复爬目前仅支持 X 平台"
+    root_source_task_id = original.get("source_task_id") or task_id
+    source_task = task_manager.get_task_summary(root_source_task_id) if root_source_task_id != task_id else original
+    if not source_task:
+        source_task = original
+
+    platform = source_task.get("platform", original.get("platform", "x"))
 
     # 加载原始推文 ID 用于增量去重
-    original_tweets = task_manager._get_task_result_snapshot(task_id, load=True)
-    exclude_ids = [str(t.get("id", "")) for t in original_tweets if t.get("id")]
+    original_tweets = task_manager._get_task_result_snapshot(root_source_task_id, load=True)
+    exclude_ids = [
+        str(t.get("id") or t.get("mid") or "").strip()
+        for t in original_tweets
+        if str(t.get("id") or t.get("mid") or "").strip()
+    ]
 
-    # 创建新任务
-    new_task_id = task_manager.create_task(
-        keyword=original["keyword"],
-        max_count=original["max_count"],
-        product=original["product"],
-        fetch_replies=original.get("fetch_replies", False),
-        max_replies_per_tweet=original.get("max_replies_per_tweet", 20),
-        reply_depth=original.get("reply_depth", 2),
-        crawl_strategy=original.get("crawl_strategy", "dfs"),
-        platform="x",
-        source_task_id=task_id,
+    recrawl_keyword = source_task["keyword"]
+    if platform == "weibo":
+        recrawl_keyword = _strip_weibo_time_syntax(recrawl_keyword)
+
+    prepared = task_manager.prepare_task_for_recrawl(
+        root_source_task_id,
+        keyword=recrawl_keyword,
+        max_count=source_task["max_count"],
+        product=source_task["product"],
+        fetch_replies=source_task.get("fetch_replies", False),
+        max_replies_per_tweet=source_task.get("max_replies_per_tweet", 20),
+        reply_depth=source_task.get("reply_depth", 2),
+        crawl_strategy=source_task.get("crawl_strategy", "dfs"),
+        platform=platform,
+        start_date=source_task.get("start_date"),
+        end_date=source_task.get("end_date"),
+        source_task_id=root_source_task_id,
         exclude_tweet_ids=exclude_ids,
     )
+    if not prepared:
+        return None, 0, "复爬任务准备失败", False
 
-    # 启动爬虫线程
-    new_task = task_manager.get_task_summary(new_task_id)
-    if not new_task:
-        return None, 0, "复爬任务创建失败"
+    existing_task = task_manager.get_task_summary(root_source_task_id)
+    if not existing_task:
+        return None, 0, "复爬任务读取失败", False
 
     crawl_service.start_crawler_thread(
-        task_id=new_task_id,
-        task=new_task,
+        task_id=root_source_task_id,
+        task=existing_task,
         resume=False,
     )
 
-    return new_task_id, len(exclude_ids), None
+    return root_source_task_id, len(exclude_ids), None, True
 
 
 @router.post(
     "/{task_id}/recrawl",
     summary="增量复爬任务",
     description=(
-        "基于已完成的任务创建新的增量爬取任务。\n\n"
-        "- 继承原始任务的全部配置（关键词、product、回复设置等）\n"
-        "- 原始数据完全不动，增量数据存储在独立的新任务中\n"
+        "基于已完成的任务在原任务上执行增量复爬。\n\n"
+        "- 自动回源到最初任务，避免复爬派生任务继续链式增长\n"
+        "- 保留原始数据，并仅抓取原任务中尚未存在的新帖子\n"
         "- 自动排除原始任务中已有的推文，仅收集新增推文\n"
         "- 支持 `done / stopped / failed` 状态的任务"
     ),
 )
 async def recrawl_task(task_id: str) -> dict:
-    """增量复爬：创建新任务继承原始配置，排除已有推文"""
-    new_task_id, exclude_count, error = _do_recrawl_task(task_id)
+    """增量复爬：在原任务上重跑并排除已有推文"""
+    target_task_id, exclude_count, error, reused_existing = _do_recrawl_task(task_id)
     if error:
         raise HTTPException(status_code=409, detail=error)
     return {
-        "message": f"增量复爬任务已创建，排除 {exclude_count} 条已有推文",
-        "new_task_id": new_task_id,
+        "message": f"复爬已在原任务上重跑，保留 {exclude_count} 条历史结果作为提速种子",
+        "task_id": target_task_id,
         "source_task_id": task_id,
         "exclude_count": exclude_count,
+        "reused_existing": reused_existing,
     }
 
 
@@ -585,36 +618,143 @@ class RecrawlBatchRequest(_BaseModel):
     task_ids: list[str] = _Field(description="要批量复爬的任务 ID 列表", min_length=1)
 
 
+class BatchPauseRequest(_BaseModel):
+    task_ids: list[str] = _Field(description="要批量暂停的任务 ID 列表", min_length=1)
+
+
+class BatchResumeRequest(_BaseModel):
+    task_ids: list[str] = _Field(description="要批量继续的任务 ID 列表", min_length=1)
+
+
 @router.post(
     "/recrawl-batch",
     summary="批量增量复爬",
     description=(
         "批量对多个已完成任务执行增量复爬。\n\n"
-        "- 每个原始任务独立创建新的增量任务\n"
+        "- 每个任务都会回源到最初任务，并在原任务上重跑\n"
         "- 跳过不符合条件的任务（运行中、非 X 平台等）\n"
-        "- 返回所有新创建任务的 ID 列表和跳过/失败详情"
+        "- 返回所有已启动复爬的任务 ID 和跳过/失败详情"
     ),
 )
 async def recrawl_batch(req: RecrawlBatchRequest) -> dict:
-    """批量增量复爬：对多个任务分别创建增量爬取任务"""
-    created: list[dict] = []
+    """批量增量复爬：对多个任务回源并在原任务上重跑"""
+    processed: list[dict] = []
     skipped: list[dict] = []
 
     for task_id in req.task_ids:
-        new_task_id, exclude_count, error = _do_recrawl_task(task_id)
+        target_task_id, exclude_count, error, reused_existing = _do_recrawl_task(task_id)
         if error:
             skipped.append({"task_id": task_id, "reason": error})
         else:
-            created.append({
+            processed.append({
                 "source_task_id": task_id,
-                "new_task_id": new_task_id,
+                "task_id": target_task_id,
                 "exclude_count": exclude_count,
+                "reused_existing": reused_existing,
             })
 
     return {
-        "message": f"已创建 {len(created)} 个复爬任务，跳过 {len(skipped)} 个",
-        "created": created,
+        "message": f"已处理 {len(processed)} 个复爬任务，跳过 {len(skipped)} 个",
+        "processed": processed,
         "skipped": skipped,
+    }
+
+
+@router.post(
+    "/batch-pause",
+    summary="批量暂停选中任务",
+    description=(
+        "对指定的任务 ID 列表执行暂停操作。\n\n"
+        "- **running** 任务 → 发送暂停信号，状态变为 `paused`\n"
+        "- **pending** 任务 → 发送终止信号，状态变为 `stopped`\n"
+        "- 其他状态任务 → 跳过\n\n"
+        "返回各类操作的任务 ID 列表。"
+    ),
+)
+async def batch_pause_tasks(req: BatchPauseRequest) -> dict:
+    """批量暂停指定任务"""
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    paused_ids: list[str] = []
+    stopped_ids: list[str] = []
+    skipped_ids: list[str] = []
+    failed_ids: list[str] = []
+
+    for task_id in req.task_ids:
+        task = task_manager.get_task_summary(task_id)
+        if not task:
+            skipped_ids.append(task_id)
+            continue
+
+        status = task.get("status", "")
+        if status == "running":
+            try:
+                success = task_manager.pause_task(task_id)
+                if success:
+                    task_queue_manager.mark_task_paused(task_id)
+                    paused_ids.append(task_id)
+                else:
+                    failed_ids.append(task_id)
+            except Exception as e:
+                _logger.error("batch_pause: task=%s 暂停失败: %s", task_id[:8], e)
+                failed_ids.append(task_id)
+        elif status == "pending":
+            try:
+                success = task_manager.stop_task(task_id)
+                if success:
+                    stopped_ids.append(task_id)
+                else:
+                    failed_ids.append(task_id)
+            except Exception as e:
+                _logger.error("batch_pause: task=%s 停止失败: %s", task_id[:8], e)
+                failed_ids.append(task_id)
+        else:
+            skipped_ids.append(task_id)
+
+    total_affected = len(paused_ids) + len(stopped_ids)
+    return {
+        "message": f"已暂停 {total_affected} 个任务",
+        "paused": paused_ids,
+        "stopped": stopped_ids,
+        "skipped": skipped_ids,
+        "failed": failed_ids,
+    }
+
+
+@router.post(
+    "/batch-resume",
+    summary="批量继续选中任务",
+    description=(
+        "对指定的任务 ID 列表执行恢复操作。\n\n"
+        "- **paused** 任务 → 唤醒暂停中的爬虫继续\n"
+        "- **stopped / failed** 任务 → 重启爬虫线程从断点恢复\n"
+        "- 其他状态任务 → 跳过\n\n"
+        "返回各类操作的任务 ID 列表。"
+    ),
+)
+async def batch_resume_tasks(req: BatchResumeRequest) -> dict:
+    """批量继续指定任务"""
+    import logging
+    _logger = logging.getLogger(__name__)
+
+    all_tasks = task_manager.list_tasks(include_payload=False)
+    target_tasks = [t for t in all_tasks if t.get("task_id", "") in set(req.task_ids)]
+
+    resumed_ids, already_running_ids, failed_ids = _do_resume_tasks(
+        target_tasks, all_tasks, _logger,
+    )
+
+    requested_ids = set(req.task_ids)
+    acted_ids = set(resumed_ids) | set(already_running_ids) | set(failed_ids)
+    skipped_ids = list(requested_ids - acted_ids)
+
+    return {
+        "message": f"已恢复 {len(resumed_ids)} 个任务",
+        "resumed": resumed_ids,
+        "already_running": already_running_ids,
+        "skipped": skipped_ids,
+        "failed": failed_ids,
     }
 
 
@@ -639,6 +779,25 @@ async def stop_task(task_id: str) -> dict:
             detail=f"任务当前状态为 '{task['status']}'，无法终止（仅运行中/已暂停/等待中任务可终止）",
         )
     return {"message": f"任务 {task_id} 终止信号已发送", "status": "stopping"}
+
+
+@router.post(
+    "/reply-collection/batch-update",
+    response_model=BatchUpdateReplyCollectionResponse,
+    summary="批量切换任务采评模式",
+    description=(
+        "批量把历史帖子采集任务切换为“采集评论”或“不采集评论”。\n\n"
+        "- 当前支持 `platform=x / weibo` 且 `task_kind=search` 的任务\n"
+        "- 仅 `done / stopped / failed` 状态允许切换，避免影响运行中的任务\n"
+        "- 切换后会更新任务配置；后续继续 / 复爬时会按新配置执行\n"
+        "- 对 X 来说，开启评论采集时会统一按二级评论模式执行"
+    ),
+)
+async def batch_update_reply_collection(
+    req: BatchUpdateReplyCollectionRequest,
+) -> BatchUpdateReplyCollectionResponse:
+    result = task_reply_collection_service.batch_update_reply_collection(req.task_ids, req.mode)
+    return BatchUpdateReplyCollectionResponse(**result)
 
 
 @router.post(
@@ -687,4 +846,3 @@ async def merge_tasks(req: MergeRequest) -> MergeResponse:
         message=f"已合并 {total_groups} 组任务，删除了 {total_deleted} 个源任务",
         **result,
     )
-

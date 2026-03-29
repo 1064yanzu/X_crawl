@@ -100,7 +100,9 @@ def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: 
         "task_kind": "search",
         "source_file_name": None,
         "source_task_id": None,
+        "is_recrawl": False,
         "exclude_count": 0,
+        "exclude_tweet_ids": [],
         "queue_id": None,
         "queue_name": None,
         "queue_order": None,
@@ -192,6 +194,15 @@ def _span_hours(start: Optional[datetime], end: Optional[datetime]) -> float:
     return round(seconds / 3600.0, 2)
 
 
+def _safe_int(value: object, default: int = 0) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _merge_coverage(existing: Optional[dict], delta: Optional[dict]) -> dict:
     existing = dict(existing or {})
     delta = dict(delta or {})
@@ -212,7 +223,7 @@ def _merge_coverage(existing: Optional[dict], delta: Optional[dict]) -> dict:
         existing[f"{prefix}_start_at"] = _to_iso(start)
         existing[f"{prefix}_end_at"] = _to_iso(end)
         existing[f"{prefix}_span_hours"] = _span_hours(start, end)
-        existing[f"{prefix}_ts_count"] = int(existing.get(f"{prefix}_ts_count", 0)) + int(
+        existing[f"{prefix}_ts_count"] = _safe_int(existing.get(f"{prefix}_ts_count", 0)) + _safe_int(
             delta.get(f"{prefix}_ts_count", 0)
         )
 
@@ -327,6 +338,9 @@ def _ensure_db() -> None:
                 task.setdefault("task_kind", "search")
                 task.setdefault("source_file_name", None)
                 task.setdefault("source_task_id", None)
+                task.setdefault("is_recrawl", False)
+                task.setdefault("exclude_count", 0)
+                task.setdefault("exclude_tweet_ids", [])
                 task.setdefault("queue_id", None)
                 task.setdefault("queue_name", None)
                 task.setdefault("queue_order", None)
@@ -531,6 +545,7 @@ def create_task(
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
     source_task_id: Optional[str] = None,
+    is_recrawl: bool = False,
     queue_id: Optional[str] = None,
     queue_name: Optional[str] = None,
     queue_order: Optional[int] = None,
@@ -574,6 +589,7 @@ def create_task(
             "task_kind": task_kind,
             "source_file_name": source_file_name,
             "source_task_id": source_task_id,
+            "is_recrawl": is_recrawl,
             "queue_id": queue_id,
             "queue_name": queue_name,
             "queue_order": queue_order,
@@ -614,6 +630,85 @@ def create_task(
     return tid
 
 
+def prepare_task_for_recrawl(
+    task_id: str,
+    *,
+    keyword: str,
+    max_count: int,
+    product: str,
+    fetch_replies: bool = False,
+    max_replies_per_tweet: int = 20,
+    reply_depth: int = 2,
+    crawl_strategy: str = "bfs",
+    platform: str = "x",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    source_task_id: Optional[str] = None,
+    exclude_tweet_ids: Optional[list[str]] = None,
+) -> bool:
+    """为复爬重置任务运行态，但保留已落库的 tweets 结果作为增量种子。"""
+    _ensure_db()
+    from crawler import telemetry
+
+    seed_tweets = _get_task_result_snapshot(task_id, load=True)
+
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return False
+        if task["status"] not in ("done", "stopped", "failed"):
+            return False
+
+        task.update(
+            {
+                "status": "pending",
+                "keyword": keyword,
+                "product": product,
+                "max_count": max_count,
+                "current_page": 0,
+                "created_at": task.get("created_at") or _now_iso(),
+                "finished_at": None,
+                "error": None,
+                "risk_state": "none",
+                "quality_state": "complete",
+                "last_event_at": _now_iso(),
+                "resumed": False,
+                "fetch_replies": fetch_replies,
+                "max_replies_per_tweet": max_replies_per_tweet,
+                "reply_depth": reply_depth,
+                "crawl_strategy": crawl_strategy,
+                "source_task_id": source_task_id,
+                "is_recrawl": True,
+                "platform": platform,
+                "start_date": start_date,
+                "end_date": end_date,
+                "crawl_phase": "已加入调度队列，等待执行...",
+                "exclude_tweet_ids": exclude_tweet_ids or [],
+                "exclude_count": len(exclude_tweet_ids) if exclude_tweet_ids else 0,
+                # 保留历史结果，作为复爬提速的种子数据
+                "result_count": len(seed_tweets),
+                "preview_tweets": _make_preview(seed_tweets),
+            }
+        )
+        _touch(task)
+
+    send_signal(task_id, "run")
+    telemetry.record_event(
+        task_id,
+        "task_recrawl_prepared",
+        status="pending",
+        phase="已加入调度队列，等待执行...",
+        meta={
+            "keyword": keyword,
+            "platform": platform,
+            "exclude_count": len(exclude_tweet_ids or []),
+            "seed_count": len(seed_tweets),
+        },
+    )
+    _persist_force(task_id, full=False)
+    return True
+
+
 def restore_waiting_task(task_id: str, phase: str) -> bool:
     _ensure_db()
     with _tasks_lock:
@@ -629,6 +724,40 @@ def restore_waiting_task(task_id: str, phase: str) -> bool:
         _touch(task)
     _persist_force(task_id, full=False)
     return True
+
+
+def ensure_task_exclude_tweet_ids(task_id: str) -> list[str]:
+    """为复爬任务补齐排除 ID。
+
+    服务重启后任务摘要不会保留完整 exclude_tweet_ids，恢复任务时根据
+    source_task_id（若为空则回退当前 task_id）重建。
+    """
+    _ensure_db()
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task or not task.get("is_recrawl"):
+            return []
+        existing = list(task.get("exclude_tweet_ids") or [])
+        if existing:
+            return existing
+        source_task_id = str(task.get("source_task_id") or task_id).strip() or task_id
+
+    source_tweets = _get_task_result_snapshot(source_task_id, load=True)
+    exclude_ids = [
+        str(tweet.get("id") or tweet.get("mid") or "").strip()
+        for tweet in source_tweets
+        if str(tweet.get("id") or tweet.get("mid") or "").strip()
+    ]
+
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return exclude_ids
+        task["exclude_tweet_ids"] = exclude_ids
+        task["exclude_count"] = len(exclude_ids)
+        _touch(task)
+    _persist_force(task_id, full=False)
+    return exclude_ids
 
 
 def get_task(task_id: str) -> Optional[dict]:
@@ -759,6 +888,40 @@ def update_task_source_task_id(task_id: str, source_task_id: Optional[str]) -> N
         task["source_task_id"] = source_task_id
         _touch(task)
     _persist_force(task_id, full=False)
+
+
+def update_task_reply_collection_config(
+    task_id: str,
+    *,
+    fetch_replies: bool,
+    reply_depth: int,
+) -> bool:
+    from crawler import telemetry
+
+    normalized_depth = max(1, int(reply_depth))
+
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return False
+        task["fetch_replies"] = fetch_replies
+        task["reply_depth"] = normalized_depth
+        _touch(task)
+        status = task.get("status")
+        phase = task.get("crawl_phase", "")
+
+    telemetry.record_event(
+        task_id,
+        "task_reply_collection_updated",
+        status=status,
+        phase=phase,
+        meta={
+            "fetch_replies": fetch_replies,
+            "reply_depth": normalized_depth,
+        },
+    )
+    _persist_force(task_id, full=False)
+    return True
 
 
 def update_task_progress(task_id: str, current_page: int, tweets_so_far: list[dict]) -> None:

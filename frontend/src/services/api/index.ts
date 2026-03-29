@@ -174,6 +174,18 @@ export interface CommentBackfillFromTasksResponse {
     sources: CommentBackfillTaskSourceSummary[];
 }
 
+export type ReplyCollectionMode = "with_comments" | "without_comments";
+
+export interface BatchUpdateReplyCollectionResponse {
+    message: string;
+    mode: ReplyCollectionMode;
+    updated_task_ids: string[];
+    skipped: Array<{
+        task_id: string;
+        reason: string;
+    }>;
+}
+
 // 批量导入
 export interface BatchImportTask {
     keyword: string;
@@ -241,8 +253,11 @@ export interface CrawlerConfig {
     browser_block_images?: boolean;
     browser_stealth_enabled?: boolean;
     browser_linux_hardening?: boolean;
+    browser_pool_auto_close_idle?: boolean;
     crawler_dedup_enabled?: boolean;   // 跨任务推文去重
     weibo_auto_split_or_keywords?: boolean;
+    weibo_time_split_window_days?: number;
+    weibo_time_split_max_segments?: number;
     x_auto_time_split_enabled?: boolean;
     x_time_split_trigger_days?: number;
     x_time_split_window_days?: number;
@@ -718,21 +733,49 @@ export const api = {
                 skipped: string[];
                 failed: string[];
             }>("/api/v1/tasks/resume-all", { method: "POST" }),
+        batchPause: (taskIds: string[]) =>
+            fetchApi<{
+                message: string;
+                paused: string[];
+                stopped: string[];
+                skipped: string[];
+                failed: string[];
+            }>("/api/v1/tasks/batch-pause", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds }),
+            }),
+        batchResume: (taskIds: string[]) =>
+            fetchApi<{
+                message: string;
+                resumed: string[];
+                already_running: string[];
+                skipped: string[];
+                failed: string[];
+            }>("/api/v1/tasks/batch-resume", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds }),
+            }),
         recrawl: (taskId: string) =>
             fetchApi<{
                 message: string;
-                new_task_id: string;
+                task_id: string;
                 source_task_id: string;
                 exclude_count: number;
+                reused_existing: boolean;
             }>(`/api/v1/tasks/${taskId}/recrawl`, { method: "POST" }),
         recrawlBatch: (taskIds: string[]) =>
             fetchApi<{
                 message: string;
-                created: Array<{ source_task_id: string; new_task_id: string; exclude_count: number }>;
+                processed: Array<{ source_task_id: string; task_id: string; exclude_count: number; reused_existing: boolean }>;
                 skipped: Array<{ task_id: string; reason: string }>;
             }>("/api/v1/tasks/recrawl-batch", {
                 method: "POST",
                 body: JSON.stringify({ task_ids: taskIds }),
+            }),
+        batchUpdateReplyCollection: (taskIds: string[], mode: ReplyCollectionMode) =>
+            fetchApi<BatchUpdateReplyCollectionResponse>("/api/v1/tasks/reply-collection/batch-update", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds, mode }),
             }),
         mergePreview: (taskIds: string[]) =>
             fetchApi<MergePreviewResponse>("/api/v1/tasks/merge/preview", {

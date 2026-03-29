@@ -62,6 +62,7 @@ def _build_worker_payload(
         task_kind=task.get("task_kind", "search"),
         source_file_name=task.get("source_file_name"),
         source_task_id=task.get("source_task_id"),
+        is_recrawl=bool(task.get("is_recrawl", False)),
         exclude_tweet_ids=task.get("exclude_tweet_ids") or [],
     )
 
@@ -105,6 +106,7 @@ def run_search_task(
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
     source_task_id: Optional[str] = None,
+    is_recrawl: bool = False,
     account_id: Optional[str] = None,
     exclude_tweet_ids: Optional[list[str]] = None,
 ) -> None:
@@ -117,8 +119,12 @@ def run_search_task(
     logger.info(
         f"任务开始: task_id={task_id}, keyword='{keyword}', "
         f"strategy={crawl_strategy}, fetch_replies={fetch_replies}, "
-        f"resume={resume}, task_kind={task_kind}"
+        f"resume={resume}, task_kind={task_kind}, is_recrawl={is_recrawl}"
     )
+
+    effective_exclude_tweet_ids = list(exclude_tweet_ids or [])
+    if is_recrawl and not effective_exclude_tweet_ids:
+        effective_exclude_tweet_ids = task_manager.ensure_task_exclude_tweet_ids(task_id)
 
     # ── 浏览器池模式：并发数>1 时按 slot 分配浏览器实例 ──────────────────
     # 同一个 slot 内不同平台（X/微博）的任务共享同一个浏览器实例
@@ -128,14 +134,8 @@ def run_search_task(
     _slot_id: int | None = None
 
     if _pool_mode:
-        try:
-            pool_obj = get_browser_pool()
-            _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
-        except Exception as e:
-            logger.warning(f"[BrowserPool] 获取实例失败，回退到共享模式: {e}")
-            _pool_mode = False
-            _browser_instance = None
-            _slot_id = None
+        pool_obj = get_browser_pool()
+        _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
 
     if not _pool_mode:
         if force_new_browser:
@@ -144,7 +144,7 @@ def run_search_task(
 
     # 如果指定了账号，注入其 Cookie
     if account_id:
-        _inject_account_cookies(task_id, account_id)
+        _inject_account_cookies(task_id, account_id, browser_instance=_browser_instance)
 
     try:
         if task_kind == "comment_backfill":
@@ -207,6 +207,7 @@ def run_search_task(
                 fetch_replies=fetch_replies,
                 browser_instance=_browser_instance,
                 slot_id=_slot_id,
+                exclude_tweet_ids=effective_exclude_tweet_ids,
             )
             tweets = result.posts
             replies_fetched = sum(
@@ -239,6 +240,11 @@ def run_search_task(
             )
             final_status = "done"
         else:
+            seed_tweets = (
+                task_manager._get_task_result_snapshot(task_id, load=True)
+                if is_recrawl and effective_exclude_tweet_ids
+                else []
+            )
             result = search(
                 keyword=keyword,
                 max_count=max_count,
@@ -251,7 +257,9 @@ def run_search_task(
                 crawl_strategy=crawl_strategy,
                 browser_instance=_browser_instance,
                 slot_id=_slot_id,
-                exclude_ids=set(exclude_tweet_ids) if exclude_tweet_ids else None,
+                exclude_ids=set(effective_exclude_tweet_ids) if effective_exclude_tweet_ids else None,
+                recrawl_mode=is_recrawl,
+                seed_tweets=seed_tweets,
             )
             runtime_metrics = get_metrics(task_id)
             quality_state = "partial" if result.failed_replies else "complete"
@@ -398,11 +406,17 @@ def _run_weibo_task(
     fetch_replies: bool = False,
     browser_instance=None,
     slot_id: int | None = None,
+    exclude_tweet_ids: Optional[list[str]] = None,
 ):
     """微博爬虫任务入口（延迟导入，避免启动时加载 bs4）"""
     from crawler.weibo.searcher import search as weibo_search
 
     task_manager.update_task_phase(task_id, "正在初始化微博搜索...")
+    seed_tweets = (
+        task_manager._get_task_result_snapshot(task_id, load=True)
+        if exclude_tweet_ids
+        else []
+    )
     return weibo_search(
         keyword=keyword,
         max_count=max_count,
@@ -413,6 +427,8 @@ def _run_weibo_task(
         end_date=end_date,
         browser_instance=browser_instance,
         slot_id=slot_id,
+        exclude_ids=set(exclude_tweet_ids) if exclude_tweet_ids else None,
+        seed_posts=seed_tweets,
     )
 
 
@@ -428,7 +444,7 @@ def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:
 
 # ─── 账号注入与管理 ────────────────────────────────────────────────────────
 
-def _inject_account_cookies(task_id: str, account_id: str) -> None:
+def _inject_account_cookies(task_id: str, account_id: str, browser_instance=None) -> None:
     """
     为任务注入指定账号的 Cookie。
 
@@ -447,9 +463,10 @@ def _inject_account_cookies(task_id: str, account_id: str) -> None:
 
     logger.info(f"为任务 {task_id[:8]} 注入账号 {account.alias} 的 Cookie...")
 
+    tab = None
     try:
         from crawler.browser import get_new_tab
-        tab = get_new_tab()
+        tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
 
         # 直接将账号 Cookie 注入 tab，不经过全局文件
         injected = inject_account_cookies(tab, account)
@@ -464,6 +481,12 @@ def _inject_account_cookies(task_id: str, account_id: str) -> None:
     except Exception as e:
         # 注入异常是浏览器环境问题，不是账号问题，不标记无效
         logger.error(f"注入账号 Cookie 失败: {e}", exc_info=True)
+    finally:
+        if tab is not None:
+            try:
+                tab.close()
+            except Exception:
+                logger.debug("关闭账号 Cookie 注入临时 tab 失败", exc_info=True)
 
 
 def _handle_task_account_lifecycle(task_id: str) -> None:

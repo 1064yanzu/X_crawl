@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     browser_linux_hardening: bool = Field(
         default=True, description="Linux 无头模式下是否启用稳定性启动参数"
     )
+    browser_pool_auto_close_idle: bool = Field(
+        default=True, description="浏览器池中的空闲实例是否在任务结束后自动关闭"
+    )
     browser_linux_stale_cleanup_enabled: bool = Field(
         default=True, description="Linux 内存紧张时是否自动清理爬虫残留浏览器实例"
     )
@@ -251,23 +254,29 @@ class Settings(BaseSettings):
         default=200, description="微博单条顶层评论子评论最大翻页数（安全上限）"
     )
     weibo_auto_split_or_keywords: bool = Field(
-        default=False,
-        description="微博是否自动拆分简单 OR 关键词（关闭时按原样保留完整查询）",
+        default=True,
+        description="微博是否自动拆分简单 OR 关键词（默认开启，避免 OR 直传导致搜索不稳定）",
+    )
+    weibo_time_split_window_days: int = Field(
+        default=7, description="微博时间分段固定窗口天数"
+    )
+    weibo_time_split_max_segments: int = Field(
+        default=600, description="微博时间分段安全上限（超出时显式报错）"
     )
     x_auto_time_split_enabled: bool = Field(
         default=True, description="X 搜索是否自动启用时间分割"
     )
     x_time_split_trigger_days: int = Field(
-        default=7, description="X 搜索时间跨度达到多少天后触发自动时间分割"
+        default=30, description="X 搜索时间跨度达到多少天后触发自动时间分割"
     )
     x_time_split_window_days: int = Field(
-        default=7, description="X 限定抓取模式下每个时间窗覆盖天数"
+        default=7, description="X 固定时间窗口覆盖天数"
     )
     x_time_split_window_days_unlimited: int = Field(
         default=7, description="X 无上限抓取模式下每个时间窗覆盖天数"
     )
     x_time_split_max_segments: int = Field(
-        default=120, description="X 自动时间分割最大时间段数"
+        default=600, description="X 时间分段安全上限（超出时显式报错）"
     )
 
 

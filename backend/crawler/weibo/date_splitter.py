@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -17,21 +16,20 @@ def split_date_range(
     max_pages: int = 50,
     total_pages_first_query: int = 0,
     target_count: int = 100,
+    window_days: int = 7,
+    max_segments: int = 600,
 ) -> list[tuple[str, str]]:
     """
-    根据日期范围和预估的结果密度，将日期范围分割为多个子范围。
-
-    如果 total_pages_first_query 超过了 max_pages，
-    则按月或按天细分以突破结果数量限制。
-    如果 target_count == 0 (无限抓取) 且时间偏长，则强制使用更细的切片（周/天），
-    以防被微博的 50 页上限默默截断大量数据。
+    根据日期范围按固定窗口分割为多个子范围。
 
     Args:
         start_date: 开始日期（YYYY-MM-DD）
         end_date: 结束日期（YYYY-MM-DD）
-        max_pages: 单次查询最多页数（微博限制 50 页）
-        total_pages_first_query: 首次查询返回的总页数，用于判断是否需要分割
-        target_count: 用户期望抓取的总条数（0 表示无上限）
+        max_pages: 兼容保留参数
+        total_pages_first_query: 兼容保留参数
+        target_count: 兼容保留参数
+        window_days: 每个时间窗口覆盖天数
+        max_segments: 安全上限，超出时显式报错，不做静默截断
 
     Returns:
         日期范围列表 [(start, end), ...]，每个范围格式为 YYYY-MM-DD
@@ -46,87 +44,36 @@ def split_date_range(
     if start >= end:
         return [(start_date, end_date)]
 
+    step = max(1, int(window_days))
     total_days = (end - start).days
-
-    # 如果总天数很小（< 7 天），不分割
-    if total_days <= 7:
+    if total_days <= step:
         return [(start_date, end_date)]
 
-    # 针对无限抓取模式（max_count=0），为了防止错过海量数据，强制细分
-    if target_count == 0:
-        if total_days > 365:
-            # 超过一年，切分不要过于密集（比如按天或周会导致成百上千个切片），按月切分比较折中
-            return _split_by_month(start, end, months=1)
-        elif total_days > 60:
-            return _split_by_weeks(start, end, week_size=7)
-        else:
-            return _split_by_days(start, end, day_size=3)
-
-    # 根据首次查询的页数估算密度并决定分割粒度
-    if total_pages_first_query > 0 and total_pages_first_query >= max_pages:
-        # 数据密度高，需要细分
-        #   > 50 页且跨度大 → 按月分割
-        #   > 50 页且跨度较小 → 按周分割
-        if total_days > 60:
-            return _split_by_month(start, end)
-        elif total_days > 14:
-            return _split_by_weeks(start, end, week_size=7)
-        else:
-            return _split_by_days(start, end, day_size=3)
-    elif total_days > 365:
-        # > 1 年，即使首次未超页，也按3月分割以避免潜在截断
-        return _split_by_month(start, end, months=3)
-    elif total_days > 180:
-        # > 半年，按月分割
-        return _split_by_month(start, end)
-    else:
-        # 无需分割
-        return [(start_date, end_date)]
+    return _split_by_fixed_days(start, end, window_days=step, max_segments=max_segments)
 
 
-def _split_by_month(
-    start: datetime, end: datetime, months: int = 1
-) -> list[tuple[str, str]]:
-    """按月分割日期范围。"""
-    ranges = []
-    current = start
-    while current < end:
-        # 计算当月末尾
-        month_end = current
-        for _ in range(months):
-            # 跳到下个月的第一天
-            if month_end.month == 12:
-                month_end = month_end.replace(year=month_end.year + 1, month=1, day=1)
-            else:
-                month_end = month_end.replace(month=month_end.month + 1, day=1)
-        # 回退一天得到当月最后一天
-        month_end = month_end - timedelta(days=1)
-
-        range_end = min(month_end, end)
-        ranges.append((current.strftime("%Y-%m-%d"), range_end.strftime("%Y-%m-%d")))
-        current = range_end + timedelta(days=1)
-
-    logger.info(f"日期范围按月分割为 {len(ranges)} 个子范围")
-    return ranges
-
-
-def _split_by_weeks(
-    start: datetime, end: datetime, week_size: int = 7
+def _split_by_fixed_days(
+    start: datetime,
+    end: datetime,
+    *,
+    window_days: int,
+    max_segments: int,
 ) -> list[tuple[str, str]]:
     """按固定天数分割。"""
     ranges = []
     current = start
+    limit = max(1, int(max_segments))
+    required_segments = ((end - start).days + window_days - 1) // window_days
+    if required_segments > limit:
+        raise ValueError(
+            f"微博时间分段数量 {required_segments} 超过安全上限 {limit}，"
+            "请缩小时间范围或提高最大分段数"
+        )
+
     while current < end:
-        range_end = min(current + timedelta(days=week_size - 1), end)
+        range_end = min(current + timedelta(days=window_days - 1), end)
         ranges.append((current.strftime("%Y-%m-%d"), range_end.strftime("%Y-%m-%d")))
         current = range_end + timedelta(days=1)
 
-    logger.info(f"日期范围按 {week_size} 天分割为 {len(ranges)} 个子范围")
+    logger.info(f"日期范围按 {window_days} 天分割为 {len(ranges)} 个子范围")
     return ranges
-
-
-def _split_by_days(
-    start: datetime, end: datetime, day_size: int = 3
-) -> list[tuple[str, str]]:
-    """按几天一个范围分割。"""
-    return _split_by_weeks(start, end, week_size=day_size)

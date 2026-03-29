@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Copy, AlertTriangle, FileText, Loader2, X, CheckCircle2 } from "lucide-react";
+import { Copy, AlertTriangle, Loader2, X, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { api } from "@/services/api";
 import type { MergePreviewResponse } from "@/services/api";
@@ -24,16 +24,18 @@ export function MergeTasksDialog({
     const [loadingPreview, setLoadingPreview] = React.useState(false);
     const [merging, setMerging] = React.useState(false);
 
+    const taskIdsStr = taskIds.join(",");
+
     React.useEffect(() => {
-        if (open && taskIds.length > 0) {
+        if (open && taskIdsStr.length > 0) {
             setLoadingPreview(true);
             setPreview(null);
-            api.tasks.mergePreview(taskIds)
+            api.tasks.mergePreview(taskIdsStr.split(","))
                 .then(setPreview)
                 .catch((err) => onError(err instanceof Error ? err.message : String(err)))
                 .finally(() => setLoadingPreview(false));
         }
-    }, [open, taskIds]);
+    }, [open, taskIdsStr, onError]);
 
     const handleMerge = async () => {
         if (!preview || preview.groups.length === 0) return;
@@ -82,7 +84,7 @@ export function MergeTasksDialog({
                             <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 bg-muted/20 text-muted-foreground">
                                 <AlertTriangle className="h-6 w-6 opacity-80" />
                                 <p className="text-sm">所选任务中没有可合并的分组</p>
-                                <p className="text-xs opacity-80">需要至少 2 个「已完成/停止」状态且关键词相同的任务才可合并</p>
+                                <p className="text-xs opacity-80">需要至少 2 个「已完成/停止/失败」状态且关键词存在交集的任务才可合并</p>
                             </div>
                         ) : (
                             <div className="space-y-4">
@@ -92,7 +94,7 @@ export function MergeTasksDialog({
                                         <div className="text-sm leading-relaxed">
                                             <p className="font-semibold mb-1">合并操作不可逆</p>
                                             <ul className="list-disc pl-4 space-y-1">
-                                                <li>合并后保留最早创建的任务为主任务。</li>
+                                                <li>合并后优先保留关键词更完整的任务为主任务；同等情况下再保留更早创建的任务。</li>
                                                 <li>推文会根据 ID 自动去重。</li>
                                                 <li>被吸收的其他源任务及其抓取记录将会被永久删除。</li>
                                             </ul>
@@ -157,7 +159,7 @@ export function MergeTasksDialog({
                                 </div>
                                 {preview.non_mergeable_task_ids.length > 0 && (
                                     <p className="text-xs text-muted-foreground">
-                                        提示：另有 {preview.non_mergeable_task_ids.length} 个选中任务不满足合并条件（处于活跃状态或同关键词仅有一个任务）将被忽略。
+                                        提示：另有 {preview.non_mergeable_task_ids.length} 个选中任务不满足合并条件（处于活跃状态或没有可关联关键词）将被忽略。
                                     </p>
                                 )}
                             </div>

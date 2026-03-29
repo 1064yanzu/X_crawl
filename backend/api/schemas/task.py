@@ -172,3 +172,23 @@ class MergeResponse(BaseModel):
     total_deleted_tasks: int
     total_unique_tweets: int
     non_mergeable_task_ids: list[str]
+
+
+ReplyCollectionMode = Literal["with_comments", "without_comments"]
+
+
+class BatchUpdateReplyCollectionRequest(BaseModel):
+    task_ids: list[str] = Field(description="要批量切换采评模式的任务 ID 列表", min_length=1)
+    mode: ReplyCollectionMode = Field(description="目标采评模式")
+
+
+class BatchUpdateReplyCollectionSkippedItem(BaseModel):
+    task_id: str
+    reason: str
+
+
+class BatchUpdateReplyCollectionResponse(BaseModel):
+    message: str
+    mode: ReplyCollectionMode
+    updated_task_ids: list[str]
+    skipped: list[BatchUpdateReplyCollectionSkippedItem]

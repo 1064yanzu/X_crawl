@@ -1,5 +1,114 @@
 # Changelog
 
+## [2026-03-29] 环境配置：Git SSH 代理修复
+
+### 修复
+- 修复并清理本地 `~/.ssh/config`，配置通过本地代理 (127.0.0.1:7890) 连接 Github SSH 协议的规则，解决了国内网络由于默认 22 端口阻断导致 `git push` 时无限卡死（挂起）的问题。
+
+
+## [2026-03-29] 并发爬取串行化修复
+
+### 修复
+- `backend/crawler/browser_pool.py` 改为“独占 slot 优先、跨平台共享兜底”，避免 X 和微博任务在仍有容量时被强制挤进同一浏览器实例
+- 新增统一的浏览器池容量计算；开启 `crawler_cross_platform_concurrent` 时，浏览器池会按总任务数自动扩容，而不是只按单个平台并发数创建实例
+- `backend/api/routers/crawler_config.py` 与 `backend/api/routers/browser_pool.py` 统一按同一规则 resize 浏览器池，避免运行中把池子错误缩回去
+- `backend/api/services/crawl_service.py` 的 `_inject_account_cookies()` 现会在 `finally` 中关闭临时 tab，修复 Cookie 注入阶段的 tab 泄漏
+- `is_pool_mode_enabled()` 改为按实际可能并发任务数判断，修复 `crawler_max_concurrent_tasks=1` 但开启跨平台并发时仍误走共享浏览器链路的问题
+
+### 测试
+- 新增 / 扩展 `backend/tests/test_browser_pool.py`
+- 新增 `backend/tests/test_crawl_service.py`
+- 定向回归测试 `10 passed`
+
+### 文档
+- `docs/api.md` 已补充“单个平台并发上限”与“实际浏览器池上限”的语义说明
+- `docs/施工文档.md`、`docs/changelog.md` 已追加本次修复记录
+
+## [2026-03-29] 任务合并兼容历史空覆盖统计
+
+### 修复
+- 修复任务合并时 `time_coverage.*_ts_count = null` 导致后端 `500` 的问题
+- `backend/api/services/task_manager.py` 新增安全整型转换，历史脏数据在覆盖范围合并时按 `0` 处理，不再因 `int(None)` 中断
+- 新增 `backend/tests/test_merge_service.py` 回归用例，覆盖合并历史空统计字段场景
+
+### 文档
+- `docs/施工文档.md` 追加本次排查与修复记录
+- `docs/changelog.md` 追加本次兼容性修复记录
+
+## [2026-03-29] 复爬统一复用原任务
+
+### 修复
+- X 复爬不再创建新的派生任务，改为和微博一致，直接回源到最初任务并在原任务上重跑
+- 对历史“复爬任务”再次复爬时，会自动回到根任务，避免任务数继续翻倍
+- X 搜索链路新增 `seed_tweets` 支持，复爬时会保留旧结果并继续累加新结果，不会覆盖历史数据
+- 前端复爬提示同步改为“原任务重跑”，不再提示“已创建新任务”
+
+### 文档
+- `docs/api.md`、`docs/施工文档.md`、`docs/changelog.md` 已同步更新
+
+## [2026-03-29] X / 微博统一周分割
+
+### 修复
+- X 长跨度任务不再按月分割，统一改为固定 `7` 天窗口
+- X 复爬不再使用旧的 `3` 天专用窗口，普通任务与复爬任务统一按固定 `7` 天窗口处理
+- 微博长跨度时间范围不再按月拆段，统一改为固定 `7` 天窗口
+- `x_time_split_max_segments` 不再用于静默截断计划；超出安全上限时会显式失败
+- 新增微博时间分段配置：`weibo_time_split_window_days`、`weibo_time_split_max_segments`
+
+### 持久化与恢复
+- 任务摘要持久化新增 `is_recrawl` / `exclude_count`
+- 服务重启后恢复 X 复爬任务时，会根据 `source_task_id` 重建 `exclude_tweet_ids`
+- 修复恢复 / 继续任务后可能退回旧时间分片逻辑的问题
+
+### 前端与文档
+- 设置页改为展示“固定周窗口 / 安全上限”语义，不再出现“按月分割”旧描述
+- 创建任务提示文案同步改为固定 `7` 天窗口
+- `docs/api.md` 与 `docs/施工文档.md` 已同步更新
+
+### 验证
+- 后端相关测试：
+  - `backend/tests/test_time_splitters.py`
+  - `backend/tests/test_task_recrawl.py`
+  - `backend/tests/test_task_storage_paths.py`
+  - `backend/tests/test_weibo_resume_recovery.py`
+  - `backend/tests/test_weibo_segment_tab_reuse.py`
+  - 合计 `19 passed`
+- 前端定向 ESLint 通过
+- 额外补跑 `backend/tests/test_concurrent_crawl.py` 时发现 3 个与本次改动无关的历史失败，未在本次一并处理
+		
+## [2026-03-28] 浏览器池 profile 脏状态修复
+
+### 修复
+- 浏览器池实例启动前会强制重建自己的 `instance-*` profile 目录
+- 不再复用异常退出后残留的脏 profile / 锁文件 / 偏好文件
+- 降低 Chrome 启动时弹出“打开您的个人资料时出了点问题”的概率
+
+## [2026-03-28] 清理历史微博复爬派生任务
+
+### 运维处理
+- 备份数据库为 `backend/tasks.pre-weibo-recrawl-cleanup-20260328T232531.db`
+- 删除 `45` 条历史错误生成的微博复爬派生任务
+- 清理 `5` 个对应的微博 checkpoint 文件
+- 对仍存在的 `17` 个微博原任务重新发起复爬
+- `3` 个派生任务因源任务已不存在，未能回源复爬
+
+## [2026-03-28] 微博复爬复用原任务
+
+### 修复
+- 微博复爬不再创建新任务，改为直接复用原 `task_id` 重跑
+- 保留原任务已采集结果，并作为本次复爬的提速种子和去重基线
+- `backend/crawler/weibo/searcher.py` 新增 `seed_posts` 支持，最终结果会合并“旧结果 + 新结果”
+- X 复爬仍保持新建增量任务，避免破坏现有语义
+- 前端复爬提示和 `docs/api.md` 已同步更新
+
+## [2026-03-28] 任务覆盖时间一次性回填
+
+### 修复
+- 撤回前端覆盖时间兜底逻辑，恢复为仅展示真实 `time_coverage`
+- 备份主任务库为 `backend/tasks.coverage-backup-20260328T223514.db`
+- 将 `backend/tasks.db` 里现有 `63` 条任务的 `time_coverage_json` 全量统一改为 `2022 年 6 月 - 2026 年 3 月`
+- 抽样核验 `combined_start_at / combined_end_at` 已全部生效
+
 ## [2026-03-28] 任务列表视图密度优化
 
 ### 优化
@@ -412,3 +521,48 @@
 - 已停止占用 `3721` 端口的前端进程
 - 已停止占用 `8000` 端口的后端进程
 - 复查确认两个端口当前均已释放
+
+## 2026-03-28
+
+### 修复
+- 修复任务合并过度：`merge_service.py` 现在仅忽略关键词大小写与多余空格，并把 `product / task_kind` 纳入分组键，避免不同时间范围或不同搜索类型的任务被错误合并。
+- 新增 `scripts/restore_tasks_from_raw_responses.py`，支持从 `backend/raw_responses/` + `backend/checkpoints/` 恢复被误删的 X 任务，并在写库前自动备份 `backend/tasks.db`。
+- 新增回归测试 `backend/tests/test_merge_service.py`，覆盖“不同 since/until 不合并”的关键场景。
+
+### 运维
+- 已根据本地保存的原始响应恢复缺失的 X 任务到 `backend/tasks.db`。
+- 若后端服务正在运行，需要重启一次后端，以重新加载恢复后的任务数据。
+
+### 调整
+- 任务合并规则已改为“同平台 + 同任务类型下，只要关键词核心 token 有交集即可合并”；关键词更少的任务会优先并入关键词更完整的任务。
+- 微博任务现已支持增量复爬，复爬时会自动排除原任务中已有的帖子 ID。
+
+### 修复
+- 微博复爬不再把展示用的 `since:/until:` 文本直接带回搜索关键词；时间范围改为继续走 `start_date/end_date`。
+- 微博默认开启顶层 `OR` 自动拆分，降低 `A OR B` 直传微博搜索导致结果不稳定的风险。
+- 复爬一个“复爬任务”时会自动回到最初源任务，避免链式复爬。
+
+## 2026-03-28
+
+### 修复
+- 浏览器池现在会在任务结束后自动关闭空闲实例，避免桌面长期堆积多个空白 Chromium 窗口。
+- 缩减并发上限时，会自动回收多余的空闲浏览器 slot，不影响正在运行的任务。
+- 新增 `browser_pool_auto_close_idle` 配置，并在设置页提供“空闲实例自动关闭”开关。
+- 新增回归测试 `backend/tests/test_browser_pool.py`，覆盖空闲实例回收与缩容回收场景。
+- Chrome 有界面模式下不再携带 `AutomationControlled` 启动参数，减少每个新窗口顶部的警告提示。
+
+### 新增
+- 任务中心新增“批量改采评模式”：可把符合条件的 X 历史帖子采集任务，批量切到“采集评论（二级评论）”或切回“不采集评论”。
+- 后端新增 `POST /api/v1/tasks/reply-collection/batch-update`，统一校验任务类型 / 平台 / 状态，并批量更新 `fetch_replies` 与 `reply_depth`。
+- 前端新增 `BatchReplyCollectionDialog` 弹窗与批量入口，支持在任务列表内直接完成双向切换与结果反馈。
+- 文档已同步更新：`docs/api.md`、`docs/施工文档.md`。
+
+### 调整
+- 批量改采评模式现已支持微博历史帖子任务，不再仅限 X。
+- 相关文案已改为通用“采集评论 / 不采集评论”；其中 X 开启后仍按二级评论模式执行。
+
+## 2026-03-29
+
+### 运维
+- 已检查并清理本地 `8000` 端口对应的后端进程；操作完成后二次校验确认该端口当前无占用。
+- 已同步追加施工记录到 `docs/施工文档.md`。

@@ -14,6 +14,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TaskBatchActions } from "@/components/features/tasks/TaskBatchActions";
 import { BatchExportDialog } from "@/components/features/tasks/BatchExportDialog";
+import { BatchReplyCollectionDialog } from "@/components/features/tasks/BatchReplyCollectionDialog";
 import { MergeTasksDialog } from "@/components/features/tasks/MergeTasksDialog";
 import { TaskFiltersBar } from "@/components/features/tasks/TaskFiltersBar";
 import { TaskListCard } from "@/components/features/tasks/TaskListCard";
@@ -23,7 +24,7 @@ import { useTasksQuery } from "@/hooks/useTasks";
 import { useTaskListState } from "@/hooks/useTaskListState";
 import { useToast } from "@/components/ui/toast";
 import { getPlatformMeta } from "@/lib/platformRegistry";
-import { canCreateCommentBackfillFromTask, canRecrawlTask } from "@/lib/task-ui";
+import { canBatchUpdateReplyCollection, canCreateCommentBackfillFromTask, canRecrawlTask } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 
 export default function TasksPage() {
@@ -35,10 +36,11 @@ export default function TasksPage() {
     const [backfillingId, setBackfillingId] = React.useState<string | null>(null);
     const [deleteId, setDeleteId] = React.useState<string | null>(null);
     const [recrawlingId, setRecrawlingId] = React.useState<string | null>(null);
-    const [batchAction, setBatchAction] = React.useState<"resume" | "resumeAll" | "pauseAll" | "backfill" | "recrawl" | "delete" | "export" | null>(null);
+    const [batchAction, setBatchAction] = React.useState<"resume" | "resumeAll" | "pauseAll" | "batchPause" | "backfill" | "recrawl" | "delete" | "export" | "merge" | null>(null);
     const [confirmBatchDelete, setConfirmBatchDelete] = React.useState(false);
     const [showBatchExport, setShowBatchExport] = React.useState(false);
     const [showMergeTasks, setShowMergeTasks] = React.useState(false);
+    const [showBatchReplyCollection, setShowBatchReplyCollection] = React.useState(false);
 
     const {
         searchInputRef,
@@ -93,11 +95,23 @@ export default function TasksPage() {
     );
     const recrawlableSelectedCount = recrawlableSelectedTasks.length;
 
+    const pausableSelectedTasks = React.useMemo(
+        () => selectedTasks.filter((task) => task.status === "running" || task.status === "pending"),
+        [selectedTasks],
+    );
+    const pausableSelectedCount = pausableSelectedTasks.length;
+
     const mergeableSelectedTasks = React.useMemo(
         () => selectedTasks.filter((task) => ["done", "stopped", "failed"].includes(task.status)),
         [selectedTasks],
     );
     const mergeableSelectedCount = mergeableSelectedTasks.length;
+
+    const replyCollectionEditableSelectedTasks = React.useMemo(
+        () => selectedTasks.filter((task) => canBatchUpdateReplyCollection(task)),
+        [selectedTasks],
+    );
+    const replyCollectionEditableCount = replyCollectionEditableSelectedTasks.length;
 
     const handleDelete = async (taskId: string) => {
         try {
@@ -276,9 +290,9 @@ export default function TasksPage() {
         setBatchAction("resume");
 
         try {
-            const results = await Promise.allSettled(ids.map((taskId) => api.tasks.resume(taskId)));
-            const successCount = results.filter((result) => result.status === "fulfilled").length;
-            const failedCount = results.length - successCount;
+            const result = await api.tasks.batchResume(ids);
+            const successCount = result.resumed.length;
+            const failedCount = result.failed.length;
 
             if (successCount > 0) {
                 clearSelection();
@@ -302,21 +316,62 @@ export default function TasksPage() {
         }
     };
 
+    const handleBatchPause = async () => {
+        if (pausableSelectedCount === 0) {
+            push({ type: "info", title: "选中的任务里没有可暂停的项目" });
+            return;
+        }
+
+        const ids = pausableSelectedTasks.map((task) => task.task_id);
+        setBatchAction("batchPause");
+
+        try {
+            const result = await api.tasks.batchPause(ids);
+            const pausedCount = result.paused.length;
+            const stoppedCount = result.stopped.length;
+            const totalAffected = pausedCount + stoppedCount;
+            const failedCount = result.failed.length;
+
+            if (totalAffected > 0) {
+                clearSelection();
+                await refetch();
+            }
+
+            if (failedCount === 0) {
+                const parts: string[] = [];
+                if (pausedCount > 0) parts.push(`${pausedCount} 个运行中任务已暂停`);
+                if (stoppedCount > 0) parts.push(`${stoppedCount} 个等待中任务已停止`);
+                push({ type: "success", title: "批量暂停完成", description: parts.join("，") || undefined });
+            } else {
+                push({
+                    type: totalAffected > 0 ? "info" : "error",
+                    title: totalAffected > 0 ? `已暂停 ${totalAffected} 个任务` : "批量暂停失败",
+                    description: `${failedCount} 个任务暂停失败，请稍后重试。`,
+                });
+            }
+        } catch (err) {
+            console.error(err);
+            push({ type: "error", title: "批量暂停失败", description: err instanceof Error ? err.message : String(err) });
+        } finally {
+            setBatchAction(null);
+        }
+    };
+
     const handleRecrawl = async (taskId: string) => {
         setRecrawlingId(taskId);
         try {
             const result = await api.tasks.recrawl(taskId);
             push({
                 type: "success",
-                title: "增量复爬任务已创建",
-                description: `排除 ${result.exclude_count} 条已有推文，新任务 ID: ${result.new_task_id.slice(0, 8)}`,
+                title: "复爬已开始",
+                description: `已在原任务上重跑，保留 ${result.exclude_count} 条历史结果作为提速种子。`,
             });
             await refetch();
         } catch (err) {
             console.error(err);
             push({
                 type: "error",
-                title: "复爬任务创建失败",
+                title: "复爬任务启动失败",
                 description: err instanceof Error ? err.message : String(err),
             });
         } finally {
@@ -335,20 +390,23 @@ export default function TasksPage() {
 
         try {
             const result = await api.tasks.recrawlBatch(ids);
-            const createdCount = result.created.length;
+            const processedCount = result.processed.length;
+            const reusedCount = result.processed.filter((item) => item.reused_existing).length;
             const skippedCount = result.skipped.length;
 
-            if (createdCount > 0) {
+            if (processedCount > 0) {
                 clearSelection();
                 await refetch();
             }
 
             if (skippedCount === 0) {
-                push({ type: "success", title: `已创建 ${createdCount} 个复爬任务` });
+                const parts = [];
+                if (reusedCount > 0) parts.push(`原任务重跑 ${reusedCount} 个`);
+                push({ type: "success", title: "批量复爬已启动", description: parts.join("，") || undefined });
             } else {
                 push({
-                    type: createdCount > 0 ? "info" : "error",
-                    title: createdCount > 0 ? `已创建 ${createdCount} 个复爬任务` : "批量复爬失败",
+                    type: processedCount > 0 ? "info" : "error",
+                    title: processedCount > 0 ? "批量复爬部分完成" : "批量复爬失败",
                     description: `${skippedCount} 个任务不符合条件被跳过。`,
                 });
             }
@@ -443,9 +501,11 @@ export default function TasksPage() {
                     selectedCount={selectedCount}
                     exportableSelectedCount={exportableSelectedCount}
                     resumableSelectedCount={resumableSelectedCount}
+                    pausableSelectedCount={pausableSelectedCount}
                     backfillableSelectedCount={backfillableSelectedCount}
                     recrawlableSelectedCount={recrawlableSelectedCount}
                     mergeableSelectedCount={mergeableSelectedCount}
+                    replyCollectionEditableCount={replyCollectionEditableCount}
                     hasActiveTasks={activeCount > 0}
                     allVisibleSelected={allVisibleSelected}
                     busyAction={batchAction}
@@ -454,10 +514,12 @@ export default function TasksPage() {
                     onPauseAll={() => void handlePauseAll()}
                     onResumeAll={() => void handleResumeAll()}
                     onBatchResume={() => void handleBatchResume()}
+                    onBatchPause={() => void handleBatchPause()}
                     onBatchCommentBackfill={() => void handleCreateCommentBackfill(backfillableSelectedTasks.map((task) => task.task_id))}
                     onBatchRecrawl={() => void handleBatchRecrawl()}
                     onBatchExport={() => setShowBatchExport(true)}
                     onBatchDelete={() => setConfirmBatchDelete(true)}
+                    onBatchReplyCollection={() => setShowBatchReplyCollection(true)}
                     onBatchMerge={() => setShowMergeTasks(true)}
                 />
 
@@ -568,6 +630,21 @@ export default function TasksPage() {
                 onClose={() => setShowBatchExport(false)}
                 onSuccess={(msg) => push({ type: "success", title: msg })}
                 onError={(msg) => push({ type: "error", title: "批量导出失败", description: msg })}
+            />
+
+            <BatchReplyCollectionDialog
+                open={showBatchReplyCollection}
+                tasks={selectedTasks}
+                onClose={() => setShowBatchReplyCollection(false)}
+                onSuccess={(message) => {
+                    setShowBatchReplyCollection(false);
+                    clearSelection();
+                    void refetch();
+                    push({ type: "success", title: "采评模式已更新", description: message });
+                }}
+                onError={(message) => {
+                    push({ type: "error", title: "批量修改采评模式失败", description: message });
+                }}
             />
 
             <MergeTasksDialog

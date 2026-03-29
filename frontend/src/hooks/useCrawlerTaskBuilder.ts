@@ -46,10 +46,7 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
         const days = Math.floor((end.getTime() - start.getTime()) / 86400000);
         if (days < splitTriggerDays) return null;
-        if (days >= 90) {
-            return `检测到 ${days} 天跨度，将自动按月拆分任务以提升稳定性。`;
-        }
-        return `检测到 ${days} 天跨度，将按时间窗口自动切片，提升覆盖率与稳定性。`;
+        return `检测到 ${days} 天跨度，将自动按固定 7 天窗口切片，提升覆盖率与恢复稳定性。`;
     }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays]);
 
     const buildPayload = React.useCallback((): SearchRequest => {

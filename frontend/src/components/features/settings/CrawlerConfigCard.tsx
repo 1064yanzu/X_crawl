@@ -57,9 +57,11 @@ export function CrawlerConfigCard() {
                             <ConfigRow label="检查点刷新间隔" description="DFS 回复阶段检查点的最长刷新间隔。" value={config.crawler_checkpoint_flush_interval_sec ?? 4} onChange={set("crawler_checkpoint_flush_interval_sec")} min={0.2} max={60} />
                             <ConfigRow label="检查点批次阈值" description="累计多少条回复后强制刷新一次检查点。" value={config.crawler_checkpoint_reply_batch ?? 3} onChange={set("crawler_checkpoint_reply_batch")} min={1} max={200} step={1} unit="条" />
                             <ConfigRow label="X 时间分割触发阈值" description="时间跨度达到该天数后自动拆分搜索窗口。" value={config.x_time_split_trigger_days ?? 30} onChange={set("x_time_split_trigger_days")} min={1} max={3650} step={1} unit="天" />
-                            <ConfigRow label="X 限定抓取窗口" description="跨度小于 90 天时的每段天数。" value={config.x_time_split_window_days ?? 14} onChange={set("x_time_split_window_days")} min={1} max={90} step={1} unit="天" />
-                            <ConfigRow label="X 无限量窗口" description="无限量抓取时的每段天数。" value={config.x_time_split_window_days_unlimited ?? 7} onChange={set("x_time_split_window_days_unlimited")} min={1} max={30} step={1} unit="天" />
-                            <ConfigRow label="X 最大分段数" description="自动时间切片允许生成的最大分段数。" value={config.x_time_split_max_segments ?? 120} onChange={set("x_time_split_max_segments")} min={1} max={500} step={1} unit="段" />
+                            <ConfigRow label="微博固定周窗口" description="微博带时间范围任务统一按固定 7 天窗口切分。" value={config.weibo_time_split_window_days ?? 7} onChange={set("weibo_time_split_window_days")} min={1} max={30} step={1} unit="天" />
+                            <ConfigRow label="微博最大分段数" description="微博时间分段安全上限；超出时会显式失败，不会静默截断。" value={config.weibo_time_split_max_segments ?? 600} onChange={set("weibo_time_split_max_segments")} min={1} max={2000} step={1} unit="段" />
+                            <ConfigRow label="X 固定周窗口" description="X 带时间范围任务统一按固定 7 天窗口切分。" value={config.x_time_split_window_days ?? 7} onChange={set("x_time_split_window_days")} min={1} max={30} step={1} unit="天" />
+                            <ConfigRow label="X 无限量窗口" description="无限量抓取时使用的固定时间窗口天数。" value={config.x_time_split_window_days_unlimited ?? 7} onChange={set("x_time_split_window_days_unlimited")} min={1} max={30} step={1} unit="天" />
+                            <ConfigRow label="X 最大分段数" description="X 时间分段安全上限；超出时会显式失败，不会静默截断。" value={config.x_time_split_max_segments ?? 600} onChange={set("x_time_split_max_segments")} min={1} max={2000} step={1} unit="段" />
                         </div>
 
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -83,7 +85,7 @@ export function CrawlerConfigCard() {
                             />
                             <ToggleField
                                 label="X 自动时间分割"
-                                description="跨度较大时自动拆分搜索窗口，提高稳定性。"
+                                description="命中触发阈值后按固定 7 天窗口拆分搜索范围，提高覆盖率与恢复一致性。"
                                 checked={Boolean(config.x_auto_time_split_enabled)}
                                 onChange={(checked) => setConfig((prev) => ({ ...prev, x_auto_time_split_enabled: checked }))}
                             />

@@ -14,6 +14,7 @@ export function EngineConfigCard() {
     const [preferUserDataDir, setPreferUserDataDir] = React.useState(true);
     const [stealth, setStealth] = React.useState(true);
     const [linuxHardening, setLinuxHardening] = React.useState(true);
+    const [autoCloseIdleBrowsers, setAutoCloseIdleBrowsers] = React.useState(true);
     const [pushIntervalMs, setPushIntervalMs] = React.useState(800);
     const [autoThrottle, setAutoThrottle] = React.useState(true);
     const [dynamicConcurrency, setDynamicConcurrency] = React.useState(true);
@@ -32,6 +33,7 @@ export function EngineConfigCard() {
                 setPreferUserDataDir(Boolean(data.browser_prefer_user_data_dir ?? true));
                 setStealth(Boolean(data.browser_stealth_enabled ?? true));
                 setLinuxHardening(Boolean(data.browser_linux_hardening ?? true));
+                setAutoCloseIdleBrowsers(Boolean(data.browser_pool_auto_close_idle ?? true));
                 setPushIntervalMs(Number(data.crawler_live_push_interval_ms ?? 800));
                 setAutoThrottle(Boolean(data.crawler_auto_throttle_enabled ?? true));
                 setDynamicConcurrency(Boolean(data.crawler_dynamic_concurrency_enabled ?? true));
@@ -54,6 +56,7 @@ export function EngineConfigCard() {
                 browser_prefer_user_data_dir: preferUserDataDir,
                 browser_stealth_enabled: stealth,
                 browser_linux_hardening: linuxHardening,
+                browser_pool_auto_close_idle: autoCloseIdleBrowsers,
                 crawler_live_push_interval_ms: Math.min(5000, Math.max(200, pushIntervalMs)),
                 crawler_auto_throttle_enabled: autoThrottle,
                 crawler_dynamic_concurrency_enabled: dynamicConcurrency,
@@ -89,6 +92,7 @@ export function EngineConfigCard() {
                             <ToggleField label="优先复用用户目录" description="启动新浏览器时优先使用真实用户数据目录；若目录正被占用，会自动回退到隔离 Profile。" checked={preferUserDataDir} onChange={setPreferUserDataDir} disabled={saving} />
                             <ToggleField label="Stealth 伪装" description="增强浏览器伪装配置，优先提高平台兼容性。" checked={stealth} onChange={setStealth} disabled={saving} />
                             <ToggleField label="Linux 加固" description="针对 Linux 服务器启用更稳妥的浏览器运行参数。" checked={linuxHardening} onChange={setLinuxHardening} disabled={saving} />
+                            <ToggleField label="空闲实例自动关闭" description="任务结束后自动关闭空闲浏览器实例，避免堆积多个可见窗口。" checked={autoCloseIdleBrowsers} onChange={setAutoCloseIdleBrowsers} disabled={saving} />
                             <ToggleField label="资源压力自动节流" description="内存或 CPU 逼近阈值时自动放慢翻页节奏。" checked={autoThrottle} onChange={setAutoThrottle} disabled={saving} />
                             <ToggleField label="动态并发收敛" description="资源压力高时自动降低有效并发上限。" checked={dynamicConcurrency} onChange={setDynamicConcurrency} disabled={saving} />
                         </div>

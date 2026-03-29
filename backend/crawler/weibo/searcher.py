@@ -65,6 +65,19 @@ def _merge_posts_by_id(existing: list[dict], incoming: list[dict]) -> list[dict]
     return merged
 
 
+def _filter_posts_by_exclude_ids(posts: list, exclude_ids: Optional[set[str]] = None) -> list:
+    if not exclude_ids:
+        return posts
+
+    filtered = []
+    for post in posts:
+        post_id = str(getattr(post, "mid", "") or getattr(post, "id", "") or "").strip()
+        if post_id and post_id in exclude_ids:
+            continue
+        filtered.append(post)
+    return filtered
+
+
 def _check_anti_crawl(tab) -> Optional[str]:
     """
     检测页面是否触发了反爬拦截。
@@ -251,6 +264,8 @@ def search(
     _query_plan_resolved: bool = False,
     browser_instance=None,
     slot_id: Optional[int] = None,
+    exclude_ids: Optional[set[str]] = None,
+    seed_posts: Optional[list[dict]] = None,
 ) -> WeiboSearchResult:
     """
     微博关键词搜索主入口。
@@ -288,8 +303,13 @@ def search(
                         f"微博关键词包含 OR，已拆分为 {len(query_plan.variants)} 个子查询并自动去重..."
                     )
 
-                merged_posts: list[dict] = []
+                merged_posts: list[dict] = list(seed_posts or [])
+                seed_count = len(merged_posts)
                 seen_post_ids: set[str] = set()
+                for post in merged_posts:
+                    post_id = str(post.get("id") or post.get("mid") or "").strip()
+                    if post_id:
+                        seen_post_ids.add(post_id)
                 try:
                     for variant_idx, variant_keyword in enumerate(query_plan.variants):
                         check_signal(task_id)
@@ -298,7 +318,8 @@ def search(
                                 task_id,
                                 f"正在执行微博子查询 {variant_idx + 1}/{len(query_plan.variants)}: {variant_keyword}"
                             )
-                        remaining = max(0, max_count - len(merged_posts)) if max_count > 0 else 0
+                        existing_new_count = max(0, len(merged_posts) - seed_count)
+                        remaining = max(0, max_count - existing_new_count) if max_count > 0 else 0
                         if max_count > 0 and remaining <= 0:
                             break
 
@@ -315,6 +336,7 @@ def search(
                             _query_plan_resolved=True,
                             browser_instance=browser_instance,
                             slot_id=slot_id,
+                            exclude_ids=exclude_ids,
                         )
                         for post in variant_result.posts:
                             post_id = str(post.get("id") or post.get("mid") or "").strip()
@@ -358,12 +380,23 @@ def search(
                 )
 
         start_page: int = checkpoint_page(checkpoint, 1)
-        all_posts_dicts: list[dict] = checkpoint_posts(checkpoint)
+        seed_posts = seed_posts or []
+        seed_count = len(seed_posts) if _parent_accumulated is None else 0
+        all_posts_dicts: list[dict] = _merge_posts_by_id(seed_posts, checkpoint_posts(checkpoint))
         resumed = bool(checkpoint)
         ckpt_mode = checkpoint_mode(checkpoint)
 
         max_pages: int = settings.weibo_max_pages
         page_interval: float = settings.weibo_search_page_interval
+
+        # ── 评论 Pipeline 初始化（fetch_comments=True 时启用双 Tab 并发）──
+        _comment_pipeline = None
+        if fetch_comments:
+            from crawler.pipeline import WeiboCommentPipeline
+            _comment_pipeline = WeiboCommentPipeline(
+                task_id=task_id,
+                browser_instance=browser_instance,
+            )
 
         # ── 日期范围分割（突破 50 页限制）────────────────────────
         # 注意：如果 _parent_accumulated 不为 None，说明当前调用已经是父级分段的子段，
@@ -378,6 +411,8 @@ def search(
                     end_date,
                     max_pages=max_pages,
                     target_count=max_count,
+                    window_days=int(getattr(settings, "weibo_time_split_window_days", 7)),
+                    max_segments=int(getattr(settings, "weibo_time_split_max_segments", 600)),
                 )
 
             should_use_date_split = len(date_ranges) > 1 and (
@@ -404,7 +439,7 @@ def search(
                         task_id,
                         f"日期范围已拆分为 {len(date_ranges)} 段，开始分段搜索..."
                     )
-                all_results: list[dict] = checkpoint_posts(checkpoint)
+                all_results: list[dict] = _merge_posts_by_id(seed_posts, checkpoint_posts(checkpoint))
                 start_segment_index = checkpoint_next_segment_index(checkpoint) if ckpt_mode == "date_split" else 0
                 if all_results and task_id:
                     update_preview_tweets(
@@ -423,7 +458,8 @@ def search(
                                 f"{seg_start} ~ {seg_end}"
                             )
                         # 递归调用自身，每段单独搜索
-                        remaining = max(0, max_count - len(all_results)) if max_count > 0 else 0
+                        existing_new_count = max(0, len(all_results) - seed_count)
+                        remaining = max(0, max_count - existing_new_count) if max_count > 0 else 0
                         if max_count > 0 and remaining <= 0:
                             break
                         seg_result = search(
@@ -439,6 +475,7 @@ def search(
                             _session_ready=True,
                             browser_instance=browser_instance,
                             slot_id=slot_id,
+                            exclude_ids=exclude_ids,
                         )
                         all_results = _merge_posts_by_id(all_results, seg_result.posts)
                         # 实时推送合并后的预览
@@ -549,6 +586,7 @@ def search(
                 # ── 解析结果 ─────────────────────
                 try:
                     posts, has_next, total_pages = parse_search_page(html)
+                    posts = _filter_posts_by_exclude_ids(posts, exclude_ids)
                 except Exception as e:
                     logger.error(f"解析微博搜索结果失败 page={page}: {e}")
                     break
@@ -565,47 +603,60 @@ def search(
                     logger.info(f"微博搜索第 {page} 页无结果，终止")
                     break
 
-                need_comments = fetch_comments and any(
-                    p.comments_count > 0 for p in posts
-                )
-                for post_idx, post in enumerate(posts):
-                    # 按需抓取评论
-                    if fetch_comments and post.comments_count > 0:
-                        if task_id:
-                            update_task_phase(
-                                task_id,
-                                f"正在抓取第 {page} 页第 {post_idx + 1}/{len(posts)} 条微博的评论..."
-                            )
-                        try:
-                            comment_result = do_fetch_comments(
-                                post.mid,
-                                author_uid=post.author_id,
-                                post_url=post.url,
-                                post_comment_count=post.comments_count,
-                                max_comments=settings.weibo_max_comments_per_post,
-                                page_interval=settings.weibo_comment_page_interval,
-                                task_id=task_id,
-                                browser_instance=browser_instance,
-                            )
-                            post.comments = comment_result.comments
-                            from .comment_stats import build_comment_stats, collect_comment_tree_stats
+                if fetch_comments and _comment_pipeline is not None:
+                    # ── Pipeline 模式：搜索 tab 不停，评论在 comment_tab 并发抓取 ──
+                    if not _comment_pipeline._comment_thread:
+                        _comment_pipeline.start()
 
-                            tree_stats = collect_comment_tree_stats(comment_result.comments)
-                            post.comment_stats = build_comment_stats(
-                                post_comment_count=post.comments_count,
-                                api_claimed_total=comment_result.api_claimed_total,
-                                fetched_total_count=tree_stats.total_count,
-                                fetched_top_level_count=tree_stats.top_level_count,
-                                max_depth=tree_stats.max_depth,
-                                sub_comment_completion_status=comment_result.sub_comment_completion_status,
-                                truncated_reason=comment_result.truncated_reason,
-                                pages_fetched=comment_result.pages_fetched,
-                            )
-                        except StopSignal:
-                            raise  # 停止信号向上传播
-                        except Exception as e:
-                            logger.warning(f"抓取评论失败 mid={post.mid}: {e}")
-                    all_posts_dicts.append(post.to_dict())
+                    for post in posts:
+                        _comment_pipeline.put_batch([post])
+                        # 记录帖子（无评论版本先放进 all_posts_dicts，最后再替换）
+                        all_posts_dicts.append(post.to_dict())
+
+                    # 检查 comment worker 是否发生致命错误
+                    pipeline_err = _comment_pipeline.get_error()
+                    if pipeline_err is not None:
+                        raise pipeline_err
+                else:
+                    # ── 原同步模式（fetch_comments=False 或无 pipeline 时）────────
+                    for post_idx, post in enumerate(posts):
+                        # 按需抓取评论
+                        if fetch_comments and post.comments_count > 0:
+                            if task_id:
+                                update_task_phase(
+                                    task_id,
+                                    f"正在抓取第 {page} 页第 {post_idx + 1}/{len(posts)} 条微博的评论..."
+                                )
+                            try:
+                                comment_result = do_fetch_comments(
+                                    post.mid,
+                                    author_uid=post.author_id,
+                                    post_url=post.url,
+                                    post_comment_count=post.comments_count,
+                                    max_comments=settings.weibo_max_comments_per_post,
+                                    page_interval=settings.weibo_comment_page_interval,
+                                    task_id=task_id,
+                                    browser_instance=browser_instance,
+                                )
+                                post.comments = comment_result.comments
+                                from .comment_stats import build_comment_stats, collect_comment_tree_stats
+
+                                tree_stats = collect_comment_tree_stats(comment_result.comments)
+                                post.comment_stats = build_comment_stats(
+                                    post_comment_count=post.comments_count,
+                                    api_claimed_total=comment_result.api_claimed_total,
+                                    fetched_total_count=tree_stats.total_count,
+                                    fetched_top_level_count=tree_stats.top_level_count,
+                                    max_depth=tree_stats.max_depth,
+                                    sub_comment_completion_status=comment_result.sub_comment_completion_status,
+                                    truncated_reason=comment_result.truncated_reason,
+                                    pages_fetched=comment_result.pages_fetched,
+                                )
+                            except StopSignal:
+                                raise  # 停止信号向上传播
+                            except Exception as e:
+                                logger.warning(f"抓取评论失败 mid={post.mid}: {e}")
+                        all_posts_dicts.append(post.to_dict())
 
                 # 评论抓取使用独立标签页，不影响搜索 tab，无需导航回搜索域名
 
@@ -641,7 +692,7 @@ def search(
                     )
 
                 # 检查是否达到 max_count
-                if max_count > 0 and len(all_posts_dicts) >= max_count:
+                if max_count > 0 and max(0, len(all_posts_dicts) - seed_count) >= max_count:
                     break
 
                 if not has_next:
@@ -653,6 +704,23 @@ def search(
             logger.info(f"收到停止信号，微博搜索终止 task_id={task_id}")
 
     finally:
+        # ── Pipeline 收尾：等待 comment worker 耗尽队列 ───────────────
+        if _comment_pipeline is not None and _comment_pipeline._comment_thread is not None:
+            try:
+                _comment_pipeline.finish_search()
+                _comment_pipeline.join()
+                # 将 pipeline 中已完成的评论合并回 all_posts_dicts
+                for i, post_dict in enumerate(all_posts_dicts):
+                    mid = str(post_dict.get("mid") or post_dict.get("id") or "")
+                    if mid and mid in _comment_pipeline.result_map:
+                        all_posts_dicts[i] = _comment_pipeline.result_map[mid]
+                logger.info(
+                    f"[WeiboCommentPipeline] 搜索+评论全部完成，"
+                    f"result_map={len(_comment_pipeline.result_map)} 条"
+                )
+            except Exception as pipeline_cleanup_err:
+                logger.error(f"[WeiboCommentPipeline] 收尾异常: {pipeline_cleanup_err}")
+
         # 仅最外层调用负责关闭搜索 tab，分段子调用复用当前 tab。
         if owns_tab and tab is not None:
             try:

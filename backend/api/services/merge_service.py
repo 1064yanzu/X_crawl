@@ -2,19 +2,21 @@
 任务合并服务
 
 职责：
-- find_mergeable_groups()  : 按 keyword + platform 分组任务，过滤非活跃任务
+- find_mergeable_groups()  : 按“关键词核心 token 有交集”+ platform + task_kind 分组
 - preview_merge()          : 返回合并预览——每组的统计信息和去重预估
 - execute_merge()          : 执行合并——加载 tweets、去重、保存到 target、删除源任务
 
 设计原则：
 - 仅合并非活跃任务（done / stopped / failed），running / pending / paused 不参与
-- target 默认选择最早创建的任务
+- 关键词少的任务可并入关键词更多、更具体的任务
+- target 优先选择“关键词更完整”的任务；同等情况下再按创建时间更早优先
 - 推文按 tweet.id 去重，优先保留 replies 数据更完整的版本
 """
 from __future__ import annotations
 
 import copy
 import logging
+import re
 from collections import defaultdict
 from typing import Optional
 
@@ -39,6 +41,67 @@ def _parse_iso_for_sort(iso_str: str | None) -> str:
     return iso_str or "9999-12-31T23:59:59"
 
 
+_QUERY_OPERATORS = {
+    "or",
+    "and",
+    "since",
+    "until",
+    "lang",
+    "min_faves",
+    "min_replies",
+    "min_retweets",
+    "filter",
+    "-filter",
+}
+
+
+def _normalize_keyword(kw: str) -> str:
+    return re.sub(r"\s+", " ", kw.strip()).casefold()
+
+
+def _extract_keyword_tokens(kw: str) -> set[str]:
+    normalized = _normalize_keyword(kw)
+    raw_tokens = re.split(r"\s+", normalized)
+    tokens: set[str] = set()
+
+    for token in raw_tokens:
+        token = token.strip()
+        if not token:
+            continue
+        if ":" in token:
+            key = token.split(":", 1)[0]
+            if key in _QUERY_OPERATORS:
+                continue
+        token = token.strip("()[]{}\"'.,!?，。！？；;")
+        if not token or token in _QUERY_OPERATORS:
+            continue
+        if re.fullmatch(r"[\d:-]+", token):
+            continue
+        if len(token) <= 1 and token.isascii():
+            continue
+        tokens.add(token)
+
+    return tokens
+
+
+def _keywords_related(left: str, right: str) -> bool:
+    left_tokens = _extract_keyword_tokens(left)
+    right_tokens = _extract_keyword_tokens(right)
+    if left_tokens and right_tokens:
+        return bool(left_tokens & right_tokens)
+    return _normalize_keyword(left) == _normalize_keyword(right)
+
+
+def _pick_target_task(tasks: list[dict]) -> dict:
+    return sorted(
+        tasks,
+        key=lambda task: (
+            -len(_extract_keyword_tokens(task.get("keyword", ""))),
+            -len(_normalize_keyword(task.get("keyword", ""))),
+            _parse_iso_for_sort(task.get("created_at")),
+        ),
+    )[0]
+
 def find_mergeable_groups(
     task_ids: list[str],
 ) -> tuple[list[dict], list[str]]:
@@ -52,7 +115,7 @@ def find_mergeable_groups(
     """
     tm = _get_task_manager()
     non_mergeable: list[str] = []
-    # key = (keyword, platform)
+    # 先按 platform + task_kind 粗分，再按关键词交集做连通分组
     buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
 
     for tid in task_ids:
@@ -63,26 +126,63 @@ def find_mergeable_groups(
         if task.get("status") not in _MERGEABLE_STATUSES:
             non_mergeable.append(tid)
             continue
-        key = (task["keyword"], task.get("platform", "x"))
+            
+        platform = task.get("platform", "x")
+        task_kind = task.get("task_kind", "search")
+        key = (platform, task_kind)
         buckets[key].append(task)
 
     groups: list[dict] = []
-    for (keyword, platform), tasks in buckets.items():
+    for (platform, _task_kind), tasks in buckets.items():
         if len(tasks) < 2:
-            # 单任务不需要合并
             non_mergeable.extend(t["task_id"] for t in tasks)
             continue
 
-        # 按创建时间排序，最早的作为 target
-        tasks.sort(key=lambda t: _parse_iso_for_sort(t.get("created_at")))
-        groups.append({
-            "keyword": keyword,
-            "platform": platform,
-            "task_count": len(tasks),
-            "target_task_id": tasks[0]["task_id"],
-            "source_task_ids": [t["task_id"] for t in tasks[1:]],
-            "tasks": tasks,
-        })
+        remaining = sorted(tasks, key=lambda t: _parse_iso_for_sort(t.get("created_at")))
+        raw_groups: list[list[dict]] = []
+
+        while remaining:
+            seed = remaining.pop(0)
+            component = [seed]
+            changed = True
+            while changed:
+                changed = False
+                next_remaining: list[dict] = []
+                for candidate in remaining:
+                    if any(_keywords_related(candidate["keyword"], existed["keyword"]) for existed in component):
+                        component.append(candidate)
+                        changed = True
+                    else:
+                        next_remaining.append(candidate)
+                remaining = next_remaining
+            raw_groups.append(component)
+
+        for component in raw_groups:
+            if len(component) < 2:
+                non_mergeable.extend(t["task_id"] for t in component)
+                continue
+
+            target = _pick_target_task(component)
+            tasks_sorted = sorted(
+                component,
+                key=lambda task: (
+                    0 if task["task_id"] == target["task_id"] else 1,
+                    _parse_iso_for_sort(task.get("created_at")),
+                ),
+            )
+
+            keyword_tags = list(dict.fromkeys(t["keyword"] for t in tasks_sorted))
+            display_keyword = target["keyword"] if len(keyword_tags) == 1 else target["keyword"] + f" (及另外 {len(keyword_tags)-1} 个相关关键词)"
+
+            groups.append({
+                "keyword": display_keyword,
+                "target_keyword": target["keyword"],
+                "platform": platform,
+                "task_count": len(tasks_sorted),
+                "target_task_id": target["task_id"],
+                "source_task_ids": [t["task_id"] for t in tasks_sorted if t["task_id"] != target["task_id"]],
+                "tasks": tasks_sorted,
+            })
 
     return groups, non_mergeable
 
@@ -240,6 +340,7 @@ def execute_merge(task_ids: list[str]) -> dict:
 
     for group in groups:
         keyword = group["keyword"]
+        target_keyword = group.get("target_keyword") or keyword
         platform = group["platform"]
         target_id = group["target_task_id"]
         source_ids = group["source_task_ids"]
@@ -288,6 +389,7 @@ def execute_merge(task_ids: list[str]) -> dict:
             if target:
                 _set_task_result_locked(target_id, unique_tweets)
                 target.update({
+                    "keyword": target_keyword,
                     "result_count": len(unique_tweets),
                     "preview_tweets": _make_preview(unique_tweets),
                     "replies_fetched": max(total_replies, computed_replies),

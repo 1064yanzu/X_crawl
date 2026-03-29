@@ -41,13 +41,16 @@ const DEFAULT_CONFIG: CrawlerConfig = {
     browser_block_images: false,
     browser_stealth_enabled: true,
     browser_linux_hardening: true,
+    browser_pool_auto_close_idle: true,
     crawler_dedup_enabled: true,
-    weibo_auto_split_or_keywords: false,
+    weibo_auto_split_or_keywords: true,
+    weibo_time_split_window_days: 7,
+    weibo_time_split_max_segments: 600,
     x_auto_time_split_enabled: true,
     x_time_split_trigger_days: 30,
-    x_time_split_window_days: 14,
+    x_time_split_window_days: 7,
     x_time_split_window_days_unlimited: 7,
-    x_time_split_max_segments: 120,
+    x_time_split_max_segments: 600,
 };
 
 export function useCrawlerConfig() {

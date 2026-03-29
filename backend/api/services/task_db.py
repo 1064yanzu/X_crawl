@@ -83,6 +83,8 @@ def init_db(db_path: str | Path) -> None:
                 task_kind             TEXT DEFAULT 'search',
                 source_file_name      TEXT,
                 source_task_id        TEXT,
+                is_recrawl            INTEGER DEFAULT 0,
+                exclude_count         INTEGER DEFAULT 0,
                 queue_id              TEXT,
                 queue_name            TEXT,
                 queue_order           INTEGER,
@@ -176,6 +178,8 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "task_kind", "TEXT DEFAULT 'search'")
         _ensure_column(conn, "tasks", "source_file_name", "TEXT")
         _ensure_column(conn, "tasks", "source_task_id", "TEXT")
+        _ensure_column(conn, "tasks", "is_recrawl", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "tasks", "exclude_count", "INTEGER DEFAULT 0")
         _ensure_column(conn, "tasks", "queue_id", "TEXT")
         _ensure_column(conn, "tasks", "queue_name", "TEXT")
         _ensure_column(conn, "tasks", "queue_order", "INTEGER")
@@ -221,6 +225,8 @@ def _summary_params(task: dict) -> dict:
         "task_kind": task.get("task_kind", "search"),
         "source_file_name": task.get("source_file_name"),
         "source_task_id": task.get("source_task_id"),
+        "is_recrawl": int(task.get("is_recrawl", False)),
+        "exclude_count": task.get("exclude_count", 0),
         "queue_id": task.get("queue_id"),
         "queue_name": task.get("queue_name"),
         "queue_order": task.get("queue_order"),
@@ -247,7 +253,7 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             error, risk_state, quality_state, runtime_metrics_json, time_coverage_json, last_event_at,
             resumed, fetch_replies, max_replies_per_tweet,
             reply_depth, crawl_strategy, replies_fetched, crawl_phase,
-            task_kind, source_file_name, source_task_id, queue_id, queue_name,
+            task_kind, source_file_name, source_task_id, is_recrawl, exclude_count, queue_id, queue_name,
             queue_order, queue_total, comment_backfill_progress_json,
             segment_progress_json, preview_json,
             platform, start_date, end_date
@@ -257,7 +263,7 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             :error, :risk_state, :quality_state, :runtime_metrics_json, :time_coverage_json, :last_event_at,
             :resumed, :fetch_replies, :max_replies_per_tweet,
             :reply_depth, :crawl_strategy, :replies_fetched, :crawl_phase,
-            :task_kind, :source_file_name, :source_task_id, :queue_id, :queue_name,
+            :task_kind, :source_file_name, :source_task_id, :is_recrawl, :exclude_count, :queue_id, :queue_name,
             :queue_order, :queue_total, :comment_backfill_progress_json,
             :segment_progress_json, :preview_json,
             :platform, :start_date, :end_date
@@ -287,6 +293,8 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             task_kind = excluded.task_kind,
             source_file_name = excluded.source_file_name,
             source_task_id = excluded.source_task_id,
+            is_recrawl = excluded.is_recrawl,
+            exclude_count = excluded.exclude_count,
             queue_id = excluded.queue_id,
             queue_name = excluded.queue_name,
             queue_order = excluded.queue_order,
@@ -422,7 +430,7 @@ def load_all_tasks() -> list[dict]:
                     error, risk_state, quality_state, runtime_metrics_json, time_coverage_json,
                     last_event_at, resumed, fetch_replies, max_replies_per_tweet,
                     reply_depth, crawl_strategy, replies_fetched, crawl_phase,
-                    task_kind, source_file_name, source_task_id, queue_id, queue_name,
+                    task_kind, source_file_name, source_task_id, is_recrawl, exclude_count, queue_id, queue_name,
                     queue_order, queue_total, comment_backfill_progress_json, segment_progress_json,
                     preview_json, platform, start_date, end_date
                 FROM tasks
@@ -448,6 +456,8 @@ def load_all_tasks() -> list[dict]:
             d.setdefault("task_kind", "search")
             d.setdefault("source_file_name", None)
             d.setdefault("source_task_id", None)
+            d["is_recrawl"] = bool(d.get("is_recrawl", 0))
+            d["exclude_count"] = int(d.get("exclude_count", 0) or 0)
             d.setdefault("queue_id", None)
             d.setdefault("queue_name", None)
             d.setdefault("queue_order", None)

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from config import settings
 from api.services.settings_db import set_settings_batch
-from crawler.browser_pool import get_browser_pool
+from crawler.browser_pool import compute_pool_max_size, get_browser_pool
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/browser-pool", tags=["浏览器池"])
@@ -93,7 +93,7 @@ async def get_pool_status() -> BrowserPoolStatusResponse:
 )
 async def resize_pool(req: ResizeRequest) -> ResizeResponse:
     pool = get_browser_pool()
-    previous = pool.max_size
+    previous = max(1, int(settings.crawler_max_concurrent_tasks))
 
     if req.max_size == previous:
         return ResizeResponse(
@@ -102,11 +102,15 @@ async def resize_pool(req: ResizeRequest) -> ResizeResponse:
             new_max_size=previous,
         )
 
-    # 1. 更新池大小
-    pool.resize(req.max_size)
-
-    # 2. 同步更新内存中的 settings
+    # 1. 同步更新内存中的 settings
     settings.crawler_max_concurrent_tasks = req.max_size
+    effective_pool_size = compute_pool_max_size(
+        req.max_size,
+        cross_platform=settings.crawler_cross_platform_concurrent,
+    )
+
+    # 2. 更新池大小
+    pool.resize(effective_pool_size)
 
     # 3. 持久化到数据库
     try:
@@ -117,6 +121,7 @@ async def resize_pool(req: ResizeRequest) -> ResizeResponse:
     direction = "增加" if req.max_size > previous else "减少"
     logger.info(
         f"[BrowserPool] 并发上限已{direction}: {previous} → {req.max_size}"
+        f"（实际浏览器池上限={effective_pool_size}）"
     )
 
     return ResizeResponse(

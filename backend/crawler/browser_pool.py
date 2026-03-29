@@ -3,8 +3,7 @@
 
 设计思想：
 - 并发数 = N → N 个浏览器实例（槽位 slot），每个实例独立端口 + Profile 目录
-- 同一个 slot 内不同平台（X / 微博）的任务共享同一个浏览器实例
-  （Cookie 域名不同天然隔离，无需分开）
+- 默认优先给任务独占浏览器实例；仅在池已打满时，才允许不同平台兜底共享同一个 slot
 - 同一个 slot 内同一平台的任务不会同时存在（调度器保证）
 
 使用流程：
@@ -17,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -25,9 +25,164 @@ from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from DrissionPage import Chromium
 
+try:
+    import psutil  # type: ignore
+except Exception:
+    psutil = None
+
 logger = logging.getLogger(__name__)
 
 _POOL_PROFILE_BASE = str(Path.home() / ".xcrawl-browser-instances")
+
+
+def compute_pool_max_size(
+    max_per_platform: Optional[int] = None,
+    *,
+    cross_platform: Optional[bool] = None,
+) -> int:
+    """
+    计算浏览器池应有的实际槽位上限。
+
+    `crawler_max_concurrent_tasks` 表示单个平台可同时运行的任务数。
+    开启跨平台并发后，X 和微博会各自占满该额度，因此浏览器池需要为
+    总任务数预留容量，避免不同平台被迫共享同一个浏览器实例。
+    """
+    if max_per_platform is None or cross_platform is None:
+        from config import settings
+
+        if max_per_platform is None:
+            max_per_platform = settings.crawler_max_concurrent_tasks
+        if cross_platform is None:
+            cross_platform = bool(getattr(settings, "crawler_cross_platform_concurrent", True))
+
+    configured = max(1, int(max_per_platform))
+    return configured * 2 if cross_platform else configured
+
+
+def _extract_flag_value(cmdline: list[str], flag: str) -> Optional[str]:
+    prefix = f"{flag}="
+    for idx, arg in enumerate(cmdline):
+        if arg.startswith(prefix):
+            return arg[len(prefix):]
+        if arg == flag and idx + 1 < len(cmdline):
+            return cmdline[idx + 1]
+    return None
+
+
+def _iter_managed_pool_roots() -> list[dict[str, object]]:
+    if psutil is None:
+        return []
+
+    base_dir = os.path.abspath(_POOL_PROFILE_BASE)
+    roots: list[dict[str, object]] = []
+    for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+        try:
+            cmdline = list(proc.info.get("cmdline") or [])
+            if not cmdline:
+                continue
+
+            joined = " ".join(cmdline).lower()
+            name = str(proc.info.get("name") or "").lower()
+            if "chrome" not in joined and "chromium" not in joined and "chrome" not in name and "chromium" not in name:
+                continue
+            if any(arg.startswith("--type=") for arg in cmdline):
+                continue
+
+            user_data = _extract_flag_value(cmdline, "--user-data-dir")
+            if not user_data:
+                continue
+            resolved = os.path.abspath(os.path.expanduser(user_data))
+            if not resolved.startswith(base_dir + os.sep):
+                continue
+
+            roots.append(
+                {
+                    "pid": int(proc.pid),
+                    "create_time": float(proc.info.get("create_time") or 0.0),
+                    "user_data_dir": resolved,
+                    "debug_port": _extract_flag_value(cmdline, "--remote-debugging-port"),
+                }
+            )
+        except Exception:
+            continue
+
+    roots.sort(key=lambda item: float(item.get("create_time") or 0.0))
+    return roots
+
+
+def _terminate_process_tree(pid: int) -> int:
+    if psutil is None:
+        return 0
+    try:
+        proc = psutil.Process(pid)
+    except Exception:
+        return 0
+
+    victims: list["psutil.Process"] = []
+    try:
+        victims.extend(proc.children(recursive=True))
+    except Exception:
+        pass
+    victims.append(proc)
+
+    seen: set[int] = set()
+    ordered: list["psutil.Process"] = []
+    for item in victims:
+        try:
+            if item.pid in seen:
+                continue
+            seen.add(item.pid)
+            ordered.append(item)
+        except Exception:
+            continue
+
+    for item in reversed(ordered):
+        try:
+            item.terminate()
+        except Exception:
+            pass
+    _, alive = psutil.wait_procs(ordered, timeout=2)
+    for item in alive:
+        try:
+            item.kill()
+        except Exception:
+            pass
+    psutil.wait_procs(alive, timeout=2)
+    return len(ordered)
+
+
+def cleanup_stale_pool_browsers(*, max_size: Optional[int] = None) -> dict[str, int]:
+    """
+    清理受 BrowserPool 管理的残留 Chrome 根进程。
+
+    - 服务重启时：kill 掉所有使用 `~/.xcrawl-browser-instances/instance-*` profile 的旧实例
+    - 池大小缩小时：保底确保根实例数不超过 max_size
+    """
+    roots = _iter_managed_pool_roots()
+    if not roots:
+        return {"roots_seen": 0, "killed_roots": 0, "killed_processes": 0}
+
+    victims = roots if max_size is None else roots[max(0, max_size):]
+    killed_roots = 0
+    killed_processes = 0
+    for item in victims:
+        killed = _terminate_process_tree(int(item["pid"]))
+        if killed > 0:
+            killed_roots += 1
+            killed_processes += killed
+
+    if killed_roots > 0:
+        logger.warning(
+            "[BrowserPool] 已清理残留浏览器根实例 %s 个，相关进程 %s 个",
+            killed_roots,
+            killed_processes,
+        )
+
+    return {
+        "roots_seen": len(roots),
+        "killed_roots": killed_roots,
+        "killed_processes": killed_processes,
+    }
 
 
 class BrowserInstance:
@@ -72,7 +227,7 @@ class BrowserInstance:
         )
         from config import settings
 
-        os.makedirs(self.profile_dir, exist_ok=True)
+        self._reset_profile_dir()
 
         # 清理孤儿锁文件
         if _is_user_data_locked(self.profile_dir):
@@ -115,7 +270,8 @@ class BrowserInstance:
         co.set_argument("--window-size", "1366,860")
         co.set_argument("--lang", "zh-CN,zh,en,en-GB,en-US")
         co.set_argument("--accept-lang", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
-        co.set_argument("--disable-blink-features", "AutomationControlled")
+        if effective_headless:
+            co.set_argument("--disable-blink-features", "AutomationControlled")
         co.set_argument("--disable-infobars")
         co.set_argument("--no-first-run")
         co.set_argument("--no-default-browser-check")
@@ -129,6 +285,31 @@ class BrowserInstance:
         browser = Chromium(co)
         logger.info(f"[BrowserPool] 浏览器实例 #{self.instance_id} 就绪")
         return browser
+
+    def _reset_profile_dir(self) -> None:
+        """
+        重建池实例的专用 profile 目录。
+
+        浏览器池实例不依赖长期持久化登录态，任务启动时会自行注入 Cookie。
+        因此前一次异常退出留下的脏 profile / 锁文件 / 偏好损坏，都应在新实例启动前清空，
+        避免 Chrome 弹出“打开您的个人资料时出了点问题”。
+        """
+        profile_path = Path(self.profile_dir)
+        if profile_path.exists():
+            try:
+                shutil.rmtree(profile_path)
+                logger.info(
+                    "[BrowserPool] 已重置实例 #%s 的 profile 目录: %s",
+                    self.instance_id,
+                    self.profile_dir,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[BrowserPool] 重置实例 #%s 的 profile 目录失败，继续尝试复用: %s",
+                    self.instance_id,
+                    e,
+                )
+        os.makedirs(self.profile_dir, exist_ok=True)
 
     def new_tab(self, *, _retried: bool = False):
         """在此实例上创建新 tab（已注入 stealth）。断连时自动重建浏览器实例。"""
@@ -186,6 +367,7 @@ class _Slot:
         self.instance = instance
         # platform -> task_id（同一平台同时只有一个任务）
         self.platforms: dict[str, str] = {}
+        self.idle_since: float | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -196,11 +378,14 @@ class _Slot:
 
     def occupy(self, platform: str, task_id: str) -> None:
         self.platforms[platform] = task_id
+        self.idle_since = None
 
     def vacate_task(self, task_id: str) -> None:
         to_remove = [p for p, tid in self.platforms.items() if tid == task_id]
         for p in to_remove:
             del self.platforms[p]
+        if self.is_empty:
+            self.idle_since = time.monotonic()
 
 
 class BrowserPool:
@@ -208,7 +393,7 @@ class BrowserPool:
     浏览器实例池（按槽位 slot 分配）。
 
     - 共 max_size 个 slot，每个 slot 绑定一个 BrowserInstance
-    - 同一个 slot 内不同平台（X / 微博）的任务共享同一个浏览器实例
+    - 默认优先为任务分配独占 slot；池打满后才允许不同平台共享同一个实例
     - 同一个 slot 内同一平台只能有一个任务
     - acquire(task_id, platform) 找到一个该平台空闲的 slot，借出其实例
     - release(task_id) 从 slot 中移除该任务，slot 可被复用
@@ -227,22 +412,17 @@ class BrowserPool:
     def _find_slot_for(self, platform: str) -> Optional[_Slot]:
         """
         找到一个可以容纳该平台任务的 slot。优先级：
-        1. 已有实例且该平台空闲的 slot（共享实例）
-        2. 完全空闲的 slot
-        3. 新建 slot（未超上限时）
+        1. 完全空闲的 slot（独占实例）
+        2. 新建 slot（未超上限时）
+        3. 已有其他平台任务、但该平台空闲的 slot（兜底共享）
         调用方需持有锁。
         """
-        # 1) 已有实例、该平台空闲、优先选已经有其他平台任务的（最大化共享）
-        for slot in self._slots.values():
-            if not slot.has_platform(platform) and not slot.is_empty:
-                return slot
-
-        # 2) 完全空闲的 slot
+        # 1) 完全空闲的 slot，优先独占，避免多线程同时驱动同一个 Chromium 实例
         for slot in self._slots.values():
             if slot.is_empty:
                 return slot
 
-        # 3) 新建
+        # 2) 新建 slot
         if len(self._slots) < self._max_size:
             slot_id = self._next_id
             self._next_id += 1
@@ -251,7 +431,12 @@ class BrowserPool:
             self._slots[slot_id] = slot
             return slot
 
-        # 4) 所有 slot 该平台都被占用了
+        # 3) 兜底共享其他平台已占用的实例
+        for slot in self._slots.values():
+            if not slot.has_platform(platform):
+                return slot
+
+        # 4) 所有 slot 该平台都被占用
         return None
 
     def acquire(self, task_id: str, platform: str = "x", timeout: float = 120.0) -> tuple[BrowserInstance, int]:
@@ -291,7 +476,7 @@ class BrowserPool:
                 self._condition.wait(timeout=min(remaining, 2.0))
 
     def release(self, task_id: str) -> None:
-        """释放任务占用的 slot 平台位。slot 本身和浏览器实例保留复用。"""
+        """释放任务占用的 slot；空闲 slot 可按配置自动关闭浏览器实例。"""
         with self._condition:
             slot_id = self._task_slot.pop(task_id, None)
             if slot_id is None:
@@ -304,6 +489,8 @@ class BrowserPool:
                     f"剩余占用: {dict(slot.platforms) or '空闲'}"
                 )
             self._condition.notify_all()
+
+        self._prune_idle_slots()
 
     def close_all(self) -> None:
         """关闭所有浏览器实例（服务关闭时调用）。"""
@@ -319,10 +506,54 @@ class BrowserPool:
         with self._condition:
             self._max_size = max(1, new_max)
             self._condition.notify_all()
+        self._prune_idle_slots()
 
     @property
     def max_size(self) -> int:
         return self._max_size
+
+    def _should_close_idle_instances(self) -> bool:
+        from config import settings
+
+        return bool(getattr(settings, "browser_pool_auto_close_idle", True))
+
+    def _collect_prunable_idle_slot_ids(self) -> list[int]:
+        overflow = max(0, len(self._slots) - self._max_size)
+        candidates: list[tuple[float, int]] = []
+        for sid, slot in self._slots.items():
+            if not slot.is_empty:
+                continue
+            idle_since = slot.idle_since or 0.0
+            if self._should_close_idle_instances() or overflow > 0:
+                candidates.append((idle_since, sid))
+
+        candidates.sort(key=lambda item: item[0])
+        if overflow > 0:
+            return [sid for _, sid in candidates[:overflow]]
+        if self._should_close_idle_instances():
+            return [sid for _, sid in candidates]
+        return []
+
+    def _prune_idle_slots(self) -> None:
+        idle_instances: list[BrowserInstance] = []
+        removed_slot_ids: list[int] = []
+        with self._condition:
+            for sid in self._collect_prunable_idle_slot_ids():
+                slot = self._slots.get(sid)
+                if slot is None or not slot.is_empty:
+                    continue
+                idle_instances.append(slot.instance)
+                removed_slot_ids.append(sid)
+                self._slots.pop(sid, None)
+
+        for instance in idle_instances:
+            instance.close()
+
+        if removed_slot_ids:
+            logger.info(
+                "[BrowserPool] 已回收空闲 slot: %s",
+                ", ".join(f"#{sid}" for sid in removed_slot_ids),
+            )
 
     def status(self) -> dict:
         with self._lock:
@@ -352,14 +583,13 @@ def get_browser_pool() -> BrowserPool:
     if _pool is None:
         with _pool_lock:
             if _pool is None:
-                from config import settings
-                max_size = max(1, int(settings.crawler_max_concurrent_tasks))
+                max_size = compute_pool_max_size()
+                cleanup_stale_pool_browsers()
                 _pool = BrowserPool(max_size=max_size)
                 logger.info(f"[BrowserPool] 初始化，max_size={max_size}")
     return _pool
 
 
 def is_pool_mode_enabled() -> bool:
-    """是否启用浏览器池模式（并发数 > 1 时自动启用）。"""
-    from config import settings
-    return int(settings.crawler_max_concurrent_tasks) > 1
+    """是否启用浏览器池模式（只要可能出现 2 个及以上并发任务就启用）。"""
+    return compute_pool_max_size() > 1

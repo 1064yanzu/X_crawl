@@ -230,17 +230,15 @@ def _search_with_time_splits(
             aggregated = checkpoint.get("aggregated_tweets", []) or []
             start_index = int(checkpoint.get("current_segment_index", 0))
         else:
-            # 复爬模式：强制使用更细的时间窗口（3 天），提高数据覆盖率
-            _recrawl_window = int(getattr(settings, "x_recrawl_window_days", 3))
             plan = build_time_split_plan(
                 keyword,
                 max_count=max_count,
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=1 if recrawl_mode else int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=_recrawl_window if recrawl_mode else int(getattr(settings, "x_time_split_window_days", 14)),
-                unlimited_window_days=_recrawl_window if recrawl_mode else int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
-                max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
-                force_window=recrawl_mode,
+                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
+                window_days=int(getattr(settings, "x_time_split_window_days", 7)),
+                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                max_segments=int(getattr(settings, "x_time_split_max_segments", 600)),
+                force_window=False,
             )
             if not plan.enabled:
                 raise RuntimeError("时间分割计划未启用，不能进入分段搜索")
@@ -248,8 +246,7 @@ def _search_with_time_splits(
             segments = plan.segments
             aggregated = []
             start_index = 0
-            if recrawl_mode:
-                logger.info(f"复爬模式：时间分割粒度 {_recrawl_window} 天，共 {len(segments)} 段")
+            logger.info(f"固定 {int(getattr(settings, 'x_time_split_window_days', 7))} 天时间分割，共 {len(segments)} 段")
 
         seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
         if exclude_ids:
@@ -595,6 +592,8 @@ def search(
     browser_instance=None,
     slot_id: Optional[int] = None,
     exclude_ids: Optional[set[str]] = None,
+    recrawl_mode: bool = False,
+    seed_tweets: Optional[list[dict]] = None,
 ) -> SearchResult:
     """
     搜索 X 推文（含断点续爬 + 可选回复抓取 + 可暂停/可终止）
@@ -622,8 +621,10 @@ def search(
     _search_product = product
 
     # ── 1. 尝试加载检查点 ───────────────────────────────────────────
-    all_tweets: list[dict] = []
-    seen_ids: set[str] = set(exclude_ids) if exclude_ids else set()
+    all_tweets: list[dict] = list(seed_tweets or [])
+    seen_ids: set[str] = {str(t.get("id") or "").strip() for t in all_tweets if str(t.get("id") or "").strip()}
+    if exclude_ids:
+        seen_ids.update(exclude_ids)
     _exclude_count = len(seen_ids)  # 复爬时预加载的排除 ID 数
     start_cursor: Optional[str] = None
     page_fetched: int = 0
@@ -632,7 +633,7 @@ def search(
     _last_bottom_cursor: Optional[str] = None  # 追踪最后有效 cursor，用于兜底保存
     _consecutive_empty_pages: int = 0  # 连续空页（API 返回 0 条新推文）计数
     # ── 复爬模式自动检测：有 exclude_ids 即为复爬，降低空页容忍加速跳过 ──
-    _recrawl_mode = bool(exclude_ids)
+    _recrawl_mode = bool(exclude_ids) or bool(recrawl_mode)
     _MAX_CONSECUTIVE_EMPTY_PAGES: int = 2 if _recrawl_mode else 5
     _crawl_start_time = time.monotonic()
     _long_rest_done_at = 0.0  # 上次长休息时间戳
@@ -706,6 +707,25 @@ def search(
     _last_progress_persist: float = 0.0  # checkpoint 节流计时器
     _PROGRESS_THROTTLE_SEC = 3.0  # 最低写入间隔
 
+    # ── Pipeline 模式：fetch_replies=True 时启用双 Tab 并发 ──────────
+    _pipeline = None
+    if fetch_replies:
+        from crawler.pipeline import CrawlPipeline
+
+        def _on_reply_done_pipeline(tweet_id_cb: str, replies_cb: list[dict]):
+            """pipeline reply worker 每条完成后的落盘回调"""
+            if task_id:
+                _task_mgr.update_task_replies_progress(task_id, tweet_id_cb, len(replies_cb))
+
+        _pipeline = CrawlPipeline(
+            task_id=task_id,
+            timeout=timeout,
+            max_replies_per_tweet=max_replies_per_tweet,
+            reply_depth=reply_depth,
+            browser_instance=browser_instance,
+            on_reply_done=_on_reply_done_pipeline,
+        )
+
     def _update_progress(current_page: int, tweets_so_far: list[dict]) -> None:
         nonlocal _last_progress_persist
         if not task_id:
@@ -733,17 +753,15 @@ def search(
     def _get_time_split_plan():
         nonlocal _time_split_plan_cache
         if _time_split_plan_cache is None:
-            # 复爬模式：trigger_days=1 强制触发时间分割，窗口用更细粒度
-            _recrawl_win = int(getattr(settings, "x_recrawl_window_days", 3))
             _time_split_plan_cache = build_time_split_plan(
                 keyword,
                 max_count=max_count,
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=1 if _recrawl_mode else int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=_recrawl_win if _recrawl_mode else int(getattr(settings, "x_time_split_window_days", 14)),
-                unlimited_window_days=_recrawl_win if _recrawl_mode else int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
-                max_segments=int(getattr(settings, "x_time_split_max_segments", 120)),
-                force_window=_recrawl_mode,
+                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
+                window_days=int(getattr(settings, "x_time_split_window_days", 7)),
+                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                max_segments=int(getattr(settings, "x_time_split_max_segments", 600)),
+                force_window=False,
             )
         return _time_split_plan_cache
 
@@ -1022,90 +1040,95 @@ def search(
                 if new_tweets and not fetch_replies and not _recrawl_mode:
                     simulate_reading(tab, task_id=task_id, tweet_count=len(new_tweets))
 
-                # ── 每批新推文立即抓取回复（统一 DFS 策略） ───────────
+                # ── 每批新推文立即抓取回复（统一 DFS / Pipeline 策略） ──────
                 if fetch_replies and new_tweets:
-                    logger.info(f"立即抓取 {len(new_tweets)} 条新推文的回复...")
+                    if _pipeline is not None:
+                        # ── Pipeline 模式：搜索 tab 不停监听，回复在 reply_tab 并发抓取 ──
+                        logger.info(f"[Pipeline] 第 {page_num} 页 {len(new_tweets)} 条推文放入流水线...")
+                        if task_id:
+                            _update_phase(f"[Pipeline] 第 {page_num} 页 {len(new_tweets)} 条推文已入队，并发抓回复中...")
+                            _update_preview(page_num, list(all_tweets) + new_tweets)
+                            # 搜索侧立即落盘 checkpoint（不等回复）
+                            _save_search_checkpoint(list(all_tweets) + new_tweets, bottom_cursor, page_num)
 
-                    # 进入回复抓取前，先把已搜到的推文推入预览（仅更新预览，不覆盖 tweets）
-                    # ★ 关键修复：不使用 update_task_progress 保存无回复的 tweets，
-                    #   避免后续 _persist 调用用无回复版本覆盖数据库
-                    if task_id:
-                        _update_phase(f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复...")
-                        # 更新预览推文 + 同步 tweets 到内存和 DB
-                        _update_preview(page_num, list(all_tweets) + new_tweets)
-                        # 保存 checkpoint：确保搜索到的推文在回复抓取阶段崩溃时不丢失
-                        _save_search_checkpoint(list(all_tweets) + new_tweets, bottom_cursor, page_num)
+                        # 启动 pipeline（仅在第一批时启动）
+                        if not _pipeline._reply_thread:
+                            _pipeline.start()
 
-                    # 停止搜索监听，切换到回复抓取，完成后重新开启搜索监听
-                    tab.listen.stop()
+                        _pipeline.put_batch(new_tweets)
 
-                    # 闭包引用 all_tweets，使回调能增量保存 checkpoint
-                    _dfs_all_tweets_ref = all_tweets  # 引用当前 all_tweets
-                    # ★ 使用共享可变列表追踪已完成回复的推文
-                    #   fetch_replies_batch 对推文做 dict() 浅拷贝后才设置 replies，
-                    #   原始列表中的推文不会被修改，不能直接过滤原始列表
-                    _dfs_processed: list[dict] = []
-                    # 建立索引加速查找
-                    _dfs_tweet_index = {t.get("id", ""): t for t in new_tweets}
+                        # 检查 reply worker 是否发生了致命错误（非阻塞）
+                        reply_err = _pipeline.get_error()
+                        if reply_err is not None:
+                            raise reply_err
 
-                    _dfs_reply_progress_counter = 0
-
-                    def _on_reply_progress(tweet_id: str, replies: list[dict]):
-                        """每条推文回复抓取完成后更新进度，并按批次/时间窗刷新 checkpoint。"""
-                        nonlocal _dfs_reply_progress_counter
-                        _dfs_reply_progress_counter += 1
-
-                        # 从原始推文中找到对应记录，合并 replies 后追加到已处理列表
-                        orig = _dfs_tweet_index.get(tweet_id)
-                        if orig is not None:
-                            processed_tweet = dict(orig)
-                            processed_tweet["replies"] = replies
-                            _dfs_processed.append(processed_tweet)
+                    else:
+                        # ── Legacy DFS 模式（fetch_replies=False 时不会走这里，保留安全路径） ──
+                        logger.info(f"立即抓取 {len(new_tweets)} 条新推文的回复...")
 
                         if task_id:
-                            _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
-                            interim_tweets = list(_dfs_all_tweets_ref) + list(_dfs_processed)
-                            flushed = stage_reply_checkpoint(
-                                task_id=task_id,
-                                keyword=_search_keyword,
-                                product=_search_product,
-                                tweets_so_far=interim_tweets,
-                                next_cursor=bottom_cursor,
-                                page_fetched=page_num,
-                                extra=_build_checkpoint_extra(interim_tweets),
+                            _update_phase(f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复...")
+                            _update_preview(page_num, list(all_tweets) + new_tweets)
+                            _save_search_checkpoint(list(all_tweets) + new_tweets, bottom_cursor, page_num)
+
+                        tab.listen.stop()
+
+                        _dfs_all_tweets_ref = all_tweets
+                        _dfs_processed: list[dict] = []
+                        _dfs_tweet_index = {t.get("id", ""): t for t in new_tweets}
+                        _dfs_reply_progress_counter = 0
+
+                        def _on_reply_progress(tweet_id: str, replies: list[dict]):
+                            nonlocal _dfs_reply_progress_counter
+                            _dfs_reply_progress_counter += 1
+                            orig = _dfs_tweet_index.get(tweet_id)
+                            if orig is not None:
+                                processed_tweet = dict(orig)
+                                processed_tweet["replies"] = replies
+                                _dfs_processed.append(processed_tweet)
+                            if task_id:
+                                _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
+                                interim_tweets = list(_dfs_all_tweets_ref) + list(_dfs_processed)
+                                flushed = stage_reply_checkpoint(
+                                    task_id=task_id,
+                                    keyword=_search_keyword,
+                                    product=_search_product,
+                                    tweets_so_far=interim_tweets,
+                                    next_cursor=bottom_cursor,
+                                    page_fetched=page_num,
+                                    extra=_build_checkpoint_extra(interim_tweets),
+                                )
+                                if flushed:
+                                    _update_progress(page_num, interim_tweets)
+
+                        try:
+                            new_tweets, _dfs_failed = _fetch_replies_for_tweets(
+                                new_tweets, max_replies_per_tweet, task_id, timeout,
+                                strategy="dfs",
+                                progress_callback=_on_reply_progress,
+                                reply_depth=reply_depth,
+                                browser_instance=browser_instance,
                             )
-                            if flushed:
-                                _update_progress(page_num, interim_tweets)
-
-                    try:
-                        new_tweets, _dfs_failed = _fetch_replies_for_tweets(
-                            new_tweets, max_replies_per_tweet, task_id, timeout,
-                            strategy="dfs",
-                            progress_callback=_on_reply_progress,
-                            reply_depth=reply_depth,
-                            browser_instance=browser_instance,
-                        )
-                        if task_id:
-                            flush_reply_checkpoint(task_id)
-                        _all_failed_records.extend(_dfs_failed)
-                    except ChallengeSignal:
-                        if task_id:
-                            flush_reply_checkpoint(task_id)
-                        raise
-                    except StopSignal as e:
-                        if task_id:
-                            flush_reply_checkpoint(task_id)
-                        # 即使被中断，也要合并已处理的部分结果（含已抓取的回复）
-                        if e.partial_tweets:
-                            all_tweets.extend(e.partial_tweets)
-                        if task_id:
-                            _update_progress(page_num, list(all_tweets))
-                            _save_search_checkpoint(list(all_tweets), bottom_cursor, page_num)
-                        raise
-                    finally:
-                        tab.listen.start(SEARCH_TIMELINE_PATTERN)
-                        if task_id:
-                            clear_reply_checkpoint(task_id)
+                            if task_id:
+                                flush_reply_checkpoint(task_id)
+                            _all_failed_records.extend(_dfs_failed)
+                        except ChallengeSignal:
+                            if task_id:
+                                flush_reply_checkpoint(task_id)
+                            raise
+                        except StopSignal as e:
+                            if task_id:
+                                flush_reply_checkpoint(task_id)
+                            if e.partial_tweets:
+                                all_tweets.extend(e.partial_tweets)
+                            if task_id:
+                                _update_progress(page_num, list(all_tweets))
+                                _save_search_checkpoint(list(all_tweets), bottom_cursor, page_num)
+                            raise
+                        finally:
+                            tab.listen.start(SEARCH_TIMELINE_PATTERN)
+                            if task_id:
+                                clear_reply_checkpoint(task_id)
 
                 all_tweets.extend(new_tweets)
 
@@ -1223,6 +1246,27 @@ def search(
         if task_id:
             flush_reply_checkpoint(task_id)
             clear_reply_checkpoint(task_id)
+
+        # ── Pipeline 收尾：等待 reply worker 耗尽队列 ─────────────────
+        if _pipeline is not None:
+            if _pipeline._reply_thread is not None:
+                # 搜索已结束，发送结束哨兵并等待 reply worker 完成
+                _pipeline.finish_search()
+                _pipeline.join()
+                # 将 pipeline 中已完成的回复合并回 all_tweets
+                for i, tweet in enumerate(all_tweets):
+                    tid = str(tweet.get("id", ""))
+                    if tid in _pipeline.result_map:
+                        all_tweets[i] = _pipeline.result_map[tid]
+                _all_failed_records.extend(_pipeline.failed_records)
+                logger.info(
+                    f"[Pipeline] 搜索+回复全部完成，reply_map={len(_pipeline.result_map)} 条，"
+                    f"failed={len(_pipeline.failed_records)} 条"
+                )
+            else:
+                # pipeline 从未启动（0 条推文需要回复）
+                pass
+
         # ── 安全兜底：无论何种原因退出，都尝试保存已采集数据 ──
         if task_id and all_tweets:
             try:

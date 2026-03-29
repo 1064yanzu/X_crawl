@@ -72,6 +72,7 @@ class CrawlerConfig(BaseModel):
     browser_block_images: Optional[bool] = Field(default=None, description="是否禁用图片加载")
     browser_stealth_enabled: Optional[bool] = Field(default=None, description="是否启用平衡档伪装脚本")
     browser_linux_hardening: Optional[bool] = Field(default=None, description="Linux 无头环境是否启用稳定性参数")
+    browser_pool_auto_close_idle: Optional[bool] = Field(default=None, description="任务结束后是否自动关闭空闲浏览器实例")
     # 原始响应配置
     save_raw_responses: bool = Field(default=True, description="是否保存原始响应")
     raw_responses_max_pages: int = Field(default=0, ge=0, le=20000, description="每任务最多保存页数（0=不限制）")
@@ -81,11 +82,13 @@ class CrawlerConfig(BaseModel):
         default=False,
         description="是否自动拆分微博简单 OR 关键词；关闭时按原样保留完整查询",
     )
+    weibo_time_split_window_days: int = Field(default=7, ge=1, le=365, description="微博固定时间窗口天数")
+    weibo_time_split_max_segments: int = Field(default=600, ge=1, le=2000, description="微博时间分段安全上限，超出时显式报错")
     x_auto_time_split_enabled: bool = Field(default=True, description="是否启用 X 搜索自动时间分割")
     x_time_split_trigger_days: int = Field(default=30, ge=1, le=3650, description="X 搜索时间跨度达到该值后触发时间分割")
-    x_time_split_window_days: int = Field(default=14, ge=1, le=365, description="X 限定抓取模式下的时间窗天数")
-    x_time_split_window_days_unlimited: int = Field(default=7, ge=1, le=365, description="X 无上限抓取模式下的时间窗天数")
-    x_time_split_max_segments: int = Field(default=120, ge=1, le=2000, description="X 自动时间分割最大时间段数")
+    x_time_split_window_days: int = Field(default=7, ge=1, le=365, description="X 固定时间窗口天数")
+    x_time_split_window_days_unlimited: int = Field(default=7, ge=1, le=365, description="X 无上限抓取模式下的固定时间窗口天数")
+    x_time_split_max_segments: int = Field(default=600, ge=1, le=2000, description="X 时间分段安全上限，超出时显式报错")
 
 
 @router.get(
@@ -133,10 +136,13 @@ async def get_crawler_config() -> CrawlerConfig:
         browser_block_images=settings.browser_block_images,
         browser_stealth_enabled=settings.browser_stealth_enabled,
         browser_linux_hardening=settings.browser_linux_hardening,
+        browser_pool_auto_close_idle=settings.browser_pool_auto_close_idle,
         save_raw_responses=settings.save_raw_responses,
         raw_responses_max_pages=settings.raw_responses_max_pages,
         crawler_dedup_enabled=settings.crawler_dedup_enabled,
         weibo_auto_split_or_keywords=settings.weibo_auto_split_or_keywords,
+        weibo_time_split_window_days=settings.weibo_time_split_window_days,
+        weibo_time_split_max_segments=settings.weibo_time_split_max_segments,
         x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
         x_time_split_trigger_days=settings.x_time_split_trigger_days,
         x_time_split_window_days=settings.x_time_split_window_days,
@@ -196,6 +202,8 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.raw_responses_max_pages = config.raw_responses_max_pages
     settings.crawler_dedup_enabled = config.crawler_dedup_enabled
     settings.weibo_auto_split_or_keywords = config.weibo_auto_split_or_keywords
+    settings.weibo_time_split_window_days = config.weibo_time_split_window_days
+    settings.weibo_time_split_max_segments = config.weibo_time_split_max_segments
     settings.x_auto_time_split_enabled = config.x_auto_time_split_enabled
     settings.x_time_split_trigger_days = config.x_time_split_trigger_days
     settings.x_time_split_window_days = config.x_time_split_window_days
@@ -235,6 +243,8 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "raw_responses_max_pages": settings.raw_responses_max_pages,
         "crawler_dedup_enabled": settings.crawler_dedup_enabled,
         "weibo_auto_split_or_keywords": settings.weibo_auto_split_or_keywords,
+        "weibo_time_split_window_days": settings.weibo_time_split_window_days,
+        "weibo_time_split_max_segments": settings.weibo_time_split_max_segments,
         "x_auto_time_split_enabled": settings.x_auto_time_split_enabled,
         "x_time_split_trigger_days": settings.x_time_split_trigger_days,
         "x_time_split_window_days": settings.x_time_split_window_days,
@@ -274,6 +284,9 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     if config.browser_linux_hardening is not None:
         settings.browser_linux_hardening = config.browser_linux_hardening
         persist["browser_linux_hardening"] = config.browser_linux_hardening
+    if config.browser_pool_auto_close_idle is not None:
+        settings.browser_pool_auto_close_idle = config.browser_pool_auto_close_idle
+        persist["browser_pool_auto_close_idle"] = config.browser_pool_auto_close_idle
 
     # 写入数据库
     set_settings_batch(persist)
@@ -281,8 +294,14 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
 
     # 同步更新浏览器池大小
     try:
-        from crawler.browser_pool import get_browser_pool
-        get_browser_pool().resize(settings.crawler_max_concurrent_tasks)
+        from crawler.browser_pool import compute_pool_max_size, get_browser_pool
+
+        get_browser_pool().resize(
+            compute_pool_max_size(
+                settings.crawler_max_concurrent_tasks,
+                cross_platform=settings.crawler_cross_platform_concurrent,
+            )
+        )
     except Exception:
         pass
 
@@ -323,10 +342,13 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         browser_block_images=settings.browser_block_images,
         browser_stealth_enabled=settings.browser_stealth_enabled,
         browser_linux_hardening=settings.browser_linux_hardening,
+        browser_pool_auto_close_idle=settings.browser_pool_auto_close_idle,
         save_raw_responses=settings.save_raw_responses,
         raw_responses_max_pages=settings.raw_responses_max_pages,
         crawler_dedup_enabled=settings.crawler_dedup_enabled,
         weibo_auto_split_or_keywords=settings.weibo_auto_split_or_keywords,
+        weibo_time_split_window_days=settings.weibo_time_split_window_days,
+        weibo_time_split_max_segments=settings.weibo_time_split_max_segments,
         x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
         x_time_split_trigger_days=settings.x_time_split_trigger_days,
         x_time_split_window_days=settings.x_time_split_window_days,
