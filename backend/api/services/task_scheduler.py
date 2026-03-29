@@ -187,20 +187,28 @@ class TaskScheduler:
                 # 先尝试从 pending_items 中调度之前因平台槽满被暂缓的任务
                 dispatched_from_pending = self._try_dispatch_pending()
 
-                item = self._backend.get(timeout=0.5)
-                if not item:
+                # ── 批量取出所有待调度任务，一次性分发，避免串行阻塞 ──
+                batch: list[ScheduledTask] = []
+                while True:
+                    item = self._backend.get(timeout=0.5 if not batch else 0.01)
+                    if item is None:
+                        break
+                    batch.append(item)
+
+                if not batch:
                     if not dispatched_from_pending:
                         time.sleep(0.1)
                     continue
 
-                # 检查该任务所在平台是否可调度
-                if not self._can_dispatch(item.platform):
-                    # 平台槽满，放入 pending 等待
-                    with self._lock:
-                        self._pending_items.append(item)
-                    continue
+                for item in batch:
+                    # 检查该任务所在平台是否可调度
+                    if not self._can_dispatch(item.platform):
+                        # 平台槽满，放入 pending 等待
+                        with self._lock:
+                            self._pending_items.append(item)
+                        continue
 
-                self._do_dispatch(item)
+                    self._do_dispatch(item)
             except Exception as e:
                 logger.error(f"调度器循环异常: {e}", exc_info=True)
                 time.sleep(0.5)

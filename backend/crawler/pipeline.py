@@ -1,12 +1,16 @@
 """
-crawler/pipeline.py — 双 Tab 并发流水线（B 方案）
+crawler/pipeline.py — 双浏览器并发流水线
 
 设计目标：
-  search_tab  → 不断翻页抓推文 → 每批 put 到 tweet_queue
-  reply_tab   → 不断从 tweet_queue 取推文 → 抓回复 → 写回 result_map
+  search_browser → 不断翻页抓推文 → 每批 put 到 tweet_queue
+  reply_browser  → 不断从 tweet_queue 取推文 → 抓回复 → 写回 result_map
+
+核心变更（并发修复）：
+  搜索和回复使用 **独立的浏览器实例**（各自拥有独立 Chrome 进程 + WebSocket），
+  而非同一浏览器的不同 tab。这样避免了 DrissionPage CDP 命令在同一 WebSocket
+  上串行化导致搜索和回复交替执行的问题，实现真正的并行。
 
 搜索结束后：
-  - search_tab 关闭监听
   - finish_search() 发送结束哨兵
   - join() 等待 reply 线程耗尽 queue
 
@@ -32,7 +36,11 @@ _SENTINEL = object()
 
 class CrawlPipeline:
     """
-    双 Tab 并发流水线。
+    双浏览器并发流水线。
+
+    搜索和回复分别使用独立的浏览器实例（独立 Chrome 进程 +
+    独立 WebSocket 连接），确保搜索和回复拥取真正并行执行，
+    不会因 CDP 命令串行化而交替执行。
 
     使用方式（在搜索线程中）：
         pipeline = CrawlPipeline(task_id=..., ...)
@@ -61,22 +69,25 @@ class CrawlPipeline:
         max_replies_per_tweet: int,
         reply_depth: int,
         browser_instance=None,
+        reply_browser_instance=None,
         on_reply_done: Optional[Callable[[str, list[dict]], None]] = None,
     ):
         """
         Args:
-            task_id:               任务 ID（共享信号检查）
-            timeout:               单个推文回复抓取超时（秒）
-            max_replies_per_tweet: 每条推文最多抓取的回复数
-            reply_depth:           回复层级深度
-            browser_instance:      浏览器池实例（None = 使用默认全局浏览器）
-            on_reply_done:         每条推文回复抓取完成后的回调 (tweet_id, replies)
+            task_id:                任务 ID（共享信号检查）
+            timeout:                单个推文回复抓取超时（秒）
+            max_replies_per_tweet:  每条推文最多抓取的回复数
+            reply_depth:            回复层级深度
+            browser_instance:       搜索用浏览器池实例（备用，不再用于创建 reply_tab）
+            reply_browser_instance: 回复专用独立浏览器实例（独立 Chrome 进程，确保与搜索并行）
+            on_reply_done:          每条推文回复抓取完成后的回调 (tweet_id, replies)
         """
         self.task_id = task_id
         self.timeout = timeout
         self.max_replies_per_tweet = max_replies_per_tweet
         self.reply_depth = reply_depth
         self.browser_instance = browser_instance
+        self.reply_browser_instance = reply_browser_instance
         self.on_reply_done = on_reply_done
 
         self._queue: queue.Queue = queue.Queue()
@@ -97,8 +108,20 @@ class CrawlPipeline:
     # ─────────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """启动 reply worker 线程，并分配专属 reply_tab。"""
-        if self.browser_instance is not None:
+        """启动 reply worker 线程，并分配专属 reply_tab。
+
+        优先使用 reply_browser_instance（独立 Chrome 进程）创建 tab，
+        确保回复抓取与搜索翻页真正并行（不共享 CDP WebSocket）。
+        """
+        # 优先使用独立的回复浏览器实例，确保真正并行
+        if self.reply_browser_instance is not None:
+            self._reply_tab = self.reply_browser_instance.new_tab()
+        elif self.browser_instance is not None:
+            # 回退：使用同一实例的新 tab（CDP 串行化，效率降低）
+            logger.warning(
+                "[Pipeline] 未提供独立 reply_browser_instance，"
+                "回退为同实例新 tab（CDP 串行化，并发效率降低）"
+            )
             self._reply_tab = self.browser_instance.new_tab()
         else:
             from crawler.browser import get_new_tab
@@ -167,10 +190,13 @@ class CrawlPipeline:
                 break
 
     def _reply_worker(self) -> None:
-        """reply worker 主循环，在独立线程中执行。"""
+        """reply worker 主循环，在独立线程中执行。使用独立浏览器实例确保与搜索并行。"""
         from crawler.reply_fetcher import fetch_replies_single
         from crawler.crawl_signals import StopSignal, ChallengeSignal
         from crawler.utils import check_signal
+
+        # reply worker 使用独立的浏览器实例（如果有）
+        effective_browser = self.reply_browser_instance or self.browser_instance
 
         logger.debug("[Pipeline] reply worker 进入主循环")
 
@@ -208,7 +234,7 @@ class CrawlPipeline:
                     max_replies_per_tweet=self.max_replies_per_tweet,
                     reply_depth=self.reply_depth,
                     existing_tab=self._reply_tab,
-                    browser_instance=self.browser_instance,
+                    browser_instance=effective_browser,
                 )
 
                 self.result_map[tweet_id] = updated_tweet
@@ -253,7 +279,10 @@ class CrawlPipeline:
 
 class WeiboCommentPipeline:
     """
-    微博双 Tab 并发流水线。
+    微博双浏览器并发流水线。
+
+    搜索和评论分别使用独立的浏览器实例（独立 Chrome 进程 +
+    独立 WebSocket 连接），确保搜索和评论拥取真正并行执行。
 
     search_tab  → 翻页解析帖子 → put_batch(posts)
     comment_tab → 逐条从队列取帖子 → 抓评论 → result_map
@@ -266,10 +295,12 @@ class WeiboCommentPipeline:
         *,
         task_id: Optional[str],
         browser_instance=None,
+        comment_browser_instance=None,
         on_comment_done: Optional[Callable[[str, list], None]] = None,
     ):
         self.task_id = task_id
         self.browser_instance = browser_instance
+        self.comment_browser_instance = comment_browser_instance
         self.on_comment_done = on_comment_done
 
         self._queue: queue.Queue = queue.Queue()
@@ -284,7 +315,14 @@ class WeiboCommentPipeline:
         self._owns_comment_tab = False
 
     def start(self) -> None:
-        if self.browser_instance is not None:
+        # 优先使用独立的评论浏览器实例，确保真正并行
+        if self.comment_browser_instance is not None:
+            self._comment_tab = self.comment_browser_instance.new_tab()
+        elif self.browser_instance is not None:
+            logger.warning(
+                "[WeiboCommentPipeline] 未提供独立 comment_browser_instance，"
+                "回退为同实例新 tab（CDP 串行化，并发效率降低）"
+            )
             self._comment_tab = self.browser_instance.new_tab()
         else:
             from crawler.browser import get_new_tab
@@ -341,12 +379,15 @@ class WeiboCommentPipeline:
                 break
 
     def _comment_worker(self) -> None:
-        """comment worker 主循环，在独立线程中执行。"""
+        """评论 worker 主循环，在独立线程中执行。使用独立浏览器实例确保与搜索并行。"""
         from config import settings
         from crawler.weibo.comment_fetcher import fetch_comments as do_fetch_comments
         from crawler.weibo.comment_stats import build_comment_stats, collect_comment_tree_stats
         from crawler.crawl_signals import StopSignal, ChallengeSignal
         from crawler.utils import check_signal
+
+        # comment worker 使用独立的浏览器实例（如果有）
+        effective_browser = self.comment_browser_instance or self.browser_instance
 
         logger.debug("[WeiboCommentPipeline] comment worker 进入主循环")
 
@@ -391,7 +432,7 @@ class WeiboCommentPipeline:
                     max_comments=settings.weibo_max_comments_per_post,
                     page_interval=settings.weibo_comment_page_interval,
                     task_id=self.task_id,
-                    browser_instance=self.browser_instance,
+                    browser_instance=effective_browser,
                 )
 
                 # 附加评论到帖子

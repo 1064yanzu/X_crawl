@@ -127,15 +127,24 @@ def run_search_task(
         effective_exclude_tweet_ids = task_manager.ensure_task_exclude_tweet_ids(task_id)
 
     # ── 浏览器池模式：并发数>1 时按 slot 分配浏览器实例 ──────────────────
-    # 同一个 slot 内不同平台（X/微博）的任务共享同一个浏览器实例
+    # 每个任务获得独立的搜索浏览器实例
+    # 如果需要抓取回复/评论，还会获得额外的独立浏览器实例
+    # 搜索和回复使用不同 Chrome 进程，确保 CDP 命令不串行化
     from crawler.browser_pool import get_browser_pool, is_pool_mode_enabled
     _pool_mode = is_pool_mode_enabled()
     _browser_instance = None
+    _reply_browser_instance = None  # 回复/评论专用独立浏览器实例
     _slot_id: int | None = None
 
     if _pool_mode:
         pool_obj = get_browser_pool()
         _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
+        # 如果需要抓取回复/评论，分配独立的浏览器实例（独立 Chrome 进程）
+        if fetch_replies:
+            _reply_browser_instance = pool_obj.acquire_aux(
+                task_id,
+                purpose="reply" if platform == "x" else "comment",
+            )
 
     if not _pool_mode:
         if force_new_browser:
@@ -206,6 +215,7 @@ def run_search_task(
                 end_date=end_date,
                 fetch_replies=fetch_replies,
                 browser_instance=_browser_instance,
+                comment_browser_instance=_reply_browser_instance,
                 slot_id=_slot_id,
                 exclude_tweet_ids=effective_exclude_tweet_ids,
             )
@@ -256,6 +266,7 @@ def run_search_task(
                 reply_depth=reply_depth,
                 crawl_strategy=crawl_strategy,
                 browser_instance=_browser_instance,
+                reply_browser_instance=_reply_browser_instance,
                 slot_id=_slot_id,
                 exclude_ids=set(effective_exclude_tweet_ids) if effective_exclude_tweet_ids else None,
                 recrawl_mode=is_recrawl,
@@ -405,6 +416,7 @@ def _run_weibo_task(
     end_date: Optional[str] = None,
     fetch_replies: bool = False,
     browser_instance=None,
+    comment_browser_instance=None,
     slot_id: int | None = None,
     exclude_tweet_ids: Optional[list[str]] = None,
 ):
@@ -426,6 +438,7 @@ def _run_weibo_task(
         start_date=start_date,
         end_date=end_date,
         browser_instance=browser_instance,
+        comment_browser_instance=comment_browser_instance,
         slot_id=slot_id,
         exclude_ids=set(exclude_tweet_ids) if exclude_tweet_ids else None,
         seed_posts=seed_tweets,
