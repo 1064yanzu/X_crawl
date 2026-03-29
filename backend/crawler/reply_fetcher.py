@@ -55,26 +55,17 @@ def _to_risk_state(state: PageState) -> RiskState:
 
 def _scroll_incremental(tab, *, task_id: Optional[str] = None, steps: Optional[int] = None) -> None:
     """
-    评论区渐进式滚动：模拟人类浏览评论列表。
+    评论区渐进式滚动：快速滚动触发懒加载。
 
-    轻量版：2~4 步，保持随机特征即可，避免占用过多时间。
+    优化后：2 步快速滚动 + 最后 scroll_to_bottom，总耗时 <1s。
     """
-    move_steps = steps if steps is not None else random.randint(2, 4)
+    move_steps = steps if steps is not None else 2
     for i in range(move_steps):
-        # 小幅随机滚动（一条评论约 150~300px 高）
-        px = random.randint(150, 350)
+        px = random.randint(200, 450)
         safe_scroll_down(tab, px, task_id=task_id)
 
-        # 阅读评论的停顿：大部分快速过，偶尔停一下
-        if random.random() < 0.12:
-            interruptible_sleep(random.uniform(0.8, 1.5), task_id=task_id)
-        else:
-            scroll_step_pause(task_id=task_id)
-
-        # 偶尔回滚看上面的评论（非最后一步）
-        if i < move_steps - 1 and random.random() < 0.08:
-            safe_scroll_up(tab, random.randint(50, 120), task_id=task_id)
-            interruptible_sleep(random.uniform(0.2, 0.4), task_id=task_id)
+        # 极短停顿
+        scroll_step_pause(task_id=task_id)
 
     # 最后滚到底部确保触发评论懒加载
     safe_scroll_to_bottom(tab, task_id=task_id)
@@ -172,7 +163,7 @@ def _wait_reply_packet_with_recovery(
             tweet_url,
             max_retries=1,
             base_wait=2.5,
-            post_load_wait=min(1.5, settings.crawler_reply_wait * 0.4),
+            post_load_wait=0.3,
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -287,7 +278,7 @@ def fetch_replies(
             max_retries=policy.refresh_max_retries,
             base_wait=3.0,
             load_timeout=30.0,
-            post_load_wait=min(1.5, settings.crawler_reply_wait * 0.4),
+            post_load_wait=0.3,
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,

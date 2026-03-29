@@ -27,29 +27,23 @@ def compensation_probe_timeout(total_timeout: float) -> float:
 
 
 def scroll_steps() -> int:
-    wait = float(getattr(settings, "crawler_reply_wait", 4.0))
-    if wait <= 2.0:
-        return 3
-    if wait <= 4.0:
-        return 4
-    return 5
+    """Reply scroll step count - fixed at 2 for efficiency."""
+    return 2
 
 
 def scroll_pause_seconds() -> float:
-    wait = float(getattr(settings, "crawler_reply_wait", 4.0))
-    return max(0.16, min(0.7, wait * 0.18))
+    """Minimal pause between scroll steps."""
+    return 0.08
 
 
 def scroll_step_pause(task_id: str | None = None) -> None:
     base = scroll_pause_seconds()
-    actual = max(0.1, base + random.uniform(-0.08, 0.12))
+    actual = max(0.05, base + random.uniform(-0.02, 0.04))
     interruptible_sleep(actual, task_id=task_id)
 
 
 def before_scroll_wait(task_id: str | None = None) -> None:
     """
-    翻页前的轻量等待：仅让 DOM 稳定，不叠加翻页间隔。
-    翻页节奏由 x_searcher/reply_fetcher 各自的动态间隔统一管理。
+    翻页前的轻量等待：仅让 DOM 稳定，尽可能短。
     """
-    base = max(0.1, min(0.4, float(getattr(settings, "crawler_reply_wait", 2.0)) * 0.08))
-    interruptible_sleep(base, task_id=task_id)
+    interruptible_sleep(0.05, task_id=task_id)

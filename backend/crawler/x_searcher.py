@@ -508,7 +508,7 @@ def _wait_search_packet_with_recovery(
             tab.url,
             max_retries=1,
             base_wait=2.5,
-            post_load_wait=min(1.5, settings.crawler_initial_wait * 0.5),
+            post_load_wait=0.5,
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -1165,38 +1165,38 @@ def search(
                     logger.info(f"已达目标 {max_count} 条，停止")
                     break
 
-                # ── 休息节律（长时间爬虫专项，防连续爬取被识别） ──────────
-                # 复爬模式全速推进：跳过所有休息节律（微休息 / 小憩 / 长休息）
+                # ── 休息节律（大幅缩减，仅保留必要的反风控节奏） ──────────
+                # 复爬模式全速推进：跳过所有休息节律
                 if getattr(settings, "crawler_enable_break_rhythm", True) and new_tweets and not _recrawl_mode:
                     _total_fetched_now = len(all_tweets)
-                    # 微休息（5% 概率，8-20 秒）
-                    if random.random() < getattr(settings, "crawler_micro_break_chance", 0.05):
-                        _micro_wait = random.uniform(5, 12)
-                        logger.info(f"微休息 {_micro_wait:.0f}s（模拟阅读有趣内容暂停）...")
+                    # 微休息（2% 概率，3-6 秒）
+                    if random.random() < 0.02:
+                        _micro_wait = random.uniform(3, 6)
+                        logger.info(f"微休息 {_micro_wait:.0f}s...")
                         if task_id:
                             _update_phase(f"微休息中 ({_micro_wait:.0f}s)，稍后继续...")
                         interruptible_sleep(_micro_wait, task_id=task_id)
-                    # 小憩（每 short_break_every_n 条推文，60-120 秒）
-                    _short_n = getattr(settings, "crawler_short_break_every_n", 250)
+                    # 小憩（每 1000 条推文，15-30 秒）
+                    _short_n = max(1000, getattr(settings, "crawler_short_break_every_n", 500) * 2)
                     if _short_n > 0 and _total_fetched_now > 0:
                         prev_count = _total_fetched_now - len(new_tweets)
                         if prev_count // _short_n < _total_fetched_now // _short_n:
-                            _short_wait = random.uniform(30, 60)
+                            _short_wait = random.uniform(15, 30)
                             logger.info(
-                                f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条，模拟起身休息）..."
+                                f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条）..."
                             )
                             if task_id:
                                 _update_phase(f"小憩中 ({_short_wait:.0f}s)，稍后继续...")
                             interruptible_sleep(_short_wait, task_id=task_id)
-                    # 长休息（每 long_rest_interval_hours 小时，6-12 分钟）
-                    _rest_h = getattr(settings, "crawler_long_rest_interval_hours", 2.0)
-                    _rest_interval = _rest_h * 3600 * random.uniform(0.80, 1.20)
+                    # 长休息（每 4 小时，2-4 分钟）
+                    _rest_h = max(4.0, getattr(settings, "crawler_long_rest_interval_hours", 2.0) * 2)
+                    _rest_interval = _rest_h * 3600 * random.uniform(0.90, 1.10)
                     _now_mono = time.monotonic()
                     _last_rest = max(_crawl_start_time, _long_rest_done_at)
                     if _now_mono - _last_rest >= _rest_interval:
-                        _long_wait = random.uniform(360, 720)
+                        _long_wait = random.uniform(120, 240)
                         logger.info(
-                            f"长休息 {_long_wait/60:.0f}min（运行 {(_now_mono - _crawl_start_time)/3600:.1f}h，模拟离开电脑）..."
+                            f"长休息 {_long_wait/60:.0f}min（运行 {(_now_mono - _crawl_start_time)/3600:.1f}h）..."
                         )
                         if task_id:
                             _update_phase(f"长休息中 ({_long_wait/60:.0f}min)，稍后继续...")
@@ -1232,7 +1232,9 @@ def search(
             # ── 动态间隔：根据账号数 + rate_multiplier 计算等待时间 ──
             _rate_mult = get_tracker().get_sleep_multiplier("search", task_id=task_id)
             min_s, max_s, _ = compute_dynamic_interval("search")
-            _sleep_time = random.uniform(min_s, max_s) * _rate_mult
+            # 滚动本身已耗时 ~1s，打折后仅补足差值
+            _scroll_overhead = 1.0
+            _sleep_time = max(0.3, random.uniform(min_s, max_s) * _rate_mult - _scroll_overhead)
             logger.debug(
                 f"翻页间隔: {_sleep_time:.1f}s "
                 f"(动态区间 {min_s:.1f}~{max_s:.1f}s × rate_mult {_rate_mult:.1f})"
@@ -1404,7 +1406,7 @@ def _navigate_direct(
         max_retries=policy.refresh_max_retries,
         base_wait=3.0,
         load_timeout=30.0,
-        post_load_wait=min(1.5, settings.crawler_initial_wait * 0.5),
+        post_load_wait=0.5,
         challenge_retry_times=policy.challenge_retry_times,
         challenge_cooldown=policy.challenge_cooldown,
         raise_on_risk=True,
@@ -1414,9 +1416,9 @@ def _navigate_direct(
         logger.warning("搜索页首跳失败，执行预热路径后再重试一次（home -> explore -> search）")
         try:
             tab.get("https://x.com/home", timeout=25)
-            sleep_with_jitter(1.8, jitter_ratio=0.15, minimum=1.0)
+            sleep_with_jitter(1.0, jitter_ratio=0.15, minimum=0.5)
             tab.get("https://x.com/explore", timeout=25)
-            sleep_with_jitter(2.0, jitter_ratio=0.15, minimum=1.0)
+            sleep_with_jitter(1.0, jitter_ratio=0.15, minimum=0.5)
         except Exception as warmup_err:
             logger.warning(f"搜索预热路径失败（忽略，继续最终重试）: {warmup_err}")
 
@@ -1426,7 +1428,7 @@ def _navigate_direct(
             max_retries=max(1, policy.refresh_max_retries // 2),
             base_wait=4.0,
             load_timeout=35.0,
-            post_load_wait=min(1.5, settings.crawler_initial_wait * 0.5),
+            post_load_wait=0.5,
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=max(policy.challenge_cooldown, 10.0),
             raise_on_risk=True,

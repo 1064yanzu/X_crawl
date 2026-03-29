@@ -183,16 +183,27 @@ def _get_tab_with_retry(max_retries: int = 2, browser_instance=None):
                 return get_new_tab()
 
 
-def _safe_get_html(tab, url: str, wait_seconds: float = 3.0) -> tuple[Optional[str], Optional[str]]:
+def _safe_get_html(tab, url: str, wait_seconds: float = 1.0) -> tuple[Optional[str], Optional[str]]:
     """
     安全获取页面 HTML。
+
+    优化：默认等待时间从 3.0s 降低到 1.0s，并使用标题/内容检测代替固定 sleep。
 
     Returns:
         (html, error) — 成功时 error 为 None，失败时 html 为 None
     """
     try:
         tab.get(url, timeout=20)
+
+        # 动态等待：先等一个较短的基础时间，然后检测页面内容是否就绪
         time.sleep(wait_seconds)
+
+        # 快速检查页面是否已加载内容（最多额外等 1.5s）
+        for _ in range(3):
+            html_check = tab.html
+            if html_check and len(html_check) > 2000:
+                break  # 页面已有实质内容
+            time.sleep(0.5)
 
         # 检查是否被重定向到非搜索页面
         current_url = tab.url or ""
@@ -702,7 +713,7 @@ def search(
                 if not has_next:
                     break
 
-                jittered_sleep(page_interval, task_id=task_id)
+                jittered_sleep(page_interval, task_id=task_id, fast_mode=True)
 
         except StopSignal:
             logger.info(f"收到停止信号，微博搜索终止 task_id={task_id}")
