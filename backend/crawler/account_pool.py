@@ -33,9 +33,9 @@ _ENDPOINT_CONFIG = {
     "tweet_detail": {"window": 900, "limit": 150},
 }
 
-# 安全系数：单账号适度保守(1.05)，多账号有天然错峰更激进(1.0)
-_SAFETY_SINGLE = 1.05
-_SAFETY_MULTI = 1.0
+# 安全系数：单账号略保守(0.95)，多账号有天然错峰更激进(0.85)
+_SAFETY_SINGLE = 0.95
+_SAFETY_MULTI = 0.85
 
 
 @dataclass

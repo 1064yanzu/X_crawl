@@ -29,19 +29,34 @@ def interruptible_sleep(seconds: float, task_id: Optional[str] = None) -> None:
     poll_ms = max(50, int(getattr(settings, "crawler_interrupt_poll_ms", 300)))
     step = poll_ms / 1000.0
     elapsed = 0.0
+    # 每 10秒执行一次清理检查，而不是每次 sleep 片段都检查
+    cleanup_interval = 10.0
+    last_cleanup = 0.0
     while elapsed < total:
         if task_id:
             check_signal(task_id)
-        maybe_cleanup_stale_linux_browsers(reason="interruptible_sleep")
+        if elapsed - last_cleanup >= cleanup_interval:
+            maybe_cleanup_stale_linux_browsers(reason="interruptible_sleep")
+            last_cleanup = elapsed
         remain = total - elapsed
         slice_s = min(step, remain)
         time.sleep(slice_s)
         elapsed += slice_s
 
 
-def jittered_sleep(base_seconds: float, task_id: Optional[str] = None) -> None:
-    """带随机扰动的等待（±20%），并可响应任务控制信号。"""
+def jittered_sleep(base_seconds: float, task_id: Optional[str] = None, fast_mode: bool = False) -> None:
+    """带随机扰动的等待（±20%），并可响应任务控制信号。
+    
+    fast_mode=True 时跳过自适应等待和节流，直接使用 base_seconds 的 50-80%。
+    """
     base = max(0.0, float(base_seconds))
+    
+    if fast_mode:
+        # 快速模式：缩短等待，不做自适应/节流
+        actual = base * random.uniform(0.5, 0.8)
+        interruptible_sleep(max(0.3, actual), task_id=task_id)
+        return
+    
     if getattr(settings, "crawler_adaptive_wait_enabled", True):
         lower = max(0.2, float(getattr(settings, "crawler_page_interval_min", base or 0.2)))
         upper = max(lower, float(getattr(settings, "crawler_page_interval_max", max(base, lower))))
