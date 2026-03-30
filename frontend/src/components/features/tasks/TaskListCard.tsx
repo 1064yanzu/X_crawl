@@ -32,7 +32,7 @@ export function TaskListCard({
     density: DensityMode;
     selected: boolean;
     focused: boolean;
-    busyAction: "resume" | "resumeAll" | "pauseAll" | "backfill" | "recrawl" | "delete" | "export" | null;
+    busyAction: "resume" | "resumeAll" | "pauseAll" | "batchPause" | "backfill" | "recrawl" | "delete" | "export" | "merge" | null;
     resumingId: string | null;
     backfillingId: string | null;
     recrawlingId: string | null;

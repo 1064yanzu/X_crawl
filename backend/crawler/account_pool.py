@@ -236,6 +236,15 @@ class AccountPool:
         with self._lock:
             return list(self._accounts)
 
+    def get_all_accounts(self) -> list[AccountEntry]:
+        """
+        兼容旧调用方的别名接口。
+
+        早期代码使用 `get_all_accounts()`，后续主接口收敛为 `list_accounts()`。
+        这里保留兼容，避免旧链路在运行时直接崩溃。
+        """
+        return self.list_accounts()
+
     # ─── 轮换策略 ─────────────────────────────────────────────────────────
 
     def pick_account_by_index(self, index: int) -> Optional[AccountEntry]:
@@ -383,16 +392,3 @@ def get_pool() -> AccountPool:
             if _pool_instance is None:
                 _pool_instance = AccountPool()
     return _pool_instance
-
-    def get_account(self, account_id: str) -> Optional[AccountEntry]:
-        """根据 ID 获取账号"""
-        with self._lock:
-            for acc in self._accounts:
-                if acc.account_id == account_id:
-                    return acc
-            return None
-
-    def get_all_accounts(self) -> list[AccountEntry]:
-        """获取所有账号的副本"""
-        with self._lock:
-            return list(self._accounts)

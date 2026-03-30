@@ -408,6 +408,16 @@ def _persist_force(task_id: str, *, full: bool = True) -> None:
     _persist(task_id, force=True, full=full)
 
 
+def _mark_persist(task_id: str) -> None:
+    """
+    标记任务摘要需要持久化。
+
+    用于只修改任务元信息的轻量更新场景，保留原有节流语义，
+    避免账号绑定/释放等高频操作频繁触发全量落库。
+    """
+    _persist(task_id, full=False)
+
+
 def send_signal(task_id: str, signal: str) -> None:
     with _signal_lock:
         _task_signals[task_id] = signal
@@ -1016,6 +1026,7 @@ def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: l
         _set_task_result_locked(task_id, tweets_for_preview)
         _touch(task)
         delta_tweets = max(0, len(tweets_for_preview) - prev_result)
+        delta_replies_telemetry = max(0, replies_fetched - prev_replies)
         phase = task.get("crawl_phase", "")
         status = task.get("status")
         risk_state = task.get("risk_state")
@@ -1025,6 +1036,7 @@ def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: l
         phase=phase,
         page=current_page,
         delta_tweets=delta_tweets,
+        delta_replies=delta_replies_telemetry,
         status=status,
         risk_state=risk_state,
         meta={"preview_count": len(tweets_for_preview)},

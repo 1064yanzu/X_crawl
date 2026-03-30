@@ -64,14 +64,14 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 3. 生产环境部署启动
 
-生产环境中不需要 `--reload` 并且建议结合 `gunicorn` 或直接使用 `uvicorn` 多 workers。
+生产环境中不需要 `--reload`。但当前爬虫后端的任务调度、浏览器池、账号池都依赖**进程内状态**，因此**不要使用多 workers**，否则会出现任务状态分裂、浏览器实例互相清理、登录态被打断等问题。
 
 ```bash
-# 单节点生产推荐命令
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
+# 单节点生产推荐命令（必须单 worker）
+uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
-*(注意：若采用 DrissionPage 进行实际浏览器调度，过多的 worker 可能会竞争浏览器资源，请根据实际机器和队列并发策略调整 worker 数量。目前单例模式建议默认 worker 或者利用任务队列)*
+*(说明：并发能力由应用内任务调度器和浏览器池控制，不依赖 Uvicorn workers 扩容。需要提高并发时，请调业务并发配置，而不是加 Web workers。)*
 
 ---
 

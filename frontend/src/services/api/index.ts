@@ -429,7 +429,11 @@ export interface BrowserPoolSlot {
 }
 
 export interface BrowserPoolStatus {
+    configured_max_size: number;
     max_size: number;
+    cross_platform_concurrent: boolean;
+    active_x_accounts: number;
+    effective_x_concurrency_limit: number;
     total_slots: number;
     active_slots: number;
     idle_slots: number;
@@ -1021,6 +1025,7 @@ export interface TaskRateItem {
     tweets_per_hour: number;
     replies_per_hour: number;
     elapsed_sec: number;
+    idle_sec: number;
 }
 
 export interface LiveRatesResponse {

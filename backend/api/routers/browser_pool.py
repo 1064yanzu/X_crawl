@@ -31,7 +31,11 @@ class SlotInfo(BaseModel):
 
 class BrowserPoolStatusResponse(BaseModel):
     """浏览器池完整状态"""
+    configured_max_size: int = Field(description="用户配置的单平台并发上限")
     max_size: int = Field(description="并发上限")
+    cross_platform_concurrent: bool = Field(description="是否开启跨平台并发")
+    active_x_accounts: int = Field(description="当前可用于 X 任务的活跃账号数")
+    effective_x_concurrency_limit: int = Field(description="X 任务当前实际并发上限（已受账号数约束）")
     total_slots: int = Field(description="已创建的浏览器实例总数")
     active_slots: int = Field(description="当前有任务占用的槽位数")
     idle_slots: int = Field(description="空闲（无任务占用）的槽位数")
@@ -61,6 +65,25 @@ class ResizeResponse(BaseModel):
 async def get_pool_status() -> BrowserPoolStatusResponse:
     pool = get_browser_pool()
     raw = pool.status()
+    configured_max_size = max(1, int(settings.crawler_max_concurrent_tasks))
+    cross_platform_concurrent = bool(getattr(settings, "crawler_cross_platform_concurrent", True))
+    active_x_accounts = 0
+    effective_x_concurrency_limit = configured_max_size
+    try:
+        from crawler.account_pool import get_pool as get_x_account_pool
+        from crawler.account_dispatcher import get_dispatcher
+
+        active_x_accounts = max(0, int(get_x_account_pool().get_active_account_count()))
+        if bool(getattr(settings, "account_pool_enabled", True)) and active_x_accounts > 0:
+            running_x = sum(1 for slot in raw["slots"] if "x" in (slot.get("platforms") or {}))
+            active_assignments = max(0, int(get_dispatcher().active_assignment_count()))
+            paused_reserved = max(0, active_assignments - running_x)
+            effective_x_concurrency_limit = max(
+                0,
+                min(configured_max_size, active_x_accounts - paused_reserved),
+            )
+    except Exception:
+        pass
 
     slots = [
         SlotInfo(
@@ -74,7 +97,11 @@ async def get_pool_status() -> BrowserPoolStatusResponse:
     active = sum(1 for s in slots if s.platforms)
 
     return BrowserPoolStatusResponse(
+        configured_max_size=configured_max_size,
         max_size=raw["max_size"],
+        cross_platform_concurrent=cross_platform_concurrent,
+        active_x_accounts=active_x_accounts,
+        effective_x_concurrency_limit=effective_x_concurrency_limit,
         total_slots=raw["total_slots"],
         active_slots=active,
         idle_slots=raw["total_slots"] - active,

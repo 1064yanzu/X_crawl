@@ -57,7 +57,8 @@ function PulseIndicator({ active }: { active: boolean }) {
 /* ── 单任务速率行 ── */
 function TaskRateRow({ item }: { item: TaskRateItem }) {
     const platform = getPlatformMeta(item.platform);
-    const isActive = item.tweets_per_min_60s > 0 || item.replies_per_min_60s > 0;
+    // idle_sec < 30 说明任务近期有活动事件（翻页、解析等），脉冲灯保持绿色
+    const isActive = (item.idle_sec ?? 999) < 30 || item.tweets_per_min_60s > 0 || item.replies_per_min_60s > 0;
 
     return (
         <Link
@@ -199,7 +200,7 @@ export function LiveRatesPanel() {
                     )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                    {isActive ? "数据每 5 秒自动刷新，速率基于滑动窗口计算" : "当前没有正在运行的任务"}
+                    {isActive ? "数据每 5 秒自动刷新；左侧主值基于最近 60 秒，右侧箭头值基于最近 15 秒，并非累计结果数" : "当前没有正在运行的任务"}
                 </p>
             </CardHeader>
             <CardContent>

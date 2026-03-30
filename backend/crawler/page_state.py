@@ -170,3 +170,79 @@ def detect_no_results(tab) -> bool:
     """
     text = _normalize_visible_text(tab)
     return any(marker in text for marker in _NO_RESULTS_MARKERS)
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  X 错误页 Retry 按钮检测与点击
+# ═══════════════════════════════════════════════════════════════════
+
+# X 错误页的 Retry 按钮选择器（按优先级排列）
+_RETRY_BUTTON_SELECTORS = [
+    # 最精准：data-testid 标记
+    '[data-testid="error-detail"] button',
+    '[data-testid="errorButton"]',
+    # 兜底：按钮文字匹配
+    'button:contains("Retry")',
+    'button:contains("Try again")',
+    'button:contains("重试")',
+]
+
+# Retry 按钮存在的页面文本特征（避免在正常页面上误触）
+_RETRY_PAGE_MARKERS = [
+    "something went wrong",
+    "try again",
+    "发生错误",
+    "出错了",
+]
+
+import logging as _logging
+_retry_logger = _logging.getLogger(__name__)
+
+
+def click_retry_button_if_present(tab) -> bool:
+    """
+    检测 X 页面是否出现错误页的 Retry 按钮，若有则点击并返回 True。
+
+    X 的 "Something went wrong. Try again." 错误页面会出现一个 Retry 按钮，
+    点击后可触发重新加载内容，而无需刷新整个页面。
+
+    Returns:
+        True  = 检测到 Retry 按钮并点击了
+        False = 未检测到（页面正常，或非错误页）
+    """
+    try:
+        text = _normalize_visible_text(tab)
+        # 仅在有错误页特征时才尝试查找按钮，避免误触
+        if not any(marker in text for marker in _RETRY_PAGE_MARKERS):
+            return False
+
+        for selector in _RETRY_BUTTON_SELECTORS:
+            try:
+                # DrissionPage 支持 CSS 选择器；:contains 是其扩展语法
+                btn = tab.ele(f"css:{selector}", timeout=1.0)
+                if btn:
+                    _retry_logger.info(f"检测到 X 错误页 Retry 按钮（selector={selector!r}），正在点击...")
+                    btn.click()
+                    return True
+            except Exception:
+                continue
+
+        # 兜底：遍历所有按钮文字
+        try:
+            buttons = tab.eles("tag:button")
+            for btn in buttons:
+                try:
+                    btn_text = (btn.text or "").strip().lower()
+                    if btn_text in {"retry", "try again", "重试", "再试一次"}:
+                        _retry_logger.info(f"检测到 X 错误页 Retry 按钮（text={btn_text!r}），正在点击...")
+                        btn.click()
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    except Exception as e:
+        _retry_logger.debug(f"Retry 按钮检测异常（忽略）: {e}")
+
+    return False

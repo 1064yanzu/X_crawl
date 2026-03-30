@@ -1,5 +1,137 @@
 # Changelog
 
+## [2026-03-30] X 评论爬虫 Cookie 注入修复（真正解决未登录问题）
+
+### 问题：X 评论爬虫依旧是未登录状态
+
+**根因**：`_inject_account_cookies`（`crawl_service.py`）的实现方式完全错误：
+1. 开临时 tab → 注入 cookie → 关闭 tab
+2. DrissionPage 的 `tab.set.cookies()` 是 tab 级操作，只在当前 tab 生效
+3. 临时 tab 关闭后 cookie 全部丢失，后续 `reply_browser_instance.new_tab()` 开的新 tab 根本没有 cookie
+
+**修复方案**：在 `BrowserInstance` 层级实现 cookie 继承机制
+
+1. `backend/crawler/browser_pool.py`：
+   - `BrowserInstance` 新增 `_cookies_to_inject` 列表，存储待注入的 cookie
+   - 新增 `set_cookies(cookies)` 方法，设置实例级 cookie
+   - 新增 `_inject_cookies_to_tab(tab)` 方法，将 cookie 注入指定 tab
+   - `new_tab()` 方法在创建 tab 后**自动调用** `_inject_cookies_to_tab`，确保所有新 tab 都带有预设 cookie
+
+2. `backend/api/services/crawl_service.py`：
+   - 重写 `_inject_account_cookies`，不再开临时 tab
+   - 直接调用 `browser_instance.set_cookies(account.cookies)` 设置到实例
+   - 后续所有 `new_tab()` 自动继承这些 cookie
+
+**效果**：
+- X 搜索浏览器和评论浏览器各自独立设置 cookie，互不干扰
+- 评论浏览器每开一个新 tab（每条推文一个 tab）都自动带上登录态
+- 彻底解决"评论爬虫未登录"问题
+
+## [2026-03-30] 翻页结束逻辑审查 + X 错误页 Retry 按钮点击
+
+### 审查结论
+
+**微博搜索翻页** — 逻辑完整，无需修改：
+- `parse_search_page`（`html_parser.py`）返回 `has_next`（检测 `<a class="next">` / "下一页" 链接）和 `total_pages`（从 `ul.s-scroll` 分页器提取）
+- `searcher.py` 第 806 行 `if not has_next: break` 正确结束循环
+- 另有保底：`if not posts: break`（当前页无帖子时立即终止）
+
+**X 搜索翻页** — 结束逻辑完整，补充 Retry 按钮处理：
+- `bottom_cursor` 为空 → `break` ✅
+- 连续 N 页无新推文 → `break` ✅
+- `No results` 哨兵 → `break` ✅
+- Retry 按钮 → **原来缺失，本次补充** ✅
+
+### 新增：X 错误页 Retry 按钮检测与点击
+
+X 的 "Something went wrong. Try again." 错误页面带有 Retry 按钮，
+点击可触发内容重新加载，比刷新整页更轻量。
+
+**修改文件**：
+
+1. `backend/crawler/page_state.py`：新增 `click_retry_button_if_present(tab)` 函数
+   - 先检测页面文本是否有错误特征（避免误触正常页面按钮）
+   - 按优先级尝试 CSS 选择器（`data-testid="errorButton"`、`error-detail` 区域按钮、`:contains("Retry")` 等）
+   - 兜底遍历所有 `<button>` 文字匹配（retry / try again / 重试）
+
+2. `backend/crawler/recovery_policy.py`：`soft_recover_for_packet` 优先尝试点击 Retry 按钮
+   - 点击成功后等待 1.5s 直接返回，不再做滚动+等待
+
+3. `backend/crawler/page_health.py`：`navigate_with_retry` 的 `TRANSIENT_ERROR` 分支
+   - 先尝试点击 Retry 按钮并等待 2s 重新检测
+   - 若点击后页面恢复 OK，直接返回成功；否则继续原有刷新重试流程
+
+## [2026-03-30] 时间分片搜索阻塞与 X 回复未登录 bug 修复
+
+### 问题1：时间分片搜完一片后卡住等评论/回复，不继续下一片
+**根因**：`_search_with_time_splits`（X）和微博分段搜索循环均对每个分片调用 `search(fetch_replies/comments=True)`，
+而 `search()` 的 `finally` 块会 `pipeline.join()` 等待全部回复/评论抓完再返回，
+导致每个分片的搜索+回复/评论串行执行，下一分片要等上一分片所有回复全部完成才开始。
+
+**修复**：
+- `backend/crawler/x_searcher.py`：`_search_with_time_splits` 分片循环改为 `fetch_replies=False`，
+  全部分片推文搜完后统一调用 `_fetch_replies_for_tweets` 一次性抓回复
+- `backend/crawler/weibo/searcher.py`：分段搜索循环改为 `fetch_comments=False`，
+  全部分段搜完后统一遍历帖子逐条抓评论（同步模式，支持 telemetry 实时上报）
+
+### 问题2：X 回复浏览器实例未注入账号 Cookie，导致未登录状态拿不到回复数据
+**根因**：`crawl_service.py` 只对搜索用的 `_browser_instance` 注入了账号 Cookie，
+`_reply_browser_instance`（通过 `acquire_aux` 独立创建）完全没有注入 Cookie，
+导致所有回复抓取都是匿名未登录状态。
+
+**修复**：
+- `backend/api/services/crawl_service.py`：Cookie 注入逻辑扩展，
+  `account_id` 存在时同时对 `_reply_browser_instance` 注入相同账号的 Cookie
+
+## [2026-03-30] 实时速率面板「推文/分、评论/分全为 0」bug 修复
+
+### 根因
+1. `update_preview_tweets`（`task_manager.py`）计算了 `delta_replies` 但调用 `telemetry.record_event` 时**漏传**了 `delta_replies` 参数，导致评论速率在 telemetry 中始终为 0
+2. 微博 `WeiboCommentPipeline` 初始化时未注入 `on_comment_done` 回调，评论并发抓取完成后没有任何 telemetry 事件，评论速率无法实时上报
+3. 微博同步评论模式下，评论抓完后也没有上报 telemetry delta_replies（第一个 `weibo_comment_done` 事件是后来加的，但 `import` 位置错误，实际未生效）
+4. `live-rates` API 的 `task_rates` 缺少 `idle_sec` 字段，前端 `TaskRateRow` 只靠速率 > 0 判断任务活跃，导致「翻页间隙/无结果分段」期间脉冲灯误灭
+
+### 修复
+- `backend/api/services/task_manager.py`：`update_preview_tweets` 补传 `delta_replies=delta_replies_telemetry` 给 `telemetry.record_event`
+- `backend/crawler/weibo/searcher.py`：
+  - `WeiboCommentPipeline` 初始化时注入 `on_comment_done` 回调，每条帖子评论完成后实时上报 `delta_replies`
+  - 同步模式下评论抓完后增加 `telemetry.record_event(..., delta_replies=tree_stats.total_count)`
+- `backend/api/routers/analytics.py`：`task_rates` 中加入 `idle_sec` 字段
+- `frontend/src/services/api/index.ts`：`TaskRateItem` 类型加入 `idle_sec: number`
+- `frontend/src/components/features/analytics/LiveRatesPanel.tsx`：`TaskRateRow.isActive` 改为 `idle_sec < 30` 优先判断，避免「暂时无新数据但任务仍在运行」时脉冲灯熄灭
+
+## [2026-03-29] 浏览器并发面板加减号基准修复
+
+### 修复
+- 修复任务列表页“浏览器并发”面板把“实际浏览器池槽位上限”误当成“用户配置并发上限”来做 `+/-` 运算的问题
+- 在开启跨平台并发时，面板现在会明确区分：
+  - `configured_max_size`：单平台并发上限，也是加减按钮真正修改的值
+  - `max_size`：跨平台扩容后的实际浏览器池槽位上限
+- 前端面板文案同步调整，避免“点减号反而变大”的认知与交互错位
+
+### 文档
+- `docs/api.md`、`docs/施工文档.md`、`docs/changelog.md` 已同步追加说明
+
+## [2026-03-29] X 搜索翻页误停与评论流水线队列修复
+
+### 修复
+- `backend/crawler/packet_guard.py` 新增 SearchTimeline 内容判定，只接受真正包含推文实体的数据包，忽略仅包含 top/bottom cursor 的空壳包
+- `backend/crawler/x_searcher.py` 改为等待“有推文实体”的搜索包；若偶发收到仅游标包，会继续等待当前页真实结果，不再误计为空页并提前停止翻页
+- `backend/crawler/x_searcher.py` 在执行翻页滚动前同步更新任务阶段文案，任务详情页现在会明确显示“正在滚动进入第 N 页”
+- `backend/crawler/pipeline.py` 统一 `CrawlPipeline` 与 `WeiboCommentPipeline` 的队列确认逻辑，移除分支里的重复 `task_done()`，修复评论 worker / reply worker 反复触发 `task_done() called too many times`
+- `frontend/src/components/features/analytics/LiveRatesPanel.tsx` 补充实时速率说明，明确 15s/60s 窗口值是采集速率，不是累计结果数
+
+### 测试
+- 新增 `backend/tests/test_packet_guard.py`
+- 新增 `backend/tests/test_pipeline.py`
+
+### 文档
+- `docs/施工文档.md`、`docs/changelog.md` 已追加本次排查与修复记录
+
+## [2026-03-29] 前端任务列表 UI 类型修复
+
+### 修复
+- 修复 `frontend/src/app/tasks/page.tsx` 中引用的 `TaskListCard` 组件 `busyAction` 属性的 TypeScript 类型不匹配问题，添加了遗漏的 `batchPause` 和 `merge` 类型定义，确保 `npm run build` 成功。
 ## [2026-03-29] 环境配置：Git SSH 代理修复
 
 ### 修复
@@ -566,3 +698,18 @@
 ### 运维
 - 已检查并清理本地 `8000` 端口对应的后端进程；操作完成后二次校验确认该端口当前无占用。
 - 已同步追加施工记录到 `docs/施工文档.md`。
+
+## 2026-03-30
+
+### 排查
+- 已核查“任务突然都停了、任务未完成”的现场日志、运行进程与主任务库 `backend/tasks.db`。
+- 确认本次主因是后端以 `uvicorn ... --reload` 运行，`WatchFiles` 监听到源码变动后触发热重启；`backend/crawler/x_searcher.py` 的修改时间与 `backend/logs/xcrawl.log` 中 `2026-03-30 04:45:43` 的 shutdown 时间完全一致。
+- 确认重启后任务没有自动继续，是因为启动加载任务时会把残留的 `running / pending / paused` 任务统一落成 `stopped`，因此这一批未完成 X 任务都在 `2026-03-30 04:45:48` 前后被写成了 `stopped`。
+- 另外识别出两类独立异常：X 账号轮换链路存在 `ensure_login_with_pool` 未定义报错；部分微博任务存在 `_comment_pipeline` 局部变量未绑定导致的失败。
+- 已把完整排查过程、受影响任务范围和结论追加到 `docs/施工文档.md`。
+
+### 修复
+- 修复 X 评论/回复抓取时登录态没有同步到评论专用浏览器实例的问题；搜索侧确认可用的 Cookie 现在会同步给评论浏览器，账号轮换后也会同步更新。
+- 评论抓取前新增登录兜底：会先补注入浏览器实例 Cookie，再校验/恢复 X 登录态；如果仍不可用，会按登录失效或挑战直接暂停，不再以游客态继续抓空评论。
+- 修复 `backend/crawler/pipeline.py` 中 reply/comment worker 收到结束哨兵后不退出的问题，避免评论流水线线程卡死。
+- 新增回归测试 `backend/tests/test_reply_session_sync.py`，并复跑 `backend/tests/test_reply_session_sync.py`、`backend/tests/test_pipeline.py`、`backend/tests/test_browser_pool.py`，共 `13 passed`。

@@ -15,7 +15,8 @@ from urllib.parse import quote
 
 from crawler.browser import get_new_tab
 from crawler.human_scroll import human_like_scroll, simulate_reading, idle_scroll
-from crawler.auth import ensure_login_detailed, ensure_login_with_pool_detailed
+from crawler.auth import ensure_login_detailed, ensure_login_with_pool, ensure_login_with_pool_detailed
+from crawler.cookie_manager import load_cookies
 from crawler.parser import parse_search_response
 from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
 from crawler.checkpoint_buffer import (
@@ -26,7 +27,11 @@ from crawler.checkpoint_buffer import (
 from crawler.response_saver import save_raw_response
 from crawler.page_health import navigate_with_retry
 from crawler.page_state import detect_page_state, detect_no_results, PageState
-from crawler.packet_guard import wait_for_target_packet, is_search_timeline_body, extract_packet_body_dict
+from crawler.packet_guard import (
+    wait_for_target_packet,
+    is_contentful_search_timeline_body,
+    extract_packet_body_dict,
+)
 from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
 from crawler.crawl_signals import StopSignal, ChallengeSignal, LoginRequiredPause, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
@@ -247,7 +252,7 @@ def _search_with_time_splits(
             segments = plan.segments
             aggregated = []
             start_index = 0
-            logger.info(f"固定 {int(getattr(settings, 'x_time_split_window_days', 7))} 天时间分割，共 {len(segments)} 段")
+            logger.info(f"固定 {plan.window_days} 天时间分割，共 {len(segments)} 段")
 
         seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
         if exclude_ids:
@@ -283,7 +288,7 @@ def _search_with_time_splits(
                 timeout=timeout,
                 task_id=task_id,
                 resume=resume and seg_idx == start_index,
-                fetch_replies=fetch_replies,
+                fetch_replies=False,  # 分片阶段只搜推文，全部分片完成后统一抓回复
                 max_replies_per_tweet=max_replies_per_tweet,
                 reply_depth=reply_depth,
                 crawl_strategy=crawl_strategy,
@@ -362,12 +367,34 @@ def _search_with_time_splits(
                 current_until=None,
             ))
 
+        # ── 所有分片搜完后，统一抓回复（不在每段内部等待）──────────────
+        all_failed_replies: list[dict] = []
+        if fetch_replies and final_tweets:
+            if task_id:
+                _task_mgr.update_task_phase(
+                    task_id,
+                    f"所有分段搜索完成（{len(final_tweets)} 条推文），开始统一抓取回复...",
+                )
+            logger.info(
+                f"[TimeSplit] 全部 {total_segments} 段搜索完成，开始统一抓取 {len(final_tweets)} 条推文的回复"
+            )
+            final_tweets, all_failed_replies = _fetch_replies_for_tweets(
+                final_tweets,
+                max_replies_per_tweet,
+                task_id,
+                timeout,
+                crawl_strategy,
+                reply_depth=reply_depth,
+                browser_instance=reply_browser_instance or browser_instance,
+            )
+
         return SearchResult(
             tweets=final_tweets,
             total_fetched=len(final_tweets),
             keyword=keyword,
             resumed=bool(checkpoint),
             replies_fetched=_count_replies(final_tweets),
+            failed_replies=all_failed_replies,
         )
     finally:
         try:
@@ -441,7 +468,7 @@ def _wait_search_packet_with_recovery(
         packet, ignored = wait_for_target_packet(
             tab,
             timeout=timeout,
-            accept_body=is_search_timeline_body,
+            accept_body=is_contentful_search_timeline_body,
             on_packet=_inspect_packet,
         )
         if packet:
@@ -519,7 +546,7 @@ def _wait_search_packet_with_recovery(
         packet, _ = wait_for_target_packet(
             tab,
             timeout=timeout,
-            accept_body=is_search_timeline_body,
+            accept_body=is_contentful_search_timeline_body,
             on_packet=_inspect_packet,
         )
         if packet:
@@ -550,6 +577,9 @@ def _try_rotate_account(
     current_account,
     pool,
     reason: str,
+    *,
+    reply_browser_instance=None,
+    task_id: Optional[str] = None,
 ) -> "AccountEntry | None":
     """
     尝试轮换到下一个账号。
@@ -558,6 +588,13 @@ def _try_rotate_account(
     """
     if not pool or pool.total_count() <= 1:
         return None
+    if task_id:
+        bound_account_id, _ = _task_mgr.get_task_account(task_id)
+        if bound_account_id:
+            logger.info(
+                f"任务 {task_id[:8]} 已绑定固定账号，跳过运行中换号（reason={reason}）"
+            )
+            return None
     current_id = current_account.account_id if current_account else None
     next_acc = pool.pick_next_account(current_id)
     if not next_acc or next_acc.account_id == current_id:
@@ -569,11 +606,33 @@ def _try_rotate_account(
     try:
         ok = ensure_login_with_pool(tab, next_acc)
         if ok:
+            _sync_reply_browser_cookies(
+                reply_browser_instance,
+                next_acc.cookies,
+                label=f"账号 {next_acc.alias}",
+            )
+            if task_id:
+                _task_mgr.bind_account(task_id, next_acc.account_id, next_acc.alias)
             return next_acc
         logger.warning(f"轮换账号 {next_acc.alias!r} 登录失败，继续使用当前账号")
     except Exception as e:
         logger.warning(f"账号轮换异常: {e}")
     return None
+
+
+def _sync_reply_browser_cookies(reply_browser_instance, cookies: list[dict], *, label: str) -> None:
+    """将搜索侧确认可用的登录 Cookie 同步给评论专用浏览器实例。"""
+    if reply_browser_instance is None:
+        return
+    normalized = [cookie for cookie in (cookies or []) if isinstance(cookie, dict) and cookie.get("name")]
+    if not normalized:
+        logger.warning(f"{label} 登录已确认，但没有可同步到评论浏览器的 Cookie")
+        return
+    try:
+        reply_browser_instance.set_cookies(normalized)
+        logger.info(f"已将 {label} 的 {len(normalized)} 条 Cookie 同步到评论浏览器实例")
+    except Exception as e:
+        logger.warning(f"同步 {label} Cookie 到评论浏览器实例失败: {e}")
 
 
 
@@ -881,7 +940,13 @@ def search(
         current_account = None
 
         if account_pool_enabled and pool.get_active_account_count() > 0:
-            current_account = pool.pick_account_by_index(slot_id) if slot_id is not None else pool.pick_next_account()
+            bound_account_id = None
+            if task_id:
+                bound_account_id, _ = _task_mgr.get_task_account(task_id)
+            if bound_account_id:
+                current_account = pool.get_account(bound_account_id)
+            else:
+                current_account = pool.pick_account_by_index(slot_id) if slot_id is not None else pool.pick_next_account()
             if current_account:
                 account_login = ensure_login_with_pool_detailed(tab, current_account)
                 if not account_login.ok:
@@ -899,6 +964,13 @@ def search(
                     )
                     current_account = None
                 else:
+                    if task_id and bound_account_id != current_account.account_id:
+                        _task_mgr.bind_account(task_id, current_account.account_id, current_account.alias)
+                    _sync_reply_browser_cookies(
+                        reply_browser_instance,
+                        current_account.cookies,
+                        label=f"账号 {current_account.alias}",
+                    )
                     logger.info(
                         f"使用账号池登录: {current_account.alias!r}，"
                         f"活跃账号数: {pool.get_active_account_count()}"
@@ -914,6 +986,11 @@ def search(
                     session_mode=login_result.session_mode,
                     effective_user_data_path=login_result.effective_user_data_path,
                 )
+            _sync_reply_browser_cookies(
+                reply_browser_instance,
+                load_cookies(),
+                label="持久化 X 登录态",
+            )
 
         search_url = _build_search_url(keyword, product)
         logger.info(
@@ -1016,6 +1093,19 @@ def search(
                 tweets_page, bottom_cursor, _ = parse_search_response(body)
                 if bottom_cursor:
                     _last_bottom_cursor = bottom_cursor  # 追踪最后有效 cursor
+
+                if not tweets_page and bottom_cursor:
+                    logger.info(
+                        f"第 {page_num} 页收到仅游标 SearchTimeline 包，继续等待当前页真实结果"
+                    )
+                    telemetry.record_event(
+                        task_id,
+                        "search_cursor_only_packet",
+                        status="running",
+                        phase=f"第 {page_num} 页收到仅游标数据包，继续等待真实结果",
+                        page=page_num,
+                    )
+                    continue
 
                 # 去重
                 new_tweets = [t for t in tweets_page if t.get("id") not in seen_ids]
@@ -1222,8 +1312,12 @@ def search(
                 _rate_mult = get_tracker().get_sleep_multiplier("search", task_id=task_id)
                 if _rate_mult >= _rotation_threshold:
                     rotated = _try_rotate_account(
-                        tab, current_account, pool,
-                        f"搜索速率倍数 {_rate_mult:.1f} 超阈值 {_rotation_threshold}，紧急切换"
+                        tab,
+                        current_account,
+                        pool,
+                        f"搜索速率倍数 {_rate_mult:.1f} 超阈值 {_rotation_threshold}，紧急切换",
+                        reply_browser_instance=reply_browser_instance,
+                        task_id=task_id,
                     )
                     if rotated:
                         current_account = rotated
@@ -1248,6 +1342,8 @@ def search(
                 phase=f"准备进入第 {page_num} 页，执行滚动翻页",
                 page=page_num,
             )
+            if task_id:
+                _update_phase(f"正在滚动进入第 {page_num} 页...")
             human_like_scroll(tab, task_id=task_id)
 
     finally:

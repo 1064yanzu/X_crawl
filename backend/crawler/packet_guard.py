@@ -74,6 +74,65 @@ def is_search_timeline_body(body: dict) -> bool:
         return False
 
 
+def _iter_timeline_entries(body: dict):
+    try:
+        instructions = (
+            body["data"]["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"]
+        )
+    except Exception:
+        return
+
+    if not isinstance(instructions, list):
+        return
+
+    for instruction in instructions:
+        if not isinstance(instruction, dict):
+            continue
+        entries = instruction.get("entries")
+        if isinstance(entries, list):
+            for entry in entries:
+                if isinstance(entry, dict):
+                    yield entry
+        entry = instruction.get("entry")
+        if isinstance(entry, dict):
+            yield entry
+
+
+def _module_has_tweet_item(content: dict) -> bool:
+    items = content.get("items")
+    if not isinstance(items, list):
+        return False
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_node = item.get("item", {}) if isinstance(item.get("item"), dict) else {}
+        item_content = item_node.get("itemContent") or item.get("itemContent") or {}
+        if isinstance(item_content, dict) and item_content.get("__typename") == "TimelineTweet":
+            return True
+    return False
+
+
+def has_search_results_entries(body: dict) -> bool:
+    """判断 SearchTimeline 响应中是否真的携带了推文实体，而不只是 cursor 更新包。"""
+    for entry in _iter_timeline_entries(body) or ():
+        content = entry.get("content", {})
+        if not isinstance(content, dict):
+            continue
+        typename = content.get("__typename")
+        if typename == "TimelineTimelineItem":
+            item_content = content.get("itemContent", {})
+            if isinstance(item_content, dict) and item_content.get("__typename") == "TimelineTweet":
+                return True
+        if typename == "TimelineTimelineModule" and _module_has_tweet_item(content):
+            return True
+    return False
+
+
+def is_contentful_search_timeline_body(body: dict) -> bool:
+    return is_search_timeline_body(body) and has_search_results_entries(body)
+
+
 def is_tweet_detail_body(body: dict) -> bool:
     try:
         return "threaded_conversation_with_injections_v2" in body["data"]

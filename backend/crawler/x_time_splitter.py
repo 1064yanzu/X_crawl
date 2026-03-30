@@ -30,6 +30,7 @@ class TimeSplitPlan:
     base_query: str
     original_since: Optional[str]
     original_until: Optional[str]
+    window_days: int
     segments: tuple[TimeSplitSegment, ...]
 
 
@@ -69,30 +70,64 @@ def build_time_split_plan(
 ) -> TimeSplitPlan:
     base_query, since, until = parse_query_time_range(query)
     if not enabled or not since or not until:
-        return TimeSplitPlan(False, base_query, since, until, ())
+        return TimeSplitPlan(False, base_query, since, until, 0, ())
 
     start = _parse_date(since)
     end = _parse_date(until)
     if not start or not end or end <= start:
-        return TimeSplitPlan(False, base_query, since, until, ())
+        return TimeSplitPlan(False, base_query, since, until, 0, ())
 
     span_days = (end - start).days
     if span_days < max(1, trigger_days):
-        return TimeSplitPlan(False, base_query, since, until, ())
+        return TimeSplitPlan(False, base_query, since, until, 0, ())
 
     configured_window = max(1, unlimited_window_days if max_count == 0 else window_days)
-    segments = _split_by_fixed_days(start, end, window_days=configured_window, max_segments=max_segments)
+    resolved_window = _resolve_window_days(span_days=span_days, configured_window=configured_window)
+    resolved_max_segments = _resolve_max_segments(
+        span_days=span_days,
+        window_days=resolved_window,
+        configured_limit=max_segments,
+    )
+    segments = _split_by_fixed_days(
+        start,
+        end,
+        window_days=resolved_window,
+        max_segments=resolved_max_segments,
+    )
 
     if len(segments) <= 1:
-        return TimeSplitPlan(False, base_query, since, until, ())
+        return TimeSplitPlan(False, base_query, since, until, 0, ())
 
     return TimeSplitPlan(
         enabled=True,
         base_query=base_query,
         original_since=since,
         original_until=until,
+        window_days=resolved_window,
         segments=tuple(segments),
     )
+
+
+def _resolve_window_days(*, span_days: int, configured_window: int) -> int:
+    if span_days > 365:
+        return 7
+    return max(1, int(configured_window))
+
+
+def _resolve_max_segments(*, span_days: int, window_days: int, configured_limit: int) -> int:
+    """
+    解析最终允许的最大分段数。
+
+    规则：
+    - 超过 1 年的长跨度任务，既然已经强制按 7 天切段，就不应再被历史残留的小上限配置打死。
+      这类场景自动放宽到“至少覆盖本次所需分段数”。
+    - 其余场景仍沿用显式安全上限，避免普通任务被误切成过多段。
+    """
+    limit = max(1, int(configured_limit))
+    required_segments = max(1, (max(1, span_days) + max(1, window_days) - 1) // max(1, window_days))
+    if span_days > 365:
+        return max(limit, required_segments)
+    return limit
 
 
 def serialize_segments(segments: tuple[TimeSplitSegment, ...] | list[TimeSplitSegment]) -> list[dict]:

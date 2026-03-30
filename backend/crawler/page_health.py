@@ -272,6 +272,20 @@ def navigate_with_retry(
 
             if is_error_like_state(state):
                 extra_cooldown = _record_error(task_id)
+                # 尝试点击 X 错误页 Retry 按钮，避免刷新整页
+                try:
+                    from crawler.page_state import click_retry_button_if_present
+                    if click_retry_button_if_present(tab):
+                        interruptible_sleep(2.0, task_id=task_id)
+                        state2, _ = detect_page_state(tab)
+                        if state2 == PageState.OK:
+                            _record_success(task_id)
+                            logger.info(f"{log_prefix}点击 Retry 按钮后页面恢复正常")
+                            if post_load_wait > 0:
+                                interruptible_sleep(post_load_wait, task_id=task_id)
+                            return True
+                except Exception:
+                    pass
                 if extra_cooldown > 0:
                     sleep_with_jitter(extra_cooldown, jitter_ratio=0.15, minimum=2.0)
                 if attempt == max_retries:

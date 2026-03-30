@@ -214,45 +214,43 @@ class CrawlPipeline:
                     return
                 continue
 
-            # 收到结束哨兵
-            if item is _SENTINEL:
-                self._queue.task_done()
-                logger.debug("[Pipeline] reply worker 收到结束哨兵，退出主循环")
-                break
-
-            tweet = item
-            tweet_id = str(tweet.get("id", ""))
+            should_exit = item is _SENTINEL
+            should_drain = False
+            tweet = item if item is not _SENTINEL else None
+            tweet_id = str(tweet.get("id", "")) if isinstance(tweet, dict) else ""
 
             try:
-                # 检查任务信号（pause/stop）
-                check_signal(self.task_id)
+                if should_exit:
+                    logger.debug("[Pipeline] reply worker 收到结束哨兵，退出主循环")
+                else:
+                    # 检查任务信号（pause/stop）
+                    check_signal(self.task_id)
 
-                updated_tweet, failure_info = fetch_replies_single(
-                    tweet=tweet,
-                    task_id=self.task_id,
-                    timeout=self.timeout,
-                    max_replies_per_tweet=self.max_replies_per_tweet,
-                    reply_depth=self.reply_depth,
-                    existing_tab=self._reply_tab,
-                    browser_instance=effective_browser,
-                )
+                    updated_tweet, failure_info = fetch_replies_single(
+                        tweet=tweet,
+                        task_id=self.task_id,
+                        timeout=self.timeout,
+                        max_replies_per_tweet=self.max_replies_per_tweet,
+                        reply_depth=self.reply_depth,
+                        existing_tab=self._reply_tab,
+                        browser_instance=effective_browser,
+                    )
 
-                self.result_map[tweet_id] = updated_tweet
-                if failure_info:
-                    self.failed_records.append(failure_info)
+                    self.result_map[tweet_id] = updated_tweet
+                    if failure_info:
+                        self.failed_records.append(failure_info)
 
-                if self.on_reply_done:
-                    try:
-                        self.on_reply_done(tweet_id, updated_tweet.get("replies") or [])
-                    except Exception as cb_err:
-                        logger.warning(f"[Pipeline] on_reply_done 回调异常: {cb_err}")
+                    if self.on_reply_done:
+                        try:
+                            self.on_reply_done(tweet_id, updated_tweet.get("replies") or [])
+                        except Exception as cb_err:
+                            logger.warning(f"[Pipeline] on_reply_done 回调异常: {cb_err}")
 
             except (StopSignal, ChallengeSignal) as e:
                 self._set_error(e)
-                self._queue.task_done()
-                self._drain_queue()
+                should_exit = True
+                should_drain = True
                 logger.info(f"[Pipeline] reply worker 遭遇致命信号，退出: {type(e).__name__}")
-                return
             except Exception as e:
                 logger.error(
                     f"[Pipeline] 抓取 tweet_id={tweet_id} 回复时发生异常（跳过）: {e}",
@@ -264,6 +262,11 @@ class CrawlPipeline:
                     self._queue.task_done()
                 except ValueError:
                     pass
+                if should_drain:
+                    self._drain_queue()
+
+            if should_exit:
+                return
 
         logger.debug("[Pipeline] reply worker 退出主循环")
 
@@ -403,72 +406,70 @@ class WeiboCommentPipeline:
                     return
                 continue
 
-            if item is _SENTINEL:
-                self._queue.task_done()
-                break
-
-            post = item
+            should_exit = item is _SENTINEL
+            should_drain = False
+            post = item if item is not _SENTINEL else None
             # 支持 WeiboPost 对象或 dict（已转换的）
             try:
-                mid = getattr(post, "mid", None) or (post.get("mid") if isinstance(post, dict) else None) or ""
-                author_id = getattr(post, "author_id", None) or (post.get("author_id") if isinstance(post, dict) else None) or ""
-                post_url = getattr(post, "url", None) or (post.get("url") if isinstance(post, dict) else None) or ""
-                comments_count = getattr(post, "comments_count", 0) or (post.get("comments_count", 0) if isinstance(post, dict) else 0)
-
-                if not mid or comments_count == 0:
-                    # 直接写入（无需抓评论）
-                    post_dict = post.to_dict() if hasattr(post, "to_dict") else post
-                    self.result_map[str(mid)] = post_dict
-                    self._queue.task_done()
-                    continue
-
-                check_signal(self.task_id)
-
-                comment_result = do_fetch_comments(
-                    mid,
-                    author_uid=author_id,
-                    post_url=post_url,
-                    post_comment_count=comments_count,
-                    max_comments=settings.weibo_max_comments_per_post,
-                    page_interval=settings.weibo_comment_page_interval,
-                    task_id=self.task_id,
-                    browser_instance=effective_browser,
-                )
-
-                # 附加评论到帖子
-                if hasattr(post, "comments"):
-                    post.comments = comment_result.comments
-                    tree_stats = collect_comment_tree_stats(comment_result.comments)
-                    post.comment_stats = build_comment_stats(
-                        post_comment_count=comments_count,
-                        api_claimed_total=comment_result.api_claimed_total,
-                        fetched_total_count=tree_stats.total_count,
-                        fetched_top_level_count=tree_stats.top_level_count,
-                        max_depth=tree_stats.max_depth,
-                        sub_comment_completion_status=comment_result.sub_comment_completion_status,
-                        truncated_reason=comment_result.truncated_reason,
-                        pages_fetched=comment_result.pages_fetched,
-                    )
-                    post_dict = post.to_dict()
+                if should_exit:
+                    logger.debug("[WeiboCommentPipeline] comment worker 收到结束哨兵，退出主循环")
                 else:
-                    # 已经是 dict
-                    post_dict = dict(post)
-                    post_dict["comments"] = comment_result.comments
+                    mid = getattr(post, "mid", None) or (post.get("mid") if isinstance(post, dict) else None) or ""
+                    author_id = getattr(post, "author_id", None) or (post.get("author_id") if isinstance(post, dict) else None) or ""
+                    post_url = getattr(post, "url", None) or (post.get("url") if isinstance(post, dict) else None) or ""
+                    comments_count = getattr(post, "comments_count", 0) or (post.get("comments_count", 0) if isinstance(post, dict) else 0)
 
-                self.result_map[str(mid)] = post_dict
+                    if not mid or comments_count == 0:
+                        # 直接写入（无需抓评论）
+                        post_dict = post.to_dict() if hasattr(post, "to_dict") else post
+                        self.result_map[str(mid)] = post_dict
+                    else:
+                        check_signal(self.task_id)
 
-                if self.on_comment_done:
-                    try:
-                        self.on_comment_done(str(mid), comment_result.comments)
-                    except Exception:
-                        pass
+                        comment_result = do_fetch_comments(
+                            mid,
+                            author_uid=author_id,
+                            post_url=post_url,
+                            post_comment_count=comments_count,
+                            max_comments=settings.weibo_max_comments_per_post,
+                            page_interval=settings.weibo_comment_page_interval,
+                            task_id=self.task_id,
+                            browser_instance=effective_browser,
+                        )
+
+                        # 附加评论到帖子
+                        if hasattr(post, "comments"):
+                            post.comments = comment_result.comments
+                            tree_stats = collect_comment_tree_stats(comment_result.comments)
+                            post.comment_stats = build_comment_stats(
+                                post_comment_count=comments_count,
+                                api_claimed_total=comment_result.api_claimed_total,
+                                fetched_total_count=tree_stats.total_count,
+                                fetched_top_level_count=tree_stats.top_level_count,
+                                max_depth=tree_stats.max_depth,
+                                sub_comment_completion_status=comment_result.sub_comment_completion_status,
+                                truncated_reason=comment_result.truncated_reason,
+                                pages_fetched=comment_result.pages_fetched,
+                            )
+                            post_dict = post.to_dict()
+                        else:
+                            # 已经是 dict
+                            post_dict = dict(post)
+                            post_dict["comments"] = comment_result.comments
+
+                        self.result_map[str(mid)] = post_dict
+
+                        if self.on_comment_done:
+                            try:
+                                self.on_comment_done(str(mid), comment_result.comments)
+                            except Exception:
+                                pass
 
             except (StopSignal, ChallengeSignal) as e:
                 self._set_error(e)
-                self._queue.task_done()
-                self._drain_queue()
+                should_exit = True
+                should_drain = True
                 logger.info(f"[WeiboCommentPipeline] comment worker 遭遇致命信号，退出: {type(e).__name__}")
-                return
             except Exception as e:
                 logger.error(
                     f"[WeiboCommentPipeline] 抓取 mid={getattr(post, 'mid', '?')} 评论时发生异常（跳过）: {e}",
@@ -479,6 +480,11 @@ class WeiboCommentPipeline:
                     self._queue.task_done()
                 except ValueError:
                     pass
+                if should_drain:
+                    self._drain_queue()
+
+            if should_exit:
+                return
 
         logger.debug("[WeiboCommentPipeline] comment worker 退出主循环")
 

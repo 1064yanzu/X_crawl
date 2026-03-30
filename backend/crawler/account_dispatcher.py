@@ -49,6 +49,19 @@ class AccountDispatcher:
         self._strategy = "round_robin"  # 分配策略
         self._rr_index = 0  # 轮询指针
 
+    @staticmethod
+    def _list_accounts(pool) -> list[AccountEntry]:
+        """
+        同时兼容新旧账号池接口。
+
+        新接口是 `list_accounts()`，旧链路和部分测试桩仍使用 `get_all_accounts()`。
+        """
+        if hasattr(pool, "get_all_accounts"):
+            return list(pool.get_all_accounts())
+        if hasattr(pool, "list_accounts"):
+            return list(pool.list_accounts())
+        return []
+
     def assign_account(self, task_id: str) -> Optional[AccountEntry]:
         """
         为任务分配一个可用账号。
@@ -67,7 +80,7 @@ class AccountDispatcher:
                 # 已释放，允许重新分配
 
             pool = get_pool()
-            accounts = pool.get_all_accounts()
+            accounts = self._list_accounts(pool)
 
             if not accounts:
                 logger.warning(f"没有可用账号来分配任务 {task_id}")
@@ -87,8 +100,22 @@ class AccountDispatcher:
 
             # 选择账号
             if self._strategy == "round_robin":
-                selected = available[self._rr_index % len(available)]
-                self._rr_index += 1
+                selected = None
+                total = len(accounts)
+                start = self._rr_index % total if total > 0 else 0
+                for offset in range(total):
+                    idx = (start + offset) % total
+                    candidate = accounts[idx]
+                    if candidate.account_id in self._account_tasks:
+                        continue
+                    if not candidate.enabled or candidate.is_rate_limited:
+                        continue
+                    selected = candidate
+                    self._rr_index = idx + 1
+                    break
+                if selected is None:
+                    logger.debug(f"轮询后无可用账号，任务 {task_id} 等待中...")
+                    return None
             else:  # least_used
                 selected = min(available, key=lambda a: a.use_count)
 
@@ -105,6 +132,42 @@ class AccountDispatcher:
                 f"为任务 {task_id[:8]} 分配账号 {selected.alias} ({selected.account_id[:8]})"
             )
             return selected
+
+    def reserve_account(self, task_id: str, account_id: str) -> Optional[AccountEntry]:
+        """
+        预留已绑定的指定账号。
+
+        用于任务状态里已经保存了 assigned_account_id，但当前进程内的 dispatcher
+        尚未建立占用关系时，把该账号重新标记为“被这个任务独占”。
+        """
+        with self._lock:
+            if task_id in self._assignments:
+                assignment = self._assignments[task_id]
+                if assignment.is_active and assignment.account_id == account_id:
+                    return get_pool().get_account(account_id)
+
+            occupied_by = self._account_tasks.get(account_id)
+            if occupied_by and occupied_by != task_id:
+                logger.warning(
+                    f"账号 {account_id[:8]} 已被任务 {occupied_by[:8]} 占用，无法预留给任务 {task_id[:8]}"
+                )
+                return None
+
+            account = get_pool().get_account(account_id)
+            if not account or not account.enabled or account.is_rate_limited:
+                return None
+
+            self._account_tasks[account_id] = task_id
+            self._assignments[task_id] = AccountAssignment(
+                account_id=account.account_id,
+                account_alias=account.alias,
+                task_id=task_id,
+                assigned_at=time.time(),
+            )
+            logger.info(
+                f"为任务 {task_id[:8]} 预留已绑定账号 {account.alias} ({account.account_id[:8]})"
+            )
+            return account
 
     def release_account(self, task_id: str) -> bool:
         """
@@ -153,11 +216,15 @@ class AccountDispatcher:
         with self._lock:
             return [a for a in self._assignments.values() if a.is_active]
 
+    def active_assignment_count(self) -> int:
+        with self._lock:
+            return sum(1 for a in self._assignments.values() if a.is_active)
+
     def get_account_status(self) -> dict:
         """获取账号分配状态"""
         with self._lock:
             pool = get_pool()
-            accounts = pool.get_all_accounts()
+            accounts = self._list_accounts(pool)
 
             status = {
                 "total_accounts": len(accounts),

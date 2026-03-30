@@ -12,7 +12,9 @@ import random
 import time
 from typing import Optional
 
+from crawler.auth import check_login, ensure_login_detailed
 from crawler.browser import get_new_tab, promote_browser_for_manual_interaction
+from crawler.cookie_manager import _build_cookie_dict
 from crawler.reply_parser import parse_tweet_detail_response, TWEET_DETAIL_PATTERN
 from crawler.response_saver import save_reply_response
 from crawler.page_health import navigate_with_retry
@@ -211,6 +213,64 @@ def _pick_replacement_account(frozen_id: str, pool) -> "AccountEntry | None":
     return pool.pick_next_account(frozen_id)
 
 
+def _inject_browser_instance_cookies_to_tab(tab, browser_instance) -> int:
+    """将浏览器实例预设 Cookie 显式注入当前 tab。"""
+    if browser_instance is None or not hasattr(browser_instance, "get_cookies"):
+        return 0
+    try:
+        cookies = browser_instance.get_cookies()
+    except Exception as e:
+        logger.warning(f"读取浏览器实例待注入 Cookie 失败: {e}")
+        return 0
+
+    if not cookies:
+        return 0
+
+    injected = 0
+    for cookie in cookies:
+        name = cookie.get("name") if isinstance(cookie, dict) else None
+        if not name:
+            continue
+        try:
+            tab.set.cookies(_build_cookie_dict(cookie))
+            injected += 1
+        except Exception as e:
+            logger.debug(f"补注入浏览器实例 Cookie {name} 失败: {e}")
+    return injected
+
+
+def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance=None) -> None:
+    """抓评论前确保当前 tab 已处于可用登录态。"""
+    try:
+        if check_login(tab):
+            return
+    except Exception as e:
+        logger.debug(f"评论抓取前快速检查登录态失败，将走完整校验: {e}")
+
+    injected = _inject_browser_instance_cookies_to_tab(tab, browser_instance)
+    if injected:
+        logger.info(f"评论抓取前补注入浏览器实例 Cookie {injected} 条")
+        time.sleep(0.5)
+        try:
+            if check_login(tab):
+                return
+        except Exception:
+            pass
+
+    result = ensure_login_detailed(tab)
+    if result.ok:
+        return
+
+    risk_state: RiskState = "challenge" if result.reason == "challenge_required" else "login_required"
+    message = (
+        f"评论抓取前未检测到可用 X 登录态（reason={result.reason}, "
+        f"page_state={result.check.page_state}, url={result.check.current_url or '-'}"
+        f"{', task_id=' + task_id if task_id else ''}）"
+    )
+    logger.warning(message)
+    raise ChallengeSignal(message, risk_state=risk_state)
+
+
 def fetch_replies(
     tweet_id: str,
     screen_name: str,
@@ -261,6 +321,7 @@ def fetch_replies(
     expected_info = f"，预期约 {expected_count} 条" if expected_count else ""
 
     try:
+        _ensure_reply_session_ready(tab, task_id=task_id, browser_instance=browser_instance)
         tab.listen.start(TWEET_DETAIL_PATTERN)
         logger.info(f"开始抓取回复: tweet_id={tweet_id}, url={tweet_url}{expected_info}")
         telemetry.record_event(

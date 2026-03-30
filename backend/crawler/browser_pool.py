@@ -32,7 +32,18 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-_POOL_PROFILE_BASE = str(Path.home() / ".xcrawl-browser-instances")
+_POOL_PROFILE_ROOT = str(Path.home() / ".xcrawl-browser-instances")
+
+
+def _pool_profile_base(*, pid: Optional[int] = None) -> str:
+    """
+    返回当前进程专属的浏览器池 profile 根目录。
+
+    多 worker / 多进程启动时，不同进程若共用同一组 profile 目录，
+    会在“清理残留实例”阶段互相误杀对方正在使用的浏览器。
+    """
+    actual_pid = pid if pid is not None else os.getpid()
+    return os.path.join(_POOL_PROFILE_ROOT, f"worker-{actual_pid}")
 
 
 def compute_pool_max_size(
@@ -69,11 +80,11 @@ def _extract_flag_value(cmdline: list[str], flag: str) -> Optional[str]:
     return None
 
 
-def _iter_managed_pool_roots() -> list[dict[str, object]]:
+def _iter_managed_pool_roots(*, base_dir: Optional[str] = None) -> list[dict[str, object]]:
     if psutil is None:
         return []
 
-    base_dir = os.path.abspath(_POOL_PROFILE_BASE)
+    base_dir = os.path.abspath(base_dir or _pool_profile_base())
     roots: list[dict[str, object]] = []
     for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
         try:
@@ -151,14 +162,18 @@ def _terminate_process_tree(pid: int) -> int:
     return len(ordered)
 
 
-def cleanup_stale_pool_browsers(*, max_size: Optional[int] = None) -> dict[str, int]:
+def cleanup_stale_pool_browsers(
+    *,
+    max_size: Optional[int] = None,
+    base_dir: Optional[str] = None,
+) -> dict[str, int]:
     """
     清理受 BrowserPool 管理的残留 Chrome 根进程。
 
     - 服务重启时：kill 掉所有使用 `~/.xcrawl-browser-instances/instance-*` profile 的旧实例
     - 池大小缩小时：保底确保根实例数不超过 max_size
     """
-    roots = _iter_managed_pool_roots()
+    roots = _iter_managed_pool_roots(base_dir=base_dir)
     if not roots:
         return {"roots_seen": 0, "killed_roots": 0, "killed_processes": 0}
 
@@ -190,9 +205,11 @@ class BrowserInstance:
 
     def __init__(self, instance_id: int):
         self.instance_id = instance_id
-        self.profile_dir = os.path.join(_POOL_PROFILE_BASE, f"instance-{instance_id}")
+        self.profile_dir = os.path.join(_pool_profile_base(), f"instance-{instance_id}")
         self._browser: Optional["Chromium"] = None
         self._lock = threading.Lock()
+        # ── Cookie 继承机制：新 tab 自动注入这些 cookie ──
+        self._cookies_to_inject: list[dict] = []
 
     @property
     def is_alive(self) -> bool:
@@ -311,8 +328,44 @@ class BrowserInstance:
                 )
         os.makedirs(self.profile_dir, exist_ok=True)
 
+    def set_cookies(self, cookies: list[dict]) -> None:
+        """设置此实例的 cookie 列表，后续新 tab 会自动注入这些 cookie。"""
+        with self._lock:
+            self._cookies_to_inject = list(cookies)
+
+    def get_cookies(self) -> list[dict]:
+        """返回此实例当前待注入的新 tab Cookie 副本。"""
+        with self._lock:
+            return list(self._cookies_to_inject)
+
+    def _inject_cookies_to_tab(self, tab) -> int:
+        """将 _cookies_to_inject 注入指定 tab，返回注入数量。"""
+        cookies = []
+        with self._lock:
+            cookies = list(self._cookies_to_inject)
+        if not cookies:
+            return 0
+        injected = 0
+        for c in cookies:
+            name = c.get("name")
+            if not name:
+                continue
+            try:
+                cookie_dict = {
+                    "name": name,
+                    "value": c.get("value", ""),
+                    "domain": c.get("domain", ".x.com"),
+                    "path": c.get("path", "/"),
+                }
+                # DrissionPage 的 cookie 设置
+                tab.set.cookies(cookie_dict)
+                injected += 1
+            except Exception:
+                pass
+        return injected
+
     def new_tab(self, *, _retried: bool = False):
-        """在此实例上创建新 tab（已注入 stealth）。断连时自动重建浏览器实例。"""
+        """在此实例上创建新 tab（已注入 stealth 和 cookie）。断连时自动重建浏览器实例。"""
         from crawler.stealth import apply_stealth_to_tab
         from config import settings
 
@@ -321,6 +374,10 @@ class BrowserInstance:
             browser = self.get_browser()
             tab = browser.new_tab(background=background)
             apply_stealth_to_tab(tab, enabled=True)
+            # ── 自动注入预设 cookie ──
+            injected = self._inject_cookies_to_tab(tab)
+            if injected > 0:
+                logger.debug(f"[BrowserPool] 实例 #{self.instance_id} 新 tab 已注入 {injected} 条 cookie")
             return tab
         except Exception as e:
             err_name = type(e).__name__
@@ -649,9 +706,14 @@ def get_browser_pool() -> BrowserPool:
         with _pool_lock:
             if _pool is None:
                 max_size = compute_pool_max_size()
-                cleanup_stale_pool_browsers()
+                profile_base = _pool_profile_base()
+                cleanup_stale_pool_browsers(base_dir=profile_base)
                 _pool = BrowserPool(max_size=max_size)
-                logger.info(f"[BrowserPool] 初始化，max_size={max_size}")
+                logger.info(
+                    "[BrowserPool] 初始化，max_size=%s，profile_base=%s",
+                    max_size,
+                    profile_base,
+                )
     return _pool
 
 

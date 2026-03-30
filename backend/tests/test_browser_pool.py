@@ -107,7 +107,7 @@ def test_cleanup_stale_pool_browsers_respects_max_size(monkeypatch):
     monkeypatch.setattr(
         browser_pool,
         "_iter_managed_pool_roots",
-        lambda: [
+        lambda **kwargs: [
             {"pid": 101, "create_time": 1.0},
             {"pid": 102, "create_time": 2.0},
             {"pid": 103, "create_time": 3.0},
@@ -146,6 +146,15 @@ def test_compute_pool_max_size_doubles_for_cross_platform_concurrency():
 
     assert compute_pool_max_size(3, cross_platform=True) == 6
     assert compute_pool_max_size(3, cross_platform=False) == 3
+
+
+def test_browser_instance_profile_dir_is_process_scoped():
+    from crawler.browser_pool import BrowserInstance
+
+    inst = BrowserInstance(instance_id=3)
+
+    assert "worker-" in inst.profile_dir
+    assert inst.profile_dir.endswith("instance-3")
 
 
 def test_is_pool_mode_enabled_when_cross_platform_single_task_enabled(monkeypatch):

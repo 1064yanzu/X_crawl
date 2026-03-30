@@ -168,6 +168,7 @@ async def get_live_rates():
         r15 = float(live.get("replies_per_min_15s", 0))
         r60 = float(live.get("replies_per_min_60s", 0))
         elapsed = int(live.get("elapsed_sec", 0))
+        idle = int(live.get("idle_sec", 0))
 
         result_count = int(task.get("result_count", 0))
         replies_fetched = int(task.get("replies_fetched", 0))
@@ -197,6 +198,7 @@ async def get_live_rates():
             "tweets_per_hour": tweets_per_hour,
             "replies_per_hour": replies_per_hour,
             "elapsed_sec": elapsed,
+            "idle_sec": idle,
         })
 
     # 全局每小时速率

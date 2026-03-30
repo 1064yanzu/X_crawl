@@ -18,6 +18,7 @@ from crawler.comment_backfill_runner import run_comment_backfill_task
 from crawler import telemetry
 from crawler.runtime_metrics import clear_metrics, get_metrics, start_task_metrics
 from crawler.x_searcher import search
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,33 @@ def run_search_task(
     if is_recrawl and not effective_exclude_tweet_ids:
         effective_exclude_tweet_ids = task_manager.ensure_task_exclude_tweet_ids(task_id)
 
+    reserved_account_id = account_id
+    if platform == "x" and bool(getattr(settings, "account_pool_enabled", True)):
+        dispatcher = get_dispatcher()
+        reserved_account = None
+        if account_id:
+            reserved_account = dispatcher.reserve_account(task_id, account_id)
+            if reserved_account is None:
+                logger.warning(
+                    "任务 %s 预留已绑定账号失败，尝试重新分配可用账号",
+                    task_id[:8],
+                )
+        if reserved_account is None:
+            reserved_account = dispatcher.assign_account(task_id)
+        if reserved_account is not None:
+            reserved_account_id = reserved_account.account_id
+            task_manager.bind_account(task_id, reserved_account.account_id, reserved_account.alias)
+        else:
+            from crawler.account_pool import get_pool
+
+            if get_pool().get_active_account_count() > 0:
+                raise RuntimeError(
+                    f"X 账号池已启用，但任务 {task_id[:8]} 未能分配到可用账号；"
+                    "为避免破坏一账号一任务约束，已拒绝回退默认登录态"
+                )
+            reserved_account_id = None
+            logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
+
     # ── 浏览器池模式：并发数>1 时按 slot 分配浏览器实例 ──────────────────
     # 每个任务获得独立的搜索浏览器实例
     # 如果需要抓取回复/评论，还会获得额外的独立浏览器实例
@@ -151,9 +179,11 @@ def run_search_task(
             reset_browser()
         ensure_browser_alive()
 
-    # 如果指定了账号，注入其 Cookie
-    if account_id:
-        _inject_account_cookies(task_id, account_id, browser_instance=_browser_instance)
+    # 如果指定了账号，注入其 Cookie（搜索浏览器 + 回复/评论浏览器均需注入）
+    if reserved_account_id:
+        _inject_account_cookies(task_id, reserved_account_id, browser_instance=_browser_instance)
+        if _reply_browser_instance is not None:
+            _inject_account_cookies(task_id, reserved_account_id, browser_instance=_reply_browser_instance)
 
     try:
         if task_kind == "comment_backfill":
@@ -386,6 +416,8 @@ def run_search_task(
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
         final_status = "failed"
     finally:
+        if platform == "x" and final_status in ("done", "failed", "stopped"):
+            _release_task_account(task_id)
         # 归还浏览器实例到池中
         if _pool_mode and _browser_instance is not None:
             try:
@@ -459,13 +491,11 @@ def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:
 
 def _inject_account_cookies(task_id: str, account_id: str, browser_instance=None) -> None:
     """
-    为任务注入指定账号的 Cookie。
+    为任务的浏览器实例注入指定账号的 Cookie。
 
-    直接将账号 Cookie 注入到浏览器 tab，不写入全局 Cookie 文件，
-    避免并发任务之间互相覆盖 Cookie。
+    通过 browser_instance.set_cookies() 设置 cookie，后续所有新 tab 自动继承。
     """
     from crawler.account_pool import get_pool
-    from crawler.auth import inject_account_cookies, ensure_login_with_pool_detailed
 
     pool = get_pool()
     account = pool.get_account(account_id)
@@ -474,32 +504,23 @@ def _inject_account_cookies(task_id: str, account_id: str, browser_instance=None
         logger.warning(f"账号 {account_id} 不存在，跳过注入")
         return
 
-    logger.info(f"为任务 {task_id[:8]} 注入账号 {account.alias} 的 Cookie...")
+    if not browser_instance:
+        logger.warning(f"未提供 browser_instance，无法注入 cookie")
+        return
 
-    tab = None
+    if not account.cookies:
+        logger.warning(f"账号 {account.alias} 无 Cookie 可注入")
+        return
+
+    logger.info(f"为任务 {task_id[:8]} 的浏览器实例注入账号 {account.alias} 的 Cookie...")
+
     try:
-        from crawler.browser import get_new_tab
-        tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
-
-        # 直接将账号 Cookie 注入 tab，不经过全局文件
-        injected = inject_account_cookies(tab, account)
-
-        if injected > 0:
-            logger.info(f"账号 {account.alias} 已注入 {injected} 条 Cookie")
-            pool.mark_account_used(account_id)
-        else:
-            # Cookie 为空可能是数据格式问题，不是账号被封，不标记无效
-            logger.warning(f"账号 {account.alias} 无 Cookie 可注入（不标记为无效）")
-
+        # 设置到浏览器实例，后续所有新 tab 自动继承
+        browser_instance.set_cookies(account.cookies)
+        logger.info(f"账号 {account.alias} 已设置 {len(account.cookies)} 条 Cookie 到浏览器实例")
+        pool.mark_account_used(account_id)
     except Exception as e:
-        # 注入异常是浏览器环境问题，不是账号问题，不标记无效
-        logger.error(f"注入账号 Cookie 失败: {e}", exc_info=True)
-    finally:
-        if tab is not None:
-            try:
-                tab.close()
-            except Exception:
-                logger.debug("关闭账号 Cookie 注入临时 tab 失败", exc_info=True)
+        logger.error(f"设置账号 Cookie 到浏览器实例失败: {e}", exc_info=True)
 
 
 def _handle_task_account_lifecycle(task_id: str) -> None:

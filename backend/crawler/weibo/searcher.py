@@ -406,10 +406,21 @@ def search(
         _comment_pipeline = None
         if fetch_comments:
             from crawler.pipeline import WeiboCommentPipeline
+            from crawler import telemetry as _telemetry
+
+            def _on_comment_done(mid: str, comments: list) -> None:
+                if task_id and comments:
+                    _telemetry.record_event(
+                        task_id,
+                        "weibo_comment_done",
+                        delta_replies=len(comments),
+                    )
+
             _comment_pipeline = WeiboCommentPipeline(
                 task_id=task_id,
                 browser_instance=browser_instance,
                 comment_browser_instance=comment_browser_instance,
+                on_comment_done=_on_comment_done,
             )
 
         # ── 日期范围分割（突破 50 页限制）────────────────────────
@@ -481,7 +492,7 @@ def search(
                             max_count=remaining if max_count > 0 else 0,
                             task_id=task_id,
                             resume=False,
-                            fetch_comments=fetch_comments,
+                            fetch_comments=False,  # 分片阶段只搜帖子，全部分片完成后统一抓评论
                             start_date=seg_start,
                             end_date=seg_end,
                             _parent_accumulated=all_results,
@@ -519,6 +530,81 @@ def search(
                         len(date_ranges),
                         len(all_results),
                     )
+
+                # ── 所有分片搜完后，统一抓评论（不在每段内部阻塞等待）──────────
+                if fetch_comments and all_results:
+                    if task_id:
+                        update_task_phase(
+                            task_id,
+                            f"所有分段搜索完成（{len(all_results)} 条微博），开始统一抓取评论...",
+                        )
+                    logger.info(
+                        "微博分段搜索全部完成，开始统一抓取 %s 条帖子的评论",
+                        len(all_results),
+                    )
+                    # 复用单段搜索的 search() 来完成评论抓取（仅传 all_results 作 seed，不搜索）
+                    from .comment_fetcher import fetch_comments as do_fetch_comments
+                    from .comment_stats import build_comment_stats, collect_comment_tree_stats
+                    from crawler import telemetry as _telemetry
+
+                    updated: list[dict] = []
+                    for post_idx, post_dict in enumerate(all_results):
+                        check_signal(task_id)
+                        post_comments_count = post_dict.get("comments_count", 0)
+                        if not fetch_comments or not post_comments_count:
+                            updated.append(post_dict)
+                            continue
+                        mid = post_dict.get("mid") or post_dict.get("id") or ""
+                        if task_id:
+                            update_task_phase(
+                                task_id,
+                                f"统一评论抓取 {post_idx + 1}/{len(all_results)}: mid={mid}",
+                            )
+                        try:
+                            from config import settings as _settings
+                            comment_result = do_fetch_comments(
+                                mid,
+                                author_uid=post_dict.get("author_id", ""),
+                                post_url=post_dict.get("url", ""),
+                                post_comment_count=post_comments_count,
+                                max_comments=_settings.weibo_max_comments_per_post,
+                                page_interval=_settings.weibo_comment_page_interval,
+                                task_id=task_id,
+                                browser_instance=comment_browser_instance or browser_instance,
+                            )
+                            tree_stats = collect_comment_tree_stats(comment_result.comments)
+                            comment_stats = build_comment_stats(
+                                post_comment_count=post_comments_count,
+                                api_claimed_total=comment_result.api_claimed_total,
+                                fetched_total_count=tree_stats.total_count,
+                                fetched_top_level_count=tree_stats.top_level_count,
+                                max_depth=tree_stats.max_depth,
+                                sub_comment_completion_status=comment_result.sub_comment_completion_status,
+                                truncated_reason=comment_result.truncated_reason,
+                                pages_fetched=comment_result.pages_fetched,
+                            )
+                            new_dict = dict(post_dict)
+                            new_dict["comments"] = [c.__dict__ if hasattr(c, "__dict__") else c for c in comment_result.comments]
+                            new_dict["comment_stats"] = comment_stats.__dict__ if hasattr(comment_stats, "__dict__") else comment_stats
+                            updated.append(new_dict)
+                            if task_id and tree_stats.total_count > 0:
+                                _telemetry.record_event(
+                                    task_id,
+                                    "weibo_comment_done",
+                                    delta_replies=tree_stats.total_count,
+                                )
+                        except StopSignal:
+                            updated.append(post_dict)
+                            updated.extend(all_results[post_idx + 1:])
+                            all_results = updated
+                            raise
+                        except Exception as e:
+                            logger.warning(f"统一评论抓取失败 mid={mid}: {e}")
+                            updated.append(post_dict)
+                    all_results = updated
+                    if task_id:
+                        update_preview_tweets(task_id, current_page=len(date_ranges), tweets_for_preview=all_results)
+
                 return WeiboSearchResult(posts=all_results, resumed=resumed)
 
         # 构建搜索 URL
@@ -655,6 +741,7 @@ def search(
                                 )
                                 post.comments = comment_result.comments
                                 from .comment_stats import build_comment_stats, collect_comment_tree_stats
+                                from crawler import telemetry as _telemetry
 
                                 tree_stats = collect_comment_tree_stats(comment_result.comments)
                                 post.comment_stats = build_comment_stats(
@@ -667,6 +754,12 @@ def search(
                                     truncated_reason=comment_result.truncated_reason,
                                     pages_fetched=comment_result.pages_fetched,
                                 )
+                                if task_id and tree_stats.total_count > 0:
+                                    _telemetry.record_event(
+                                        task_id,
+                                        "weibo_comment_done",
+                                        delta_replies=tree_stats.total_count,
+                                    )
                             except StopSignal:
                                 raise  # 停止信号向上传播
                             except Exception as e:

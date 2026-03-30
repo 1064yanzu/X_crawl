@@ -156,9 +156,29 @@ class TaskScheduler:
                 if p == platform and tid in self._running and self._running[tid].is_alive()
             )
 
+    def _x_account_worker_limit(self) -> int:
+        configured = self._max_workers()
+        if not bool(getattr(settings, "account_pool_enabled", True)):
+            return configured
+
+        try:
+            from crawler.account_pool import get_pool
+            from crawler.account_dispatcher import get_dispatcher
+
+            active_accounts = max(0, int(get_pool().get_active_account_count()))
+            if active_accounts <= 0:
+                return configured
+
+            active_assignments = max(0, int(get_dispatcher().active_assignment_count()))
+            running_x = self._platform_running_count("x")
+            paused_reserved = max(0, active_assignments - running_x)
+            return max(0, min(configured, active_accounts - paused_reserved))
+        except Exception:
+            return configured
+
     def _can_dispatch(self, platform: str) -> bool:
         """判断指定平台是否可以调度新任务。"""
-        max_w = self._max_workers()
+        max_w = self._x_account_worker_limit() if platform == "x" else self._max_workers()
         total_running = self._running_count()
 
         if not self._cross_platform_concurrent():

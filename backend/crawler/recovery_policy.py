@@ -34,7 +34,17 @@ def sleep_with_jitter(seconds: float, *, jitter_ratio: float = 0.2, minimum: flo
 
 
 def soft_recover_for_packet(tab, attempt: int) -> None:
-    """超时后的轻量恢复：小步滚动 + 短等待。"""
+    """超时后的轻量恢复：检测 Retry 按钮 → 小步滚动 + 短等待。"""
+    # 优先：若出现 X 错误页 Retry 按钮，直接点击触发内容重新加载
+    try:
+        from crawler.page_state import click_retry_button_if_present
+        clicked = click_retry_button_if_present(tab)
+        if clicked:
+            time.sleep(1.5)
+            return
+    except Exception:
+        pass
+
     wait = backoff_seconds(attempt, base=0.5, cap=2.5)
     sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.3)
     try:
