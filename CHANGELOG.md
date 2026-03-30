@@ -1,5 +1,28 @@
 # Changelog
 
+## [2026-03-30] X 任务时间片段未爬完却显示完成 bug 修复（第二轮）
+
+### 问题（第二轮）
+第一轮修复只更新了 `completed_segments`，但漏了 `current_segment_index` 仍被错误设为 `total_segments`，导致前端显示"已完成 8/168 个分片，当前第 168 个"这种错误状态。
+
+### 根因
+两处代码都错误地使用了 `total_segments`：
+1. `completed_segments=min(total_segments, len(segments))` 
+2. `current_segment_index=total_segments`
+
+### 修复（第二轮）
+1. `completed_segments` 改用 `actual_completed = seg_idx + 1`
+2. `current_segment_index` 改用 `actual_completed + 1`（如果不是最后一个分片）
+3. 添加 `seg_idx = -1` 初始化，避免循环未执行时变量未定义
+
+### 修改文件
+- `backend/crawler/x_searcher.py`
+
+### 相关
+- 上一轮已把 16 个 X done 任务改为 stopped 状态，可重新恢复继续爬取
+
+---
+
 ## [2026-03-30] X 评论爬虫 Cookie 注入修复（真正解决未登录问题）
 
 ### 问题：X 评论爬虫依旧是未登录状态

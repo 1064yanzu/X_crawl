@@ -7,6 +7,7 @@ X 搜索爬虫核心模块（v4 - 人性化渐进滚动 + 统一 DFS 策略）
 - 每页检查任务控制信号（pause/stop），可随时暂停或终止
 - Referer 头由浏览器自动管理（根据抓包分析无需手动设置）
 """
+
 import logging
 import time
 import random
@@ -15,7 +16,11 @@ from urllib.parse import quote
 
 from crawler.browser import get_new_tab
 from crawler.human_scroll import human_like_scroll, simulate_reading, idle_scroll
-from crawler.auth import ensure_login_detailed, ensure_login_with_pool, ensure_login_with_pool_detailed
+from crawler.auth import (
+    ensure_login_detailed,
+    ensure_login_with_pool,
+    ensure_login_with_pool_detailed,
+)
 from crawler.cookie_manager import load_cookies
 from crawler.parser import parse_search_response
 from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
@@ -32,9 +37,24 @@ from crawler.packet_guard import (
     is_contentful_search_timeline_body,
     extract_packet_body_dict,
 )
-from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
-from crawler.crawl_signals import StopSignal, ChallengeSignal, LoginRequiredPause, RiskState
-from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
+from crawler.recovery_policy import (
+    RecoveryPolicy,
+    soft_recover_for_packet,
+    backoff_seconds,
+    sleep_with_jitter,
+)
+from crawler.crawl_signals import (
+    StopSignal,
+    ChallengeSignal,
+    LoginRequiredPause,
+    RiskState,
+)
+from crawler.utils import (
+    jittered_sleep,
+    check_signal,
+    merge_remaining,
+    interruptible_sleep,
+)
 from crawler.runtime_metrics import bump_metric
 from crawler.rate_tracker import get_tracker, extract_rate_headers
 from crawler.account_pool import get_pool, compute_dynamic_interval
@@ -66,9 +86,17 @@ _TAB_MAP: dict[str, str] = {
 
 # 搜索操作符前缀列表（用于判断是否需要预热导航）
 _SEARCH_OPERATOR_PREFIXES = (
-    "from:", "to:", "lang:", "since:", "until:",
-    "min_faves:", "min_retweets:", "min_replies:",
-    "filter:", "-", "@",
+    "from:",
+    "to:",
+    "lang:",
+    "since:",
+    "until:",
+    "min_faves:",
+    "min_retweets:",
+    "min_replies:",
+    "filter:",
+    "-",
+    "@",
 )
 
 
@@ -104,6 +132,7 @@ def _extract_base_keyword(keyword: str) -> str:
       'from:elonmusk since:2024-01-01'              -> 'elonmusk'  (取 from 账号)
     """
     import re
+
     tokens = keyword.split()
     base_words: list[str] = []
     in_quote = False
@@ -228,7 +257,9 @@ def _search_with_time_splits(
     exclude_ids: Optional[set[str]] = None,
     recrawl_mode: bool = False,
 ) -> SearchResult:
-    shared_tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
+    shared_tab = (
+        browser_instance.new_tab() if browser_instance is not None else get_new_tab()
+    )
     try:
         if checkpoint and checkpoint.get("mode") == "time_split":
             base_query = str(checkpoint.get("base_query", "")).strip()
@@ -242,7 +273,9 @@ def _search_with_time_splits(
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
                 trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
                 window_days=int(getattr(settings, "x_time_split_window_days", 7)),
-                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                unlimited_window_days=int(
+                    getattr(settings, "x_time_split_window_days_unlimited", 7)
+                ),
                 max_segments=int(getattr(settings, "x_time_split_max_segments", 600)),
                 force_window=False,
             )
@@ -258,6 +291,7 @@ def _search_with_time_splits(
         if exclude_ids:
             seen_ids |= exclude_ids
         total_segments = len(segments)
+        seg_idx = -1
 
         for seg_idx in range(start_index, total_segments):
             segment = segments[seg_idx]
@@ -280,7 +314,9 @@ def _search_with_time_splits(
             if max_count > 0 and remaining <= 0:
                 break
 
-            segment_keyword = build_query_with_window(base_query, segment.since, segment.until)
+            segment_keyword = build_query_with_window(
+                base_query, segment.since, segment.until
+            )
             segment_result = search(
                 keyword=segment_keyword,
                 max_count=remaining if max_count > 0 else 0,
@@ -320,7 +356,9 @@ def _search_with_time_splits(
                         f"复爬快跳段 {seg_idx + 1}/{total_segments}（无新增），下一段...",
                     )
             aggregated = _merge_tweets_by_id(aggregated, segment_result.tweets)
-            seen_ids = {str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")}
+            seen_ids = {
+                str(tweet.get("id", "")) for tweet in aggregated if tweet.get("id")
+            }
 
             if task_id:
                 progress = _build_segment_progress(
@@ -328,11 +366,17 @@ def _search_with_time_splits(
                     total_segments=total_segments,
                     completed_segments=seg_idx + 1,
                     current_segment_index=min(seg_idx + 2, total_segments),
-                    current_since=segments[seg_idx + 1].since if seg_idx + 1 < total_segments else None,
-                    current_until=segments[seg_idx + 1].until if seg_idx + 1 < total_segments else None,
+                    current_since=segments[seg_idx + 1].since
+                    if seg_idx + 1 < total_segments
+                    else None,
+                    current_until=segments[seg_idx + 1].until
+                    if seg_idx + 1 < total_segments
+                    else None,
                 )
                 _task_mgr.update_task_segment_progress(task_id, progress)
-                current_page = int((_task_mgr.get_task_summary(task_id) or {}).get("current_page", 0))
+                current_page = int(
+                    (_task_mgr.get_task_summary(task_id) or {}).get("current_page", 0)
+                )
                 _task_mgr.update_task_progress(task_id, current_page, aggregated)
 
                 save_checkpoint(
@@ -357,15 +401,24 @@ def _search_with_time_splits(
                 break
 
         final_tweets = aggregated[:max_count] if max_count else aggregated
+        actual_completed = seg_idx + 1 if seg_idx < total_segments else total_segments
         if task_id:
-            _task_mgr.update_task_segment_progress(task_id, _build_segment_progress(
-                enabled=True,
-                total_segments=total_segments,
-                completed_segments=min(total_segments, len(segments)),
-                current_segment_index=total_segments if total_segments else 0,
-                current_since=None,
-                current_until=None,
-            ))
+            actual_current = (
+                actual_completed + 1
+                if actual_completed < total_segments
+                else total_segments
+            )
+            _task_mgr.update_task_segment_progress(
+                task_id,
+                _build_segment_progress(
+                    enabled=True,
+                    total_segments=total_segments,
+                    completed_segments=actual_completed,
+                    current_segment_index=actual_current,
+                    current_since=None,
+                    current_until=None,
+                ),
+            )
 
         # ── 所有分片搜完后，统一抓回复（不在每段内部等待）──────────────
         all_failed_replies: list[dict] = []
@@ -483,13 +536,15 @@ def _wait_search_packet_with_recovery(
         # X 的 "No results for ..." 页面可能不触发 SearchTimeline 请求，
         # 此时无需浪费时间做软重试/硬刷新，直接返回无结果哨兵
         if detect_no_results(tab):
-            logger.info(
-                f"第 {page_num} 页检测到搜索无结果页面，跳过重试"
-            )
+            logger.info(f"第 {page_num} 页检测到搜索无结果页面，跳过重试")
             return _NO_RESULTS_SENTINEL
 
         state, reason = detect_page_state(tab)
-        if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
+        if state in {
+            PageState.CHALLENGE,
+            PageState.RATE_LIMITED,
+            PageState.LOGIN_REQUIRED,
+        }:
             challenge_hits += 1
             bump_metric(task_id, "risk_hits")
             if challenge_hits > policy.challenge_retry_times:
@@ -500,6 +555,7 @@ def _wait_search_packet_with_recovery(
             # 首次就提醒用户在浏览器中完成验证
             if challenge_hits == 1:
                 from crawler.browser import promote_browser_for_manual_interaction
+
                 promote_browser_for_manual_interaction(tab, reason=state.value)
             logger.warning(
                 f"第 {page_num} 页检测到风险状态 state={state.value}，"
@@ -513,7 +569,9 @@ def _wait_search_packet_with_recovery(
                 continue  # 继续软重试流程
 
         if soft_attempt < policy.packet_soft_retries:
-            logger.info(f"第 {page_num} 页软恢复重试 {soft_attempt + 1}/{policy.packet_soft_retries}")
+            logger.info(
+                f"第 {page_num} 页软恢复重试 {soft_attempt + 1}/{policy.packet_soft_retries}"
+            )
             bump_metric(task_id, "soft_retries")
             soft_recover_for_packet(tab, soft_attempt)
 
@@ -554,13 +612,10 @@ def _wait_search_packet_with_recovery(
             return packet
         # 硬刷新后仍无包，检测是否为无结果页面
         if detect_no_results(tab):
-            logger.info(
-                f"第 {page_num} 页硬刷新后检测到搜索无结果页面，跳过后续重试"
-            )
+            logger.info(f"第 {page_num} 页硬刷新后检测到搜索无结果页面，跳过后续重试")
             return _NO_RESULTS_SENTINEL
 
     return None
-
 
 
 def _update_rate_tracker(packet, endpoint: str, task_id: Optional[str] = None) -> None:
@@ -620,11 +675,17 @@ def _try_rotate_account(
     return None
 
 
-def _sync_reply_browser_cookies(reply_browser_instance, cookies: list[dict], *, label: str) -> None:
+def _sync_reply_browser_cookies(
+    reply_browser_instance, cookies: list[dict], *, label: str
+) -> None:
     """将搜索侧确认可用的登录 Cookie 同步给评论专用浏览器实例。"""
     if reply_browser_instance is None:
         return
-    normalized = [cookie for cookie in (cookies or []) if isinstance(cookie, dict) and cookie.get("name")]
+    normalized = [
+        cookie
+        for cookie in (cookies or [])
+        if isinstance(cookie, dict) and cookie.get("name")
+    ]
     if not normalized:
         logger.warning(f"{label} 登录已确认，但没有可同步到评论浏览器的 Cookie")
         return
@@ -633,8 +694,6 @@ def _sync_reply_browser_cookies(reply_browser_instance, cookies: list[dict], *, 
         logger.info(f"已将 {label} 的 {len(normalized)} 条 Cookie 同步到评论浏览器实例")
     except Exception as e:
         logger.warning(f"同步 {label} Cookie 到评论浏览器实例失败: {e}")
-
-
 
 
 def search(
@@ -684,7 +743,11 @@ def search(
 
     # ── 1. 尝试加载检查点 ───────────────────────────────────────────
     all_tweets: list[dict] = list(seed_tweets or [])
-    seen_ids: set[str] = {str(t.get("id") or "").strip() for t in all_tweets if str(t.get("id") or "").strip()}
+    seen_ids: set[str] = {
+        str(t.get("id") or "").strip()
+        for t in all_tweets
+        if str(t.get("id") or "").strip()
+    }
     if exclude_ids:
         seen_ids.update(exclude_ids)
     _exclude_count = len(seen_ids)  # 复爬时预加载的排除 ID 数
@@ -753,7 +816,9 @@ def search(
                 "root_keyword": _time_split_context.get("root_keyword", keyword),
                 "base_query": _time_split_context.get("base_query", ""),
                 "segments": _time_split_context.get("segments", []),
-                "current_segment_index": int(_time_split_context.get("current_segment_index", 0)),
+                "current_segment_index": int(
+                    _time_split_context.get("current_segment_index", 0)
+                ),
                 "aggregated_tweets": _combine_for_task(tweets_so_far),
                 "segment_progress": segment_progress or {},
             }
@@ -764,7 +829,9 @@ def search(
             return
         if segment_progress:
             _task_mgr.update_task_segment_progress(task_id, segment_progress)
-        _task_mgr.update_task_phase(task_id, f"{segment_prefix}{message}" if segment_prefix else message)
+        _task_mgr.update_task_phase(
+            task_id, f"{segment_prefix}{message}" if segment_prefix else message
+        )
 
     _last_progress_persist: float = 0.0  # checkpoint 节流计时器
     _PROGRESS_THROTTLE_SEC = 3.0  # 最低写入间隔
@@ -777,7 +844,9 @@ def search(
         def _on_reply_done_pipeline(tweet_id_cb: str, replies_cb: list[dict]):
             """pipeline reply worker 每条完成后的落盘回调"""
             if task_id:
-                _task_mgr.update_task_replies_progress(task_id, tweet_id_cb, len(replies_cb))
+                _task_mgr.update_task_replies_progress(
+                    task_id, tweet_id_cb, len(replies_cb)
+                )
 
         _pipeline = CrawlPipeline(
             task_id=task_id,
@@ -796,17 +865,23 @@ def search(
         now = time.monotonic()
         # 节流：距上次落盘 <3s 时仅更新内存中的 preview
         if now - _last_progress_persist < _PROGRESS_THROTTLE_SEC:
-            _task_mgr.update_preview_tweets(task_id, current_page, _combine_for_task(tweets_so_far))
+            _task_mgr.update_preview_tweets(
+                task_id, current_page, _combine_for_task(tweets_so_far)
+            )
             return
         _last_progress_persist = now
-        _task_mgr.update_task_progress(task_id, current_page, _combine_for_task(tweets_so_far))
+        _task_mgr.update_task_progress(
+            task_id, current_page, _combine_for_task(tweets_so_far)
+        )
         if segment_progress:
             _task_mgr.update_task_segment_progress(task_id, segment_progress)
 
     def _update_preview(current_page: int, tweets_so_far: list[dict]) -> None:
         if not task_id:
             return
-        _task_mgr.update_preview_tweets(task_id, current_page, _combine_for_task(tweets_so_far))
+        _task_mgr.update_preview_tweets(
+            task_id, current_page, _combine_for_task(tweets_so_far)
+        )
         if segment_progress:
             _task_mgr.update_task_segment_progress(task_id, segment_progress)
 
@@ -822,7 +897,9 @@ def search(
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
                 trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
                 window_days=int(getattr(settings, "x_time_split_window_days", 7)),
-                unlimited_window_days=int(getattr(settings, "x_time_split_window_days_unlimited", 7)),
+                unlimited_window_days=int(
+                    getattr(settings, "x_time_split_window_days_unlimited", 7)
+                ),
                 max_segments=int(getattr(settings, "x_time_split_max_segments", 600)),
                 force_window=False,
             )
@@ -849,7 +926,13 @@ def search(
 
     if task_id and resume:
         ckpt = load_checkpoint(task_id)
-        if not time_split_active and ckpt and ckpt.get("mode") == "time_split" and ckpt.get("root_keyword") == keyword and ckpt.get("product") == product:
+        if (
+            not time_split_active
+            and ckpt
+            and ckpt.get("mode") == "time_split"
+            and ckpt.get("root_keyword") == keyword
+            and ckpt.get("product") == product
+        ):
             return _search_with_time_splits(
                 keyword=keyword,
                 max_count=max_count,
@@ -868,9 +951,8 @@ def search(
                 exclude_ids=exclude_ids,
                 recrawl_mode=_recrawl_mode,
             )
-        if (
-            not time_split_active
-            and not (ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product)
+        if not time_split_active and not (
+            ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product
         ):
             if _get_time_split_plan().enabled:
                 return _dispatch_time_splits()
@@ -899,14 +981,20 @@ def search(
                 _resume_failed: list[dict] = []
                 if fetch_replies:
                     # 检查是否还有未抓取回复的推文（跳过已有 replies 的推文由下层处理）
-                    tweets_without_replies = [t for t in all_tweets if not t.get("replies")]
+                    tweets_without_replies = [
+                        t for t in all_tweets if not t.get("replies")
+                    ]
                     if tweets_without_replies:
                         logger.info(
                             f"断点恢复：{len(all_tweets)} 条推文中 {len(tweets_without_replies)} 条"
                             f"尚未抓取回复，继续抓取..."
                         )
                         all_tweets, _resume_failed = _fetch_replies_for_tweets(
-                            all_tweets, max_replies_per_tweet, task_id, timeout, crawl_strategy,
+                            all_tweets,
+                            max_replies_per_tweet,
+                            task_id,
+                            timeout,
+                            crawl_strategy,
                             reply_depth=reply_depth,
                             browser_instance=browser_instance,
                         )
@@ -914,7 +1002,9 @@ def search(
                         logger.info("断点恢复：所有推文已有回复数据，跳过回复抓取")
                 return SearchResult(
                     tweets=all_tweets[:max_count] if max_count else all_tweets,
-                    total_fetched=len(all_tweets[:max_count] if max_count else all_tweets),
+                    total_fetched=len(
+                        all_tweets[:max_count] if max_count else all_tweets
+                    ),
                     keyword=keyword,
                     resumed=resumed,
                     replies_fetched=_count_replies(all_tweets),
@@ -946,7 +1036,11 @@ def search(
             if bound_account_id:
                 current_account = pool.get_account(bound_account_id)
             else:
-                current_account = pool.pick_account_by_index(slot_id) if slot_id is not None else pool.pick_next_account()
+                current_account = (
+                    pool.pick_account_by_index(slot_id)
+                    if slot_id is not None
+                    else pool.pick_next_account()
+                )
             if current_account:
                 account_login = ensure_login_with_pool_detailed(tab, current_account)
                 if not account_login.ok:
@@ -965,7 +1059,9 @@ def search(
                     current_account = None
                 else:
                     if task_id and bound_account_id != current_account.account_id:
-                        _task_mgr.bind_account(task_id, current_account.account_id, current_account.alias)
+                        _task_mgr.bind_account(
+                            task_id, current_account.account_id, current_account.alias
+                        )
                     _sync_reply_browser_cookies(
                         reply_browser_instance,
                         current_account.cookies,
@@ -1140,12 +1236,18 @@ def search(
                 if fetch_replies and new_tweets:
                     if _pipeline is not None:
                         # ── Pipeline 模式：搜索 tab 不停监听，回复在 reply_tab 并发抓取 ──
-                        logger.info(f"[Pipeline] 第 {page_num} 页 {len(new_tweets)} 条推文放入流水线...")
+                        logger.info(
+                            f"[Pipeline] 第 {page_num} 页 {len(new_tweets)} 条推文放入流水线..."
+                        )
                         if task_id:
-                            _update_phase(f"[Pipeline] 第 {page_num} 页 {len(new_tweets)} 条推文已入队，并发抓回复中...")
+                            _update_phase(
+                                f"[Pipeline] 第 {page_num} 页 {len(new_tweets)} 条推文已入队，并发抓回复中..."
+                            )
                             _update_preview(page_num, list(all_tweets) + new_tweets)
                             # 搜索侧立即落盘 checkpoint（不等回复）
-                            _save_search_checkpoint(list(all_tweets) + new_tweets, bottom_cursor, page_num)
+                            _save_search_checkpoint(
+                                list(all_tweets) + new_tweets, bottom_cursor, page_num
+                            )
 
                         # 启动 pipeline（仅在第一批时启动）
                         if not _pipeline._reply_thread:
@@ -1163,9 +1265,13 @@ def search(
                         logger.info(f"立即抓取 {len(new_tweets)} 条新推文的回复...")
 
                         if task_id:
-                            _update_phase(f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复...")
+                            _update_phase(
+                                f"第 {page_num} 页已解析 {len(new_tweets)} 条，正在抓取回复..."
+                            )
                             _update_preview(page_num, list(all_tweets) + new_tweets)
-                            _save_search_checkpoint(list(all_tweets) + new_tweets, bottom_cursor, page_num)
+                            _save_search_checkpoint(
+                                list(all_tweets) + new_tweets, bottom_cursor, page_num
+                            )
 
                         tab.listen.stop()
 
@@ -1183,8 +1289,12 @@ def search(
                                 processed_tweet["replies"] = replies
                                 _dfs_processed.append(processed_tweet)
                             if task_id:
-                                _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
-                                interim_tweets = list(_dfs_all_tweets_ref) + list(_dfs_processed)
+                                _task_mgr.update_task_replies_progress(
+                                    task_id, tweet_id, len(replies)
+                                )
+                                interim_tweets = list(_dfs_all_tweets_ref) + list(
+                                    _dfs_processed
+                                )
                                 flushed = stage_reply_checkpoint(
                                     task_id=task_id,
                                     keyword=_search_keyword,
@@ -1199,7 +1309,10 @@ def search(
 
                         try:
                             new_tweets, _dfs_failed = _fetch_replies_for_tweets(
-                                new_tweets, max_replies_per_tweet, task_id, timeout,
+                                new_tweets,
+                                max_replies_per_tweet,
+                                task_id,
+                                timeout,
                                 strategy="dfs",
                                 progress_callback=_on_reply_progress,
                                 reply_depth=reply_depth,
@@ -1219,7 +1332,9 @@ def search(
                                 all_tweets.extend(e.partial_tweets)
                             if task_id:
                                 _update_progress(page_num, list(all_tweets))
-                                _save_search_checkpoint(list(all_tweets), bottom_cursor, page_num)
+                                _save_search_checkpoint(
+                                    list(all_tweets), bottom_cursor, page_num
+                                )
                             raise
                         finally:
                             tab.listen.start(SEARCH_TIMELINE_PATTERN)
@@ -1246,7 +1361,9 @@ def search(
                 if task_id:
                     _save_search_checkpoint(all_tweets, bottom_cursor, page_num)
                     _update_progress(page_num, list(all_tweets))
-                    _update_phase(f"已完成第 {page_num} 页，共 {len(_combine_for_task(all_tweets))} 条")
+                    _update_phase(
+                        f"已完成第 {page_num} 页，共 {len(_combine_for_task(all_tweets))} 条"
+                    )
 
                 if not bottom_cursor:
                     logger.info("无更多数据（bottom_cursor 为空），停止")
@@ -1257,7 +1374,11 @@ def search(
 
                 # ── 休息节律（大幅缩减，仅保留必要的反风控节奏） ──────────
                 # 复爬模式全速推进：跳过所有休息节律
-                if getattr(settings, "crawler_enable_break_rhythm", True) and new_tweets and not _recrawl_mode:
+                if (
+                    getattr(settings, "crawler_enable_break_rhythm", True)
+                    and new_tweets
+                    and not _recrawl_mode
+                ):
                     _total_fetched_now = len(all_tweets)
                     # 微休息（2% 概率，3-6 秒）
                     if random.random() < 0.02:
@@ -1267,7 +1388,9 @@ def search(
                             _update_phase(f"微休息中 ({_micro_wait:.0f}s)，稍后继续...")
                         interruptible_sleep(_micro_wait, task_id=task_id)
                     # 小憩（每 1000 条推文，15-30 秒）
-                    _short_n = max(1000, getattr(settings, "crawler_short_break_every_n", 500) * 2)
+                    _short_n = max(
+                        1000, getattr(settings, "crawler_short_break_every_n", 500) * 2
+                    )
                     if _short_n > 0 and _total_fetched_now > 0:
                         prev_count = _total_fetched_now - len(new_tweets)
                         if prev_count // _short_n < _total_fetched_now // _short_n:
@@ -1276,20 +1399,27 @@ def search(
                                 f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条）..."
                             )
                             if task_id:
-                                _update_phase(f"小憩中 ({_short_wait:.0f}s)，稍后继续...")
+                                _update_phase(
+                                    f"小憩中 ({_short_wait:.0f}s)，稍后继续..."
+                                )
                             interruptible_sleep(_short_wait, task_id=task_id)
                     # 长休息（每 4 小时，2-4 分钟）
-                    _rest_h = max(4.0, getattr(settings, "crawler_long_rest_interval_hours", 2.0) * 2)
+                    _rest_h = max(
+                        4.0,
+                        getattr(settings, "crawler_long_rest_interval_hours", 2.0) * 2,
+                    )
                     _rest_interval = _rest_h * 3600 * random.uniform(0.90, 1.10)
                     _now_mono = time.monotonic()
                     _last_rest = max(_crawl_start_time, _long_rest_done_at)
                     if _now_mono - _last_rest >= _rest_interval:
                         _long_wait = random.uniform(120, 240)
                         logger.info(
-                            f"长休息 {_long_wait/60:.0f}min（运行 {(_now_mono - _crawl_start_time)/3600:.1f}h）..."
+                            f"长休息 {_long_wait / 60:.0f}min（运行 {(_now_mono - _crawl_start_time) / 3600:.1f}h）..."
                         )
                         if task_id:
-                            _update_phase(f"长休息中 ({_long_wait/60:.0f}min)，稍后继续...")
+                            _update_phase(
+                                f"长休息中 ({_long_wait / 60:.0f}min)，稍后继续..."
+                            )
                         interruptible_sleep(_long_wait, task_id=task_id)
                         _long_rest_done_at = time.monotonic()
 
@@ -1306,10 +1436,14 @@ def search(
 
             # ── 搜索账号切换：仅在速率压力过高时紧急切换（不主动轮换）──
             # 搜索由单账号贯穿完成；只有 rate_multiplier 超阈值时才紧急换人
-            _rotation_threshold = getattr(settings, "account_rotation_multiplier_threshold", 2.0)
+            _rotation_threshold = getattr(
+                settings, "account_rotation_multiplier_threshold", 2.0
+            )
             _pool_enabled = getattr(settings, "account_pool_enabled", True)
             if _pool_enabled and pool.total_count() > 1 and current_account:
-                _rate_mult = get_tracker().get_sleep_multiplier("search", task_id=task_id)
+                _rate_mult = get_tracker().get_sleep_multiplier(
+                    "search", task_id=task_id
+                )
                 if _rate_mult >= _rotation_threshold:
                     rotated = _try_rotate_account(
                         tab,
@@ -1328,7 +1462,9 @@ def search(
             min_s, max_s, _ = compute_dynamic_interval("search")
             # 滚动本身已耗时 ~1s，打折后仅补足差值
             _scroll_overhead = 1.0
-            _sleep_time = max(0.3, random.uniform(min_s, max_s) * _rate_mult - _scroll_overhead)
+            _sleep_time = max(
+                0.3, random.uniform(min_s, max_s) * _rate_mult - _scroll_overhead
+            )
             logger.debug(
                 f"翻页间隔: {_sleep_time:.1f}s "
                 f"(动态区间 {min_s:.1f}~{max_s:.1f}s × rate_mult {_rate_mult:.1f})"
@@ -1432,6 +1568,7 @@ def search(
 #  回复抓取辅助
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _fetch_replies_for_tweets(
     tweets: list[dict],
     max_replies_per_tweet: int,
@@ -1488,6 +1625,7 @@ def _count_replies(tweets: list[dict]) -> int:
 #  导航策略
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _navigate_direct(
     *,
     tab,
@@ -1509,7 +1647,9 @@ def _navigate_direct(
         task_id=task_id,
     )
     if not ok:
-        logger.warning("搜索页首跳失败，执行预热路径后再重试一次（home -> explore -> search）")
+        logger.warning(
+            "搜索页首跳失败，执行预热路径后再重试一次（home -> explore -> search）"
+        )
         try:
             tab.get("https://x.com/home", timeout=25)
             sleep_with_jitter(1.0, jitter_ratio=0.15, minimum=0.5)
@@ -1533,11 +1673,10 @@ def _navigate_direct(
     return ok
 
 
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  URL 构建
 # ═══════════════════════════════════════════════════════════════════
+
 
 def _build_search_url(keyword: str, product: ProductType) -> str:
     """构建搜索 URL"""
