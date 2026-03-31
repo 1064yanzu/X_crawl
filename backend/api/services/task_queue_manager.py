@@ -495,9 +495,10 @@ def notify_task_terminal(task_id: str, status: str) -> None:
             queue["finished_at"] = None
         _persist_queue(queue)
 
-    # 并发模式下：恢复状态残留的任务
+    # 并发模式下：通过调度器恢复状态残留的任务（受并发限制保护，不直接启动线程）
     max_concurrent = int(settings.crawler_max_concurrent_tasks)
     if max_concurrent > 1 and stalled_ids:
+        from api.services.task_scheduler import scheduler
         for tid in stalled_ids:
             t = task_manager.get_task_summary(tid)
             if not t:
@@ -505,4 +506,5 @@ def notify_task_terminal(task_id: str, status: str) -> None:
             logger.info("notify_task_terminal: 恢复残留任务 %s（状态=%s 但线程已死）", tid[:8], t.get("status"))
             task_manager.update_task_status(tid, "stopped")
             task_manager.resume_finished_task(tid)
-            crawl_service.start_crawler_thread(tid, t, force_new_browser=True)
+            platform = t.get("platform", "x")
+            scheduler.enqueue(tid, t, platform=platform)

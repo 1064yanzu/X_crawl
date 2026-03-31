@@ -172,6 +172,59 @@ def detect_no_results(tab) -> bool:
     return any(marker in text for marker in _NO_RESULTS_MARKERS)
 
 
+def detect_end_of_timeline(tab) -> bool:
+    """检测 X 搜索页面是否已到达时间线底部（无更多内容可加载）。
+
+    当搜索结果很少（例如只有1-2条推文）时，页面不会有加载指示器，
+    滚动也不会触发新的 SearchTimeline 请求。
+    爬虫应识别此情况并停止等待，而非傻等数据包超时。
+
+    检测策略：
+    1. 检查页面是否存在"正在加载"指示器（若有则说明还在加载）
+    2. 检查滚动位置是否已接近底部
+    3. 综合判断是否已无更多内容
+    """
+    try:
+        # 检测是否存在加载指示器
+        loading_indicators = [
+            '[data-testid="cellInnerDiv"] [role="progressbar"]',
+            '[aria-label="Loading"]',
+            '[aria-label="正在加载"]',
+            'div[style*="spinner"]',
+        ]
+        for selector in loading_indicators:
+            try:
+                elem = tab.ele(selector, timeout=0.1)
+                if elem:
+                    return False  # 还在加载中
+            except Exception:
+                pass
+
+        # 检测是否已滚动到底部（通过 JS 检查滚动位置）
+        try:
+            scroll_info = tab.run_js("""
+                const scrollTop = window.scrollY || document.documentElement.scrollTop;
+                const scrollHeight = document.documentElement.scrollHeight;
+                const clientHeight = document.documentElement.clientHeight;
+                const atBottom = scrollTop + clientHeight >= scrollHeight - 200;
+                const timeline = document.querySelector('[data-testid="primaryColumn"]');
+                const tweetCount = timeline ? timeline.querySelectorAll('[data-testid="tweet"]').length : 0;
+                return { atBottom, scrollHeight, tweetCount };
+            """)
+            if isinstance(scroll_info, dict):
+                at_bottom = scroll_info.get("atBottom", False)
+                tweet_count = scroll_info.get("tweetCount", 0)
+                # 如果已到底部且推文数很少，说明确实没有更多内容
+                if at_bottom and tweet_count > 0 and tweet_count <= 10:
+                    return True
+        except Exception:
+            pass
+
+        return False
+    except Exception:
+        return False
+
+
 # ═══════════════════════════════════════════════════════════════════
 #  X 错误页 Retry 按钮检测与点击
 # ═══════════════════════════════════════════════════════════════════

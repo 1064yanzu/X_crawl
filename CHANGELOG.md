@@ -1,25 +1,210 @@
 # Changelog
 
-## [2026-03-30] X 任务时间片段未爬完却显示完成 bug 修复（第二轮）
+## [2026-03-30] 修复 recrawl 任务秒完成问题
 
-### 问题（第二轮）
-第一轮修复只更新了 `completed_segments`，但漏了 `current_segment_index` 仍被错误设为 `total_segments`，导致前端显示"已完成 8/168 个分片，当前第 168 个"这种错误状态。
+### 问题
+Recrawl 任务（`is_recrawl=True`）在断点恢复时秒完成，原因：
+1. 断点有旧数据但无 cursor → 代码判定"搜索已完成"直接返回
+2. 即使进入搜索，旧推文都被去重 → 连续空页 → 2 页后退出
 
-### 根因
-两处代码都错误地使用了 `total_segments`：
-1. `completed_segments=min(total_segments, len(segments))` 
-2. `current_segment_index=total_segments`
+### 修复
+1. **断点恢复逻辑**：recrawl 模式下无 cursor 也继续搜索（找新推文）
+2. **空页容忍度**：recrawl 从头搜索时提高到 10 页（旧推文去重是正常的）
 
-### 修复（第二轮）
-1. `completed_segments` 改用 `actual_completed = seg_idx + 1`
-2. `current_segment_index` 改用 `actual_completed + 1`（如果不是最后一个分片）
-3. 添加 `seg_idx = -1` 初始化，避免循环未执行时变量未定义
+---
+
+## [2026-03-30] 修复"到底"检测误判问题
+
+### 问题
+`detect_end_of_timeline` 函数在页面刚加载时就误判为"已到底"，导致任务秒完成。
+
+### 修复
+- 新增 `fetched_count` 参数传入 `_wait_search_packet_with_recovery`
+- 只有当 **已获取推文数 > 0** 时才启用"到底"检测
+- 确保至少拿到过一页数据才会判定时间线到底
+
+---
+
+## [2026-03-30] X 搜索无结果快速跳过
+
+### 修复
+`wait_for_target_packet` 新增 `early_exit_check` 参数，在等待期间检测 "No results for ..." 页面，检测到后立即跳到下一个时间段（不再傻等 45 秒）。
+
+---
+
+## [2026-03-30] 撤销浏览器窗口隐藏修改
+
+### 问题
+之前添加的 `--window-position=-32000,-32000` 把浏览器窗口移到屏幕外，导致点击 Dock 栏的 Chrome 图标后看不到任何窗口。
+
+### 修复
+- 移除 `browser.py` 和 `browser_pool.py` 中的窗口位置偏移参数
+- 移除相关的焦点恢复辅助函数
+- 浏览器窗口现在会正常显示
+
+### 说明
+浏览器启动时会短暂抢焦点，这是 Chrome 的默认行为。如果你需要后台运行且不想看到浏览器窗口，可以：
+1. 在设置中开启 `browser_headless`（无头模式）—— 但这样 Cloudflare 验证时无法手动操作
+2. 或者接受当前行为：浏览器正常显示，需要手动处理验证时可以直接操作
+
+---
+
+## [2026-03-30] 并发爆炸 + profile 目录清理修复
+
+### 问题1：任务队列触发几十个浏览器实例
+
+**根因**：`notify_task_terminal` 在检测到"状态为 running/pending 但线程已死"的残留任务时，直接调用 `crawl_service.start_crawler_thread()`，完全**绕过调度器并发限制**。每个任务完成时都会触发，导致所有残留任务同时启动，并发数暴涨。
+
+**修复**（`backend/api/services/task_queue_manager.py`）：
+- 改为 `scheduler.enqueue(tid, t, platform=platform)`，让任务走正常调度队列
+- 调度器会按 `crawler_max_concurrent_tasks` 上限控制实际启动数量
+
+### 问题2：profile 目录清理失败 `[Errno 66] Directory not empty`
+
+**根因**：旧进程的 Chrome 锁定了 `Default` 目录，`shutil.rmtree` 直接报错，导致警告日志刷屏
+
+**修复**（`backend/crawler/browser_pool.py`）：
+- 改用 `shutil.rmtree(ignore_errors=True)`
+- 删除后若目录仍存在，逐个子项尝试清理
+- 日志级别从 `WARNING` 降为 `DEBUG`，不再刷屏
 
 ### 修改文件
-- `backend/crawler/x_searcher.py`
+- `backend/api/services/task_queue_manager.py`
+- `backend/crawler/browser_pool.py`
 
-### 相关
-- 上一轮已把 16 个 X done 任务改为 stopped 状态，可重新恢复继续爬取
+---
+
+## [2026-03-30] 浏览器实例后台运行 + 关闭时无限重建修复
+
+### 问题1：浏览器实例启动时抢夺系统焦点
+
+**根因**：Chrome macOS 启动时默认激活窗口，`--no-startup-window` 和 `--window-position=-32000,-32000` 均未设置
+
+**修复**（`browser_pool.py` + `browser.py`）：
+- 启动参数加 `--no-startup-window`（Chrome 启动时不弹出窗口激活）
+- 启动参数加 `--window-position=-32000,-32000`（浏览器窗口移到屏幕外，彻底不可见）
+- 两个文件（浏览器池实例和单例浏览器）均已加上
+
+### 问题2：关闭后端时浏览器实例无限重建
+
+**根因**：`main.py` lifespan 关闭时调用 `close_all()` 杀掉所有浏览器进程，但任务线程仍在运行，`new_tab` 遭遇断连后触发重建逻辑，重建完成后再次被 `close_all` 杀掉，无限循环直到 Ctrl+C
+
+**修复**：
+- `browser_pool.py` 新增全局 `_shutting_down` 标志和 `set_shutting_down()` 函数
+- `new_tab` 断连重试逻辑：`if _retried or _shutting_down: raise`（关闭期间直接放弃重建）
+- `main.py` lifespan 关闭入口最先调用 `set_shutting_down()`，再关闭浏览器
+
+### 修改文件
+- `backend/crawler/browser_pool.py`
+- `backend/crawler/browser.py`
+- `backend/api/main.py`
+
+---
+
+## [2026-03-30] 账号僵尸占用根本原因修复
+
+### 问题
+5个账号、并发5，但仍然报"无可用账号"。
+
+**根因**：`crawl_service.py` 的 `finally` 块只在 `done/failed/stopped` 时释放账号，**`paused` 状态不释放账号**。任何导致任务暂停的事件（登录失败、Cloudflare 验证、无账号可用）都会让账号继续被占用，下一批任务来时账号全部"僵尸占用"，`assign_account` 始终返回 `None`。
+
+同时，`_x_account_worker_limit` 用 `active_assignments - running_x` 估算"暂停但占用账号的任务数"，僵尸占用会让此值虚高，导致调度器可用槽位变为 0，停止启动新任务。
+
+**修复**（`backend/api/services/crawl_service.py`）：
+- `finally` 条件改为 `final_status in ("done", "failed", "stopped", "paused")`
+- 任务暂停时也释放账号，让其他任务可以立即复用
+
+### 修改文件
+- `backend/api/services/crawl_service.py`
+
+---
+
+## [2026-03-30] 爬虫并发稳定性三项修复
+
+### 问题1：账号池全占用时任务崩溃（RuntimeError）
+
+**根因**：并发任务数 > 账号数时，`assign_account` 返回 `None`，直接抛 `RuntimeError` 导致任务线程崩溃，状态标记为 `failed`，且会触发调度器重启循环
+
+**修复**（`backend/api/services/crawl_service.py`）：
+- 将 `raise RuntimeError(...)` 改为 `raise LoginRequiredPause(..., reason="no_account_available")`
+- 任务进入 `paused` 状态等待账号释放，用户可手动继续，不再崩溃标记 `failed`
+
+### 问题2：新浏览器实例启动时抢夺系统焦点
+
+**根因**：`auth.py` 的 `_finalize_login_result` 在**任何**登录失败时都调用 `promote_browser_for_manual_interaction`（触发 `osascript activate` 把 Chrome 拉到前台）。但浏览器池初始化阶段 Cookie 还没注入，登录必然失败，错误地触发焦点抢夺
+
+**修复**（`backend/crawler/auth.py`）：
+- 只在 `result.reason == "challenge_required"` 时才调用 `promote_browser_for_manual_interaction`
+- 普通登录失败（未登录、Cookie 过期）不抢夺焦点
+
+### 问题3：Cloudflare 验证时自动刷新循环
+
+**根因**：`navigate_with_retry` 在 `raise_on_risk=False`（默认）且 challenge 重试次数耗尽时，执行 `continue` 继续下一轮循环（会 `tab.refresh()`），形成"刷新 → 触发 CF → 再次超限 → 再次刷新"死循环
+
+**修复**（`backend/crawler/page_health.py`）：
+- challenge 重试耗尽时，**无论** `raise_on_risk` 为何值，都立即抛 `ChallengeSignal`，任务进入暂停状态并通知用户在浏览器完成验证
+- 彻底移除"challenge 超限后继续刷新"的分支逻辑
+
+### 修改文件
+- `backend/api/services/crawl_service.py`
+- `backend/crawler/auth.py`
+- `backend/crawler/page_health.py`
+
+---
+
+## [2026-03-30] 时间分片状态 + 评论爬虫登录稳定性修复（深度修复）
+
+### 问题1：时间分段未完成却显示"任务完成"
+
+**根因（更深层）**：之前的修复只生成了正确的 `status_val`，但代码流程为：
+1. 先调用 `update_task_result()`（内部强制写入 `status=done` + 发出 `task_done` 遥测事件）
+2. 再判断 `segment_complete`，若为 `False` 再调用 `update_task_stopped()`
+3. `final_status` 永远赋值为 `"done"`，`"stopped"` 分支根本不触发账号释放和队列通知
+
+**修复（`backend/api/services/crawl_service.py`）**：
+- 将 `segment_complete` 判断**提前到** `update_task_result` 之前
+- 分段完成 → 调用 `update_task_result()`，触发正常 `done` 流程
+- 分段未完成 → 跳过 `update_task_result()`，直接调用 `update_task_phase` + `update_task_stopped()`，避免发出错误的 `task_done` 遥测事件
+- `final_status = status_val`（`"done"` 或 `"stopped"`），确保 `finally` 块中账号释放、浏览器池归还、队列通知均能正确执行
+
+### 问题2：评论爬虫有时处于未登录状态
+
+**根因**：`reply_fetcher.py` 的 `_ensure_reply_session_ready` 在 `check_login` 失败后走 `ensure_login_detailed(tab)`，这个函数只处理默认全局 Cookie，完全不感知账号池绑定账号。当回复浏览器实例与搜索浏览器实例为独立 Chrome 进程时，登录态同步不可靠。
+
+**修复（`backend/crawler/reply_fetcher.py`）**：
+- 新增 `_try_inject_pool_account_cookies(tab, task_id)` 函数：优先读取任务绑定账号（`get_task_account`），回退到 `pick_next_account()`，调用 `ensure_login_with_pool_detailed` 注入账号 Cookie
+- `_ensure_reply_session_ready` 在浏览器实例 Cookie 注入失败后，**优先尝试账号池绑定账号**，再走 `ensure_login_detailed` 兜底
+- 登录恢复链路：`check_login` → 浏览器实例 Cookie 注入 → 账号池绑定账号注入 → 默认 `ensure_login_detailed`
+
+### 修改文件
+- `backend/api/services/crawl_service.py`
+- `backend/crawler/reply_fetcher.py`
+
+---
+
+## [2026-03-30] X 任务完成判断逻辑修复（时间分片未爬完不应标记完成）
+
+### 问题
+任务只要 crawler 返回结果就直接标记为 `done`，即使时间分片只爬了一部分。这是导致"明明没爬完却显示完成"的根本原因。
+
+### 修复
+在 `crawl_service.py` 中，crawler 返回后增加时间分片完成度检查：
+```python
+segment_progress = task_summary.get("segment_progress", {})
+if segment_progress.get("enabled") and segment_progress.get("total_segments"):
+    completed = segment_progress.get("completed_segments", 0)
+    total = segment_progress.get("total_segments", 0)
+    segment_complete = completed >= total
+
+status_val = "done" if segment_complete else "stopped"
+```
+
+### 修改文件
+- `backend/api/services/crawl_service.py`
+
+### 效果
+- 时间分片全部完成 → 状态 `done`
+- 时间分片未完成 → 状态 `stopped`，显示实际进度，可恢复继续爬取
 
 ---
 

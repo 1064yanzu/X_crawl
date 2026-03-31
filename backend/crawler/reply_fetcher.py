@@ -239,6 +239,44 @@ def _inject_browser_instance_cookies_to_tab(tab, browser_instance) -> int:
     return injected
 
 
+def _try_inject_pool_account_cookies(tab, task_id: Optional[str]) -> bool:
+    """
+    尝试从账号池中获取任务绑定账号的 Cookie 并注入 tab。
+    注入成功且登录验证通过时返回 True，否则返回 False。
+    """
+    if not task_id:
+        return False
+    try:
+        from crawler.account_pool import get_pool
+        from crawler.auth import ensure_login_with_pool_detailed
+        import api.services.task_manager as _task_mgr
+        from config import settings as _settings
+
+        if not getattr(_settings, "account_pool_enabled", True):
+            return False
+        pool = get_pool()
+        if pool.get_active_account_count() == 0:
+            return False
+        bound_account_id, _ = _task_mgr.get_task_account(task_id)
+        account = pool.get_account(bound_account_id) if bound_account_id else None
+        if account is None:
+            account = pool.pick_next_account()
+        if account is None:
+            return False
+        result = ensure_login_with_pool_detailed(tab, account)
+        if result.ok:
+            logger.info(
+                f"评论抓取前通过账号池账号 {account.alias!r} 恢复登录态成功"
+            )
+            return True
+        logger.warning(
+            f"评论抓取前账号池账号 {account.alias!r} 登录验证失败，reason={result.reason}"
+        )
+    except Exception as e:
+        logger.debug(f"评论抓取前尝试账号池注入失败: {e}")
+    return False
+
+
 def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance=None) -> None:
     """抓评论前确保当前 tab 已处于可用登录态。"""
     try:
@@ -256,6 +294,10 @@ def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance
                 return
         except Exception:
             pass
+
+    # 优先尝试通过账号池绑定账号恢复登录态（比默认 ensure_login_detailed 更精准）
+    if _try_inject_pool_account_cookies(tab, task_id):
+        return
 
     result = ensure_login_detailed(tab)
     if result.ok:

@@ -1,6 +1,7 @@
 """
 爬虫服务层（调度器驱动）。
 """
+
 from __future__ import annotations
 
 import logging
@@ -85,7 +86,12 @@ def start_crawler_thread(
     if enqueued:
         task_manager.update_task_status(task_id, "pending")
         task_manager.update_task_phase(task_id, "任务已进入调度队列，等待执行...")
-        telemetry.record_event(task_id, "scheduler_enqueued", status="pending", phase="任务已进入调度队列，等待执行...")
+        telemetry.record_event(
+            task_id,
+            "scheduler_enqueued",
+            status="pending",
+            phase="任务已进入调度队列，等待执行...",
+        )
     else:
         logger.info(f"任务重复入队已忽略: task_id={task_id}")
 
@@ -114,7 +120,12 @@ def run_search_task(
     final_status = "failed"
     task_manager.update_task_status(task_id, "running")
     task_manager.update_task_phase(task_id, "任务开始执行，正在初始化浏览器...")
-    telemetry.record_event(task_id, "crawler_started", status="running", phase="任务开始执行，正在初始化浏览器...")
+    telemetry.record_event(
+        task_id,
+        "crawler_started",
+        status="running",
+        phase="任务开始执行，正在初始化浏览器...",
+    )
     start_task_metrics(task_id)
 
     logger.info(
@@ -125,7 +136,9 @@ def run_search_task(
 
     effective_exclude_tweet_ids = list(exclude_tweet_ids or [])
     if is_recrawl and not effective_exclude_tweet_ids:
-        effective_exclude_tweet_ids = task_manager.ensure_task_exclude_tweet_ids(task_id)
+        effective_exclude_tweet_ids = task_manager.ensure_task_exclude_tweet_ids(
+            task_id
+        )
 
     reserved_account_id = account_id
     if platform == "x" and bool(getattr(settings, "account_pool_enabled", True)):
@@ -142,14 +155,18 @@ def run_search_task(
             reserved_account = dispatcher.assign_account(task_id)
         if reserved_account is not None:
             reserved_account_id = reserved_account.account_id
-            task_manager.bind_account(task_id, reserved_account.account_id, reserved_account.alias)
+            task_manager.bind_account(
+                task_id, reserved_account.account_id, reserved_account.alias
+            )
         else:
             from crawler.account_pool import get_pool
 
             if get_pool().get_active_account_count() > 0:
-                raise RuntimeError(
-                    f"X 账号池已启用，但任务 {task_id[:8]} 未能分配到可用账号；"
-                    "为避免破坏一账号一任务约束，已拒绝回退默认登录态"
+                raise LoginRequiredPause(
+                    f"X 账号池已启用，但当前所有账号均被占用，任务 {task_id[:8]} 已暂停等待账号释放",
+                    reason="no_account_available",
+                    session_mode="pool",
+                    effective_user_data_path=None,
                 )
             reserved_account_id = None
             logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
@@ -159,6 +176,7 @@ def run_search_task(
     # 如果需要抓取回复/评论，还会获得额外的独立浏览器实例
     # 搜索和回复使用不同 Chrome 进程，确保 CDP 命令不串行化
     from crawler.browser_pool import get_browser_pool, is_pool_mode_enabled
+
     _pool_mode = is_pool_mode_enabled()
     _browser_instance = None
     _reply_browser_instance = None  # 回复/评论专用独立浏览器实例
@@ -181,9 +199,13 @@ def run_search_task(
 
     # 如果指定了账号，注入其 Cookie（搜索浏览器 + 回复/评论浏览器均需注入）
     if reserved_account_id:
-        _inject_account_cookies(task_id, reserved_account_id, browser_instance=_browser_instance)
+        _inject_account_cookies(
+            task_id, reserved_account_id, browser_instance=_browser_instance
+        )
         if _reply_browser_instance is not None:
-            _inject_account_cookies(task_id, reserved_account_id, browser_instance=_reply_browser_instance)
+            _inject_account_cookies(
+                task_id, reserved_account_id, browser_instance=_reply_browser_instance
+            )
 
     try:
         if task_kind == "comment_backfill":
@@ -256,7 +278,7 @@ def run_search_task(
             )
             task_manager.update_task_phase(
                 task_id,
-                f"微博任务执行完成，累计 {len(tweets)} 条微博，评论 {replies_fetched} 条"
+                f"微博任务执行完成，累计 {len(tweets)} 条微博，评论 {replies_fetched} 条",
             )
             task_manager.update_task_result(
                 task_id=task_id,
@@ -267,7 +289,9 @@ def run_search_task(
                 runtime_metrics=get_metrics(task_id),
             )
             telemetry.record_event(
-                task_id, "crawler_finished", status="done",
+                task_id,
+                "crawler_finished",
+                status="done",
                 phase="微博任务执行完成",
                 delta_tweets=len(tweets),
                 delta_replies=replies_fetched,
@@ -280,9 +304,15 @@ def run_search_task(
             )
             final_status = "done"
         else:
+            # ── 时间分段任务 recrawl 时不传 seed_tweets，交由 x_searcher 内部时间分段逻辑处理 ──
+            # 检查方式：查看任务的 segment_progress 是否启用
+            task_summary = task_manager.get_task_summary(task_id) or {}
+            segment_progress = task_summary.get("segment_progress", {})
+            is_time_split_task = segment_progress.get("enabled", False) and segment_progress.get("total_segments", 0) > 0
+            
             seed_tweets = (
                 task_manager._get_task_result_snapshot(task_id, load=True)
-                if is_recrawl and effective_exclude_tweet_ids
+                if is_recrawl and effective_exclude_tweet_ids and not is_time_split_task
                 else []
             )
             result = search(
@@ -298,36 +328,70 @@ def run_search_task(
                 browser_instance=_browser_instance,
                 reply_browser_instance=_reply_browser_instance,
                 slot_id=_slot_id,
-                exclude_ids=set(effective_exclude_tweet_ids) if effective_exclude_tweet_ids else None,
+                exclude_ids=set(effective_exclude_tweet_ids)
+                if effective_exclude_tweet_ids
+                else None,
                 recrawl_mode=is_recrawl,
                 seed_tweets=seed_tweets,
             )
             runtime_metrics = get_metrics(task_id)
             quality_state = "partial" if result.failed_replies else "complete"
-            task_manager.update_task_result(
-                task_id=task_id,
-                tweets=result.tweets,
-                resumed=result.resumed,
-                replies_fetched=result.replies_fetched,
-                quality_state=quality_state,
-                runtime_metrics=runtime_metrics,
+
+            # ── 判断时间分段是否全部完成，再决定任务最终状态 ────────────────
+            segment_complete = True
+            completed = 0
+            total = 0
+            task_summary = task_manager.get_task_summary(task_id) or {}
+            segment_progress = task_summary.get("segment_progress", {})
+            if segment_progress.get("enabled") and segment_progress.get(
+                "total_segments"
+            ):
+                completed = segment_progress.get("completed_segments", 0)
+                total = segment_progress.get("total_segments", 0)
+                segment_complete = completed >= total
+
+            status_val = "done" if segment_complete else "stopped"
+            phase_val = (
+                "任务执行完成"
+                if segment_complete
+                else f"时间分片未完成（{completed}/{total}），已暂停等待继续"
             )
+
+            if segment_complete:
+                task_manager.update_task_result(
+                    task_id=task_id,
+                    tweets=result.tweets,
+                    resumed=result.resumed,
+                    replies_fetched=result.replies_fetched,
+                    quality_state=quality_state,
+                    runtime_metrics=runtime_metrics,
+                )
+            else:
+                task_manager.update_task_phase(task_id, phase_val)
+                task_manager.update_task_stopped(
+                    task_id,
+                    result.tweets,
+                    runtime_metrics=runtime_metrics,
+                )
+
             if result.failed_replies:
                 _persist_failed_records(task_id, result.failed_replies)
+
             telemetry.record_event(
                 task_id,
                 "crawler_finished",
-                status="done",
-                phase="任务执行完成",
+                status=status_val,
+                phase=phase_val,
                 delta_tweets=len(result.tweets),
                 delta_replies=result.replies_fetched,
                 meta={"failed_replies": len(result.failed_replies)},
             )
             logger.info(
                 f"任务完成: task_id={task_id}, 推文={len(result.tweets)}, "
-                f"回复={result.replies_fetched}, 失败评论={len(result.failed_replies)}"
+                f"回复={result.replies_fetched}, 失败评论={len(result.failed_replies)}, "
+                f"分片完成={segment_complete}"
             )
-            final_status = "done"
+            final_status = status_val
     except LoginRequiredPause as e:
         final_status = "paused"
         phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
@@ -358,9 +422,13 @@ def run_search_task(
         if e.risk_state == "login_required":
             phase = str(e) or "检测到 X 登录态失效，请在浏览器完成登录后点击继续任务"
         elif e.risk_state == "search_blocked":
-            phase = str(e) or "检测到 X 搜索接口异常（疑似账号风控），请更换账号或稍后重试"
+            phase = (
+                str(e) or "检测到 X 搜索接口异常（疑似账号风控），请更换账号或稍后重试"
+            )
         else:
-            phase = f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
+            phase = (
+                f"检测到风控挑战（{e.risk_state}），请在浏览器完成验证后点击继续任务"
+            )
         task_manager.update_task_risk_paused(
             task_id,
             e.risk_state,
@@ -374,11 +442,15 @@ def run_search_task(
             phase=phase,
             risk_state=e.risk_state,
         )
-        logger.warning(f"任务进入风控暂停: task_id={task_id}, risk={e.risk_state}, reason={e}")
+        logger.warning(
+            f"任务进入风控暂停: task_id={task_id}, risk={e.risk_state}, reason={e}"
+        )
     except StopSignal as e:
         task_data = task_manager.get_task_full(task_id) or {}
         tweets_so_far = task_data.get("tweets", [])
-        task_manager.update_task_stopped(task_id, tweets_so_far, runtime_metrics=get_metrics(task_id))
+        task_manager.update_task_stopped(
+            task_id, tweets_so_far, runtime_metrics=get_metrics(task_id)
+        )
         telemetry.record_event(
             task_id,
             "crawler_stopped",
@@ -386,7 +458,9 @@ def run_search_task(
             phase="任务已收到停止信号并安全退出",
             meta={"saved_tweets": len(tweets_so_far)},
         )
-        logger.info(f"任务主动终止: task_id={task_id}, 已保存 {len(tweets_so_far)} 条数据, reason={e}")
+        logger.info(
+            f"任务主动终止: task_id={task_id}, 已保存 {len(tweets_so_far)} 条数据, reason={e}"
+        )
         final_status = "stopped"
     except Exception as e:
         error_msg = str(e)
@@ -394,7 +468,9 @@ def run_search_task(
         task_data = task_manager.get_task_full(task_id) or {}
         tweets_so_far = task_data.get("tweets", [])
         if tweets_so_far:
-            task_manager.update_task_stopped(task_id, tweets_so_far, runtime_metrics=get_metrics(task_id))
+            task_manager.update_task_stopped(
+                task_id, tweets_so_far, runtime_metrics=get_metrics(task_id)
+            )
             task_manager.update_task_error(task_id, error_msg)
             telemetry.record_event(
                 task_id,
@@ -403,9 +479,13 @@ def run_search_task(
                 phase="任务异常退出（已保留部分数据）",
                 meta={"error": error_msg[:240], "saved_tweets": len(tweets_so_far)},
             )
-            logger.info(f"任务异常终止但已保存 {len(tweets_so_far)} 条数据: task_id={task_id}")
+            logger.info(
+                f"任务异常终止但已保存 {len(tweets_so_far)} 条数据: task_id={task_id}"
+            )
         else:
-            task_manager.update_task_error(task_id, error_msg, runtime_metrics=get_metrics(task_id))
+            task_manager.update_task_error(
+                task_id, error_msg, runtime_metrics=get_metrics(task_id)
+            )
             telemetry.record_event(
                 task_id,
                 "crawler_error",
@@ -416,12 +496,13 @@ def run_search_task(
         logger.error(f"任务失败: task_id={task_id}, error={error_msg}", exc_info=True)
         final_status = "failed"
     finally:
-        if platform == "x" and final_status in ("done", "failed", "stopped"):
+        if platform == "x" and final_status in ("done", "failed", "stopped", "paused"):
             _release_task_account(task_id)
         # 归还浏览器实例到池中
         if _pool_mode and _browser_instance is not None:
             try:
                 from crawler.browser_pool import get_browser_pool
+
                 get_browser_pool().release(task_id)
             except Exception as e:
                 logger.warning(f"[BrowserPool] 归还实例失败: {e}")
@@ -433,6 +514,7 @@ def run_search_task(
         # 清理按任务隔离的速率状态和错误计数，防止内存泄漏
         try:
             from crawler.rate_tracker import get_tracker
+
             get_tracker().cleanup_task(task_id)
         except Exception:
             pass
@@ -489,7 +571,10 @@ def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:
 
 # ─── 账号注入与管理 ────────────────────────────────────────────────────────
 
-def _inject_account_cookies(task_id: str, account_id: str, browser_instance=None) -> None:
+
+def _inject_account_cookies(
+    task_id: str, account_id: str, browser_instance=None
+) -> None:
     """
     为任务的浏览器实例注入指定账号的 Cookie。
 
@@ -512,12 +597,16 @@ def _inject_account_cookies(task_id: str, account_id: str, browser_instance=None
         logger.warning(f"账号 {account.alias} 无 Cookie 可注入")
         return
 
-    logger.info(f"为任务 {task_id[:8]} 的浏览器实例注入账号 {account.alias} 的 Cookie...")
+    logger.info(
+        f"为任务 {task_id[:8]} 的浏览器实例注入账号 {account.alias} 的 Cookie..."
+    )
 
     try:
         # 设置到浏览器实例，后续所有新 tab 自动继承
         browser_instance.set_cookies(account.cookies)
-        logger.info(f"账号 {account.alias} 已设置 {len(account.cookies)} 条 Cookie 到浏览器实例")
+        logger.info(
+            f"账号 {account.alias} 已设置 {len(account.cookies)} 条 Cookie 到浏览器实例"
+        )
         pool.mark_account_used(account_id)
     except Exception as e:
         logger.error(f"设置账号 Cookie 到浏览器实例失败: {e}", exc_info=True)

@@ -31,7 +31,7 @@ from crawler.checkpoint_buffer import (
 )
 from crawler.response_saver import save_raw_response
 from crawler.page_health import navigate_with_retry
-from crawler.page_state import detect_page_state, detect_no_results, PageState
+from crawler.page_state import detect_page_state, detect_no_results, detect_end_of_timeline, PageState
 from crawler.packet_guard import (
     wait_for_target_packet,
     is_contentful_search_timeline_body,
@@ -472,6 +472,9 @@ def _to_risk_state(state: PageState) -> RiskState:
 # _wait_search_packet_with_recovery 返回此对象而非 None（超时）或 packet
 _NO_RESULTS_SENTINEL = object()
 
+# 时间线到底哨兵：当页面内容很少且已滚动到底部，无更多内容可加载
+_END_OF_TIMELINE_SENTINEL = object()
+
 
 def _is_search_api_blocked(packet) -> tuple[bool, str]:
     try:
@@ -496,10 +499,16 @@ def _wait_search_packet_with_recovery(
     page_num: int,
     task_id: Optional[str],
     policy: RecoveryPolicy,
+    fetched_count: int = 0,
 ):
-    """等待搜索包：软重试失败后进入硬刷新恢复。"""
+    """等待搜索包：软重试失败后进入硬刷新恢复。
+    
+    Args:
+        fetched_count: 当前已获取的推文数量。只有 > 0 时才会启用"到底"检测。
+    """
     challenge_hits = 0
     search_api_blocked_hits = 0
+    _no_results_detected = False  # 标记是否在等待期间检测到无结果
 
     def _inspect_packet(packet, body) -> None:
         nonlocal search_api_blocked_hits
@@ -517,13 +526,42 @@ def _wait_search_packet_with_recovery(
                 risk_state="search_blocked",
             )
 
+    _early_exit_reason: Optional[str] = None  # 记录早期退出的原因
+
+    def _check_no_results_early() -> bool:
+        """在等待数据包期间快速检测页面是否显示无结果或已到底。"""
+        nonlocal _no_results_detected, _early_exit_reason
+        if detect_no_results(tab):
+            _no_results_detected = True
+            _early_exit_reason = "no_results"
+            logger.info(f"第 {page_num} 页在等待期间检测到搜索无结果页面")
+            return True
+        # 只有已经拿到过数据（fetched_count > 0）才检测"到底"
+        # 避免页面刚加载时误判
+        if fetched_count > 0 and detect_end_of_timeline(tab):
+            _no_results_detected = True
+            _early_exit_reason = "end_of_timeline"
+            logger.info(f"第 {page_num} 页在等待期间检测到时间线已到底部（已获取 {fetched_count} 条）")
+            return True
+        return False
+
     for soft_attempt in range(policy.packet_soft_retries + 1):
+        _no_results_detected = False
+        _early_exit_reason = None
         packet, ignored = wait_for_target_packet(
             tab,
             timeout=timeout,
             accept_body=is_contentful_search_timeline_body,
             on_packet=_inspect_packet,
+            early_exit_check=_check_no_results_early,
         )
+        
+        # 如果在等待期间检测到无结果或到底，立即返回对应哨兵
+        if _no_results_detected:
+            if _early_exit_reason == "end_of_timeline":
+                return _END_OF_TIMELINE_SENTINEL
+            return _NO_RESULTS_SENTINEL
+        
         if packet:
             if ignored:
                 logger.debug(f"第 {page_num} 页过滤无关包 {ignored} 个")
@@ -538,6 +576,11 @@ def _wait_search_packet_with_recovery(
         if detect_no_results(tab):
             logger.info(f"第 {page_num} 页检测到搜索无结果页面，跳过重试")
             return _NO_RESULTS_SENTINEL
+        
+        # 只有已经拿到过数据才检测"到底"
+        if fetched_count > 0 and detect_end_of_timeline(tab):
+            logger.info(f"第 {page_num} 页检测到时间线已到底部，跳过重试（已获取 {fetched_count} 条）")
+            return _END_OF_TIMELINE_SENTINEL
 
         state, reason = detect_page_state(tab)
         if state in {
@@ -924,8 +967,22 @@ def search(
             recrawl_mode=_recrawl_mode,
         )
 
+    logger.info(
+        f"DEBUG: task_id={task_id}, resume={resume}, time_split_active={time_split_active}, "
+        f"seed_tweets_count={len(seed_tweets) if seed_tweets else 0}, all_tweets_count={len(all_tweets)}, "
+        f"max_count={max_count}, _recrawl_mode={_recrawl_mode}"
+    )
     if task_id and resume:
         ckpt = load_checkpoint(task_id)
+        logger.info(
+            f"DEBUG checkpoint: ckpt={'有' if ckpt else '无'}, "
+            f"ckpt_keyword={ckpt.get('keyword') if ckpt else 'N/A'}, "
+            f"ckpt_product={ckpt.get('product') if ckpt else 'N/A'}, "
+            f"input_keyword={keyword}, input_product={product}"
+        )
+        
+        # ── 检查是否需要时间分段（在 Recrawl 模式下优先级最高） ──
+        # 情况 1：checkpoint 是时间分段模式
         if (
             not time_split_active
             and ckpt
@@ -951,10 +1008,27 @@ def search(
                 exclude_ids=exclude_ids,
                 recrawl_mode=_recrawl_mode,
             )
+        
+        # 情况 2：Recrawl 模式 + checkpoint keyword 不匹配 → 说明是时间分段任务，需要重新分段
+        if (
+            not time_split_active
+            and _recrawl_mode
+            and ckpt
+            and ckpt.get("keyword") != keyword
+        ):
+            if _get_time_split_plan().enabled:
+                logger.info(
+                    f"Recrawl 时间分段任务：checkpoint keyword 不匹配（{ckpt.get('keyword')} != {keyword}），"
+                    f"启动时间分段重新爬取"
+                )
+                return _dispatch_time_splits()
+        
+        # 情况 3：普通模式，checkpoint 不匹配，检查是否需要启用时间分段
         if not time_split_active and not (
             ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product
         ):
             if _get_time_split_plan().enabled:
+                logger.info(f"启用时间分段：task_id={task_id}")
                 return _dispatch_time_splits()
         if ckpt and ckpt.get("keyword") == keyword and ckpt.get("product") == product:
             all_tweets = ckpt.get("tweets", [])
@@ -964,52 +1038,59 @@ def search(
             resumed = True
             logger.info(
                 f"从断点恢复：task_id={task_id}，"
-                f"已有 {len(all_tweets)} 条，cursor={'有' if start_cursor else '无'}"
+                f"已有 {len(all_tweets)} 条，cursor={'有' if start_cursor else '无'}，"
+                f"_recrawl_mode={_recrawl_mode}，max_count={max_count}"
             )
 
-            # ── 无 cursor 但无限模式：保留旧推文去重，从头搜索拾取新推文 ──
-            if not start_cursor and not max_count:
-                logger.info(
-                    f"断点恢复（无cursor/无限模式）：保留 {len(all_tweets)} 条旧推文用于去重，"
-                    f"开始新搜索以拾取新推文"
-                )
-                page_fetched = 0  # 重置页码
-                # 不 return，继续走搜索流程
-
-            elif (max_count and len(all_tweets) >= max_count) or not start_cursor:
-                # 断点恢复时若搜索已完成，直接进入回复抓取阶段
-                _resume_failed: list[dict] = []
-                if fetch_replies:
-                    # 检查是否还有未抓取回复的推文（跳过已有 replies 的推文由下层处理）
-                    tweets_without_replies = [
-                        t for t in all_tweets if not t.get("replies")
-                    ]
-                    if tweets_without_replies:
-                        logger.info(
-                            f"断点恢复：{len(all_tweets)} 条推文中 {len(tweets_without_replies)} 条"
-                            f"尚未抓取回复，继续抓取..."
-                        )
-                        all_tweets, _resume_failed = _fetch_replies_for_tweets(
-                            all_tweets,
-                            max_replies_per_tweet,
-                            task_id,
-                            timeout,
-                            crawl_strategy,
-                            reply_depth=reply_depth,
-                            browser_instance=browser_instance,
-                        )
-                    else:
-                        logger.info("断点恢复：所有推文已有回复数据，跳过回复抓取")
-                return SearchResult(
-                    tweets=all_tweets[:max_count] if max_count else all_tweets,
-                    total_fetched=len(
-                        all_tweets[:max_count] if max_count else all_tweets
-                    ),
-                    keyword=keyword,
-                    resumed=resumed,
-                    replies_fetched=_count_replies(all_tweets),
-                    failed_replies=_resume_failed,
-                )
+            # ── 无 cursor 时的分支处理 ──
+            if not start_cursor:
+                # Case 1: 无限模式（max_count=0）或 Recrawl 模式 → 从头搜索拾取新推文
+                if not max_count or _recrawl_mode:
+                    logger.info(
+                        f"断点恢复（无cursor/{'recrawl' if _recrawl_mode else '无限'}模式）：保留 {len(all_tweets)} 条旧推文用于去重，"
+                        f"开始新搜索以拾取新推文"
+                    )
+                    page_fetched = 0  # 重置页码
+                    # recrawl 从头搜索时，旧推文都会被去重，空页是正常的，提高容忍度
+                    if _recrawl_mode:
+                        _MAX_CONSECUTIVE_EMPTY_PAGES = 10
+                        logger.info(f"recrawl 从头搜索：空页容忍度提高到 {_MAX_CONSECUTIVE_EMPTY_PAGES}")
+                    # 不 return，继续走搜索流程
+                # Case 2: 有限模式（max_count>0）且已达到目标 → 完成搜索，进入回复抓取
+                elif max_count and len(all_tweets) >= max_count:
+                    # 断点恢复时若搜索已完成，直接进入回复抓取阶段
+                    _resume_failed: list[dict] = []
+                    if fetch_replies:
+                        # 检查是否还有未抓取回复的推文（跳过已有 replies 的推文由下层处理）
+                        tweets_without_replies = [
+                            t for t in all_tweets if not t.get("replies")
+                        ]
+                        if tweets_without_replies:
+                            logger.info(
+                                f"断点恢复：{len(all_tweets)} 条推文中 {len(tweets_without_replies)} 条"
+                                f"尚未抓取回复，继续抓取..."
+                            )
+                            all_tweets, _resume_failed = _fetch_replies_for_tweets(
+                                all_tweets,
+                                max_replies_per_tweet,
+                                task_id,
+                                timeout,
+                                crawl_strategy,
+                                reply_depth=reply_depth,
+                                browser_instance=browser_instance,
+                            )
+                        else:
+                            logger.info("断点恢复：所有推文已有回复数据，跳过回复抓取")
+                    return SearchResult(
+                        tweets=all_tweets[:max_count] if max_count else all_tweets,
+                        total_fetched=len(
+                            all_tweets[:max_count] if max_count else all_tweets
+                        ),
+                        keyword=keyword,
+                        resumed=resumed,
+                        replies_fetched=_count_replies(all_tweets),
+                        failed_replies=_resume_failed,
+                    )
 
     if task_id and not time_split_active and ckpt is None:
         if _get_time_split_plan().enabled:
@@ -1150,6 +1231,9 @@ def search(
                 page_num=page_num,
                 task_id=task_id,
                 policy=policy,
+                # 只有本次运行已获取过数据（page_num > 1）才启用"到底"检测
+                # 避免断点恢复时 all_tweets 有旧数据导致误判
+                fetched_count=page_num - 1,
             )
             if not packet:
                 logger.warning(f"第 {page_num} 页连续恢复后仍超时，停止爬取")
@@ -1172,6 +1256,20 @@ def search(
                         "search_no_results",
                         status="running",
                         phase="当前时间段无搜索结果",
+                        page=page_num,
+                    )
+                break
+
+            # ── 时间线到底：当前时间段已无更多内容 ─────────────────────
+            if packet is _END_OF_TIMELINE_SENTINEL:
+                logger.info(f"第 {page_num} 页时间线已到底部，结束当前搜索")
+                if task_id:
+                    _update_phase("当前时间段已到底部，准备跳到下一段")
+                    telemetry.record_event(
+                        task_id,
+                        "search_end_of_timeline",
+                        status="running",
+                        phase="当前时间段已到底部",
                         page=page_num,
                     )
                 break

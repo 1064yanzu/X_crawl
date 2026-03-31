@@ -33,12 +33,22 @@ def wait_for_target_packet(
     accept_body: BodyPredicate,
     max_ignored: int = 30,
     on_packet: PacketObserver | None = None,
+    early_exit_check: "Callable[[], bool] | None" = None,
 ):
-    """等待目标 JSON 包，忽略无关包，直到超时。"""
+    """等待目标 JSON 包，忽略无关包，直到超时。
+    
+    Args:
+        early_exit_check: 可选回调，在每次等待循环时调用；
+                          若返回 True，则立即退出等待（用于检测页面无结果等情况）
+    """
     deadline = time.monotonic() + max(0.5, timeout)
     ignored = 0
 
     while time.monotonic() < deadline:
+        # 早期退出检查（如检测到页面显示"无结果"）
+        if early_exit_check is not None and early_exit_check():
+            return None, ignored
+        
         remaining = max(0.2, deadline - time.monotonic())
         try:
             packet = tab.listen.wait(timeout=min(remaining, 1.5), raise_err=False)

@@ -266,7 +266,7 @@ def _finalize_login_result(
         effective_user_data_path=session_info.get("effective_user_data_path"),
     )
     _record_login_result(result)
-    if not result.ok:
+    if not result.ok and result.reason == "challenge_required":
         promote_browser_for_manual_interaction(tab, reason=result.reason)
     return result
 

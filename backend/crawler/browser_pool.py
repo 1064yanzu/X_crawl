@@ -32,6 +32,16 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# 全局关闭标志：lifespan shutdown 时设置，阻止 new_tab 在关闭期间触发浏览器重建
+_shutting_down: bool = False
+
+
+def set_shutting_down() -> None:
+    """通知浏览器池：服务正在关闭，停止重建浏览器实例。"""
+    global _shutting_down
+    _shutting_down = True
+
+
 _POOL_PROFILE_ROOT = str(Path.home() / ".xcrawl-browser-instances")
 
 
@@ -314,15 +324,30 @@ class BrowserInstance:
         profile_path = Path(self.profile_dir)
         if profile_path.exists():
             try:
-                shutil.rmtree(profile_path)
-                logger.info(
-                    "[BrowserPool] 已重置实例 #%s 的 profile 目录: %s",
-                    self.instance_id,
-                    self.profile_dir,
-                )
+                shutil.rmtree(profile_path, ignore_errors=True)
+                if profile_path.exists():
+                    # ignore_errors 后目录仍存在（被文件锁占用），尝试只删非锁定文件
+                    for child in profile_path.iterdir():
+                        try:
+                            if child.is_dir():
+                                shutil.rmtree(child, ignore_errors=True)
+                            else:
+                                child.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                    logger.debug(
+                        "[BrowserPool] 实例 #%s profile 部分清理完成（被锁定文件已跳过）",
+                        self.instance_id,
+                    )
+                else:
+                    logger.info(
+                        "[BrowserPool] 已重置实例 #%s 的 profile 目录: %s",
+                        self.instance_id,
+                        self.profile_dir,
+                    )
             except Exception as e:
-                logger.warning(
-                    "[BrowserPool] 重置实例 #%s 的 profile 目录失败，继续尝试复用: %s",
+                logger.debug(
+                    "[BrowserPool] 重置实例 #%s 的 profile 目录异常，继续复用: %s",
                     self.instance_id,
                     e,
                 )
@@ -382,7 +407,7 @@ class BrowserInstance:
         except Exception as e:
             err_name = type(e).__name__
             if "Disconnected" in err_name or "disconnected" in str(e).lower():
-                if _retried:
+                if _retried or _shutting_down:
                     raise
                 logger.warning(
                     f"[BrowserPool] 实例 #{self.instance_id} 页面断连，正在重建浏览器..."

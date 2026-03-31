@@ -259,16 +259,13 @@ def navigate_with_retry(
                             interruptible_sleep(post_load_wait, task_id=task_id)
                         return True
                     continue
-                if raise_on_risk:
-                    promote_browser_for_manual_interaction(tab, reason=state.value)
-                    raise ChallengeSignal(
-                        f"检测到 {state.value}，请在浏览器中完成安全验证后点击继续任务",
-                        risk_state=_to_risk_state(state),
-                    )
-                if attempt == max_retries:
-                    logger.error(f"{log_prefix}风险页面持续存在，放弃 (url={url[:80]})")
-                    return False
-                continue
+                # challenge 重试耗尽：无论 raise_on_risk 如何，都暂停任务等待用户验证
+                # 不再 continue 刷新，避免陷入"刷新 → 再次触发 Cloudflare → 继续刷新"循环
+                promote_browser_for_manual_interaction(tab, reason=state.value)
+                raise ChallengeSignal(
+                    f"检测到 {state.value}，请在浏览器中完成安全验证后点击继续任务",
+                    risk_state=_to_risk_state(state),
+                )
 
             if is_error_like_state(state):
                 extra_cooldown = _record_error(task_id)

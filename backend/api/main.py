@@ -58,6 +58,11 @@ async def lifespan(app: FastAPI):
     )
     yield
     logger.info("正在关闭浏览器并释放资源...")
+    try:
+        from crawler.browser_pool import set_shutting_down
+        set_shutting_down()
+    except Exception:
+        pass
     close_browser()
     try:
         from crawler.browser_pool import get_browser_pool, is_pool_mode_enabled

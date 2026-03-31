@@ -544,6 +544,7 @@ def _create_browser() -> Chromium:
     browser = Chromium(co)
     _refresh_current_browser_pid()
     logger.info("浏览器初始化成功")
+
     return browser
 
 
