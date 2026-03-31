@@ -13,7 +13,6 @@ export function TaskDetailOverview({
     task,
     active,
     isRiskPaused,
-    progressPct,
     latestActionEvent,
     streamConnected,
     streamEvents,
@@ -21,13 +20,10 @@ export function TaskDetailOverview({
     task: TaskOut;
     active: boolean;
     isRiskPaused: boolean;
-    progressPct: number;
     latestActionEvent: TaskStreamEvent | null;
     streamConnected: boolean;
     streamEvents: TaskStreamEvent[];
 }) {
-    const hasLimit = task.max_count > 0;
-
     return (
         <>
             <div className="grid gap-4 md:grid-cols-3">
@@ -40,18 +36,9 @@ export function TaskDetailOverview({
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">采集进度</p>
                     <div className="mb-2 flex items-baseline gap-2">
                         <span className="font-mono text-3xl font-semibold">{task.result_count}</span>
-                        {hasLimit ? <span className="text-sm text-muted-foreground">/ {task.max_count} 条</span> : <span className="text-sm text-muted-foreground">条（不限）</span>}
+                        <span className="text-sm text-muted-foreground">条</span>
                     </div>
-                    {hasLimit ? (
-                        <>
-                            <div className="h-2 overflow-hidden rounded-full bg-muted">
-                                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${progressPct}%`, backgroundColor: task.status === "done" ? "rgb(16 185 129)" : "rgb(59 130 246)" }} />
-                            </div>
-                            <p className="mt-2 text-xs text-muted-foreground">{progressPct}% {active && task.current_page > 0 ? `· 已完成第 ${task.current_page} 页` : ""}</p>
-                        </>
-                    ) : (
-                        <p className="text-sm text-muted-foreground">{active && task.current_page > 0 ? `当前已抓到第 ${task.current_page} 页` : "会持续采集直到数据耗尽或被终止。"}</p>
-                    )}
+                    <p className="text-sm text-muted-foreground">{active && task.current_page > 0 ? `当前已抓到第 ${task.current_page} 页` : "会持续采集直到数据耗尽或被终止。"}</p>
                 </div>
 
                 <TaskRuntimeMetrics qualityState={task.quality_state} runtimeMetrics={task.runtime_metrics} />

@@ -13,7 +13,6 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
     const { push } = useToast();
     const [loading, setLoading] = React.useState(false);
     const [keyword, setKeyword] = React.useState("");
-    const [maxCount, setMaxCount] = React.useState(0);
     const [product, setProduct] = React.useState<typeof productDefault>(productDefault);
     const [advancedParams, setAdvancedParams] = React.useState<AdvancedSearchParams>(DEFAULT_ADVANCED_PARAMS);
     const [advancedOpen, setAdvancedOpen] = React.useState(false);
@@ -59,7 +58,6 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
 
         return {
             keyword: finalKeyword,
-            max_count: maxCount,
             product,
             resume: true,
             fetch_replies: fetchReplies,
@@ -70,7 +68,7 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
             start_date: platform === "weibo" && startDate ? startDate : undefined,
             end_date: platform === "weibo" && endDate ? endDate : undefined,
         };
-    }, [endDate, fetchReplies, finalKeyword, maxCount, platform, product, replyDepth, startDate]);
+    }, [endDate, fetchReplies, finalKeyword, platform, product, replyDepth, startDate]);
 
     const resetDraft = React.useCallback(() => {
         setKeyword("");
@@ -78,7 +76,6 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         setAdvancedOpen(false);
         setFetchReplies(false);
         setReplyDepth(2);
-        setMaxCount(0);
         setProduct(productDefault);
         setStartDate("");
         setEndDate("");
@@ -108,8 +105,6 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         loading,
         keyword,
         setKeyword,
-        maxCount,
-        setMaxCount,
         product,
         setProduct,
         advancedParams,

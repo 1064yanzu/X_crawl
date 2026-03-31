@@ -19,12 +19,11 @@ function buildDraftSummary(task: TaskQueueItemRequest) {
             : task.product === "Photos"
                 ? "图片"
                 : "视频";
-    const countLabel = task.max_count > 0 ? `${task.max_count} 条` : "不限量";
     const replyLabel = task.fetch_replies ? `${task.reply_depth ?? 2} 层评论` : "仅帖子";
     const dateLabel = task.platform === "weibo" && (task.start_date || task.end_date)
         ? ` · ${task.start_date ?? "--"} ~ ${task.end_date ?? "--"}`
         : "";
-    return `${platformLabel} · ${modeLabel} · ${countLabel} · ${replyLabel}${dateLabel}`;
+    return `${platformLabel} · ${modeLabel} · ${replyLabel}${dateLabel}`;
 }
 
 export function useTaskQueueBuilder({
@@ -92,7 +91,6 @@ export function useTaskQueueBuilder({
         try {
             const tasks = drafts.map((draft) => ({
                 keyword: draft.keyword,
-                max_count: draft.max_count,
                 product: draft.product,
                 fetch_replies: draft.fetch_replies,
                 max_replies_per_tweet: draft.max_replies_per_tweet,

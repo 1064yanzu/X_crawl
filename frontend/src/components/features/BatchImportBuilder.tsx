@@ -150,21 +150,8 @@ function GlobalParamsSection({ state }: { state: ReturnType<typeof useBatchImpor
                 })}
             </div>
 
-            {/* 采集数量 + 评论 */}
-            <div className="grid gap-4 lg:grid-cols-2">
-                <div className="space-y-2">
-                    <label className="text-sm font-medium text-foreground">每任务采集数量</label>
-                    <Input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={state.maxCount}
-                        onChange={(e) => state.setMaxCount(Math.max(0, Number(e.target.value) || 0))}
-                        className="h-11 rounded-xl bg-background font-mono"
-                    />
-                    <p className="text-xs text-muted-foreground">0 表示不限数量</p>
-                </div>
-
+            {/* 评论 */}
+            <div className="grid gap-4 lg:grid-cols-1">
                 <div className="space-y-3">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -347,7 +334,6 @@ function FileUploadArea({ state }: { state: ReturnType<typeof useBatchImportBuil
                             </thead>
                             <tbody className="divide-y divide-border/30">
                                 <tr><td className="px-3 py-1.5 font-mono">keyword</td><td className="px-3 py-1.5">关键词（必须）</td><td className="px-3 py-1.5">-</td></tr>
-                                <tr><td className="px-3 py-1.5 font-mono">max_count</td><td className="px-3 py-1.5">采集数量上限</td><td className="px-3 py-1.5">0</td></tr>
                                 <tr><td className="px-3 py-1.5 font-mono">product</td><td className="px-3 py-1.5">Top / Latest / Photos / Videos</td><td className="px-3 py-1.5">Top</td></tr>
                                 <tr><td className="px-3 py-1.5 font-mono">platform</td><td className="px-3 py-1.5">x / weibo</td><td className="px-3 py-1.5">x</td></tr>
                                 <tr><td className="px-3 py-1.5 font-mono">fetch_replies</td><td className="px-3 py-1.5">是否抓评论（true/false）</td><td className="px-3 py-1.5">false</td></tr>
@@ -436,7 +422,6 @@ function TaskRow({ task, index, onRemove }: { task: BatchImportTask; index: numb
                 <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     <span className="rounded-md bg-muted/60 px-1.5 py-0.5">{platformLabel}</span>
                     <span className="rounded-md bg-muted/60 px-1.5 py-0.5">{productLabel}</span>
-                    {task.max_count > 0 && <span className="rounded-md bg-muted/60 px-1.5 py-0.5">{task.max_count} 条</span>}
                     {task.fetch_replies && <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-primary">评论 {task.reply_depth} 层</span>}
                     {task.start_date && <span className="rounded-md bg-muted/60 px-1.5 py-0.5">{task.start_date}</span>}
                     {task.end_date && <span className="rounded-md bg-muted/60 px-1.5 py-0.5">~ {task.end_date}</span>}

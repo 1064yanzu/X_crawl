@@ -13,7 +13,6 @@ TaskKind = Literal["search", "comment_backfill"]
 
 class SearchRequest(BaseModel):
     keyword: str = Field(description="搜索关键词", min_length=1, max_length=200)
-    max_count: int = Field(default=0, ge=0, description="最多获取的推文数量（0 表示不限制）")
     product: Literal["Top", "Latest", "Photos", "Videos"] = Field(default="Latest")
     resume: bool = Field(default=True, description="是否从断点继续（若有检查点）")
     task_id: Optional[str] = Field(default=None, description="若指定，复用该 task_id 断点继续爬取")
@@ -73,7 +72,6 @@ class TaskOut(BaseModel):
     status: TaskStatus
     keyword: str
     product: str
-    max_count: int
     result_count: int = 0
     current_page: int = Field(default=0, description="当前已爬取页数（实时进度）")
     created_at: str

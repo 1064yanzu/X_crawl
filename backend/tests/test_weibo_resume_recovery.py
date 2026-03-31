@@ -78,7 +78,6 @@ def test_weibo_resume_can_migrate_legacy_page_checkpoint_to_date_split(monkeypat
 
     result = searcher.search(
         keyword="gemini",
-        max_count=0,
         task_id=task_id,
         resume=True,
         fetch_comments=False,
@@ -113,7 +112,6 @@ def test_run_weibo_task_forwards_resume_flag(monkeypatch):
     crawl_service._run_weibo_task(
         task_id="task-1",
         keyword="gemini",
-        max_count=0,
         task_id_param="task-1",
         resume=False,
         start_date="2023-01-01",

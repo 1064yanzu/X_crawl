@@ -50,7 +50,6 @@ def _build_worker_payload(
         task_id=task_id,
         account_id=task.get("assigned_account_id"),
         keyword=task["keyword"],
-        max_count=task["max_count"],
         product=task["product"],
         resume=resume,
         fetch_replies=task.get("fetch_replies", False),
@@ -99,7 +98,6 @@ def start_crawler_thread(
 def run_search_task(
     task_id: str,
     keyword: str,
-    max_count: int,
     product: str,
     resume: bool = True,
     fetch_replies: bool = False,
@@ -260,7 +258,6 @@ def run_search_task(
             result = _run_weibo_task(
                 task_id=task_id,
                 keyword=keyword,
-                max_count=max_count,
                 task_id_param=task_id,
                 resume=resume,
                 start_date=start_date,
@@ -317,7 +314,6 @@ def run_search_task(
             )
             result = search(
                 keyword=keyword,
-                max_count=max_count,
                 product=product,
                 task_id=task_id,
                 resume=resume,
@@ -523,7 +519,6 @@ def run_search_task(
 def _run_weibo_task(
     task_id: str,
     keyword: str,
-    max_count: int,
     task_id_param: str,
     resume: bool = True,
     start_date: Optional[str] = None,
@@ -545,7 +540,6 @@ def _run_weibo_task(
     )
     return weibo_search(
         keyword=keyword,
-        max_count=max_count,
         task_id=task_id_param,
         resume=resume,
         fetch_comments=fetch_replies,

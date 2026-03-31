@@ -19,7 +19,6 @@ VALID_PLATFORMS = {"x", "weibo"}
 
 class ImportedTask(BaseModel):
     keyword: str
-    max_count: int = 0
     product: Literal["Top", "Latest", "Photos", "Videos"] = "Top"
     platform: Literal["x", "weibo"] = "x"
     fetch_replies: bool = False
@@ -66,15 +65,11 @@ def _build_task_from_row(
     row_map: dict[str, str],
     default_platform: str,
     default_product: str,
-    default_max_count: int,
     default_fetch_replies: bool,
 ) -> ImportedTask:
     """从一行列名→值映射构建 ImportedTask"""
     return ImportedTask(
         keyword=row_map.get("keyword", "").strip(),
-        max_count=_coerce_int(
-            row_map.get("max_count", str(default_max_count)), default_max_count
-        ),
         product=_coerce_product(row_map.get("product", default_product)),
         platform=_coerce_platform(row_map.get("platform", default_platform)),
         fetch_replies=_coerce_bool(
@@ -94,13 +89,11 @@ def _make_simple_task(
     keyword: str,
     default_platform: str,
     default_product: str,
-    default_max_count: int,
     default_fetch_replies: bool,
 ) -> ImportedTask:
     """仅有关键词时，使用全局默认参数创建任务"""
     return ImportedTask(
         keyword=keyword,
-        max_count=default_max_count,
         product=_coerce_product(default_product),
         platform=_coerce_platform(default_platform),
         fetch_replies=default_fetch_replies,
@@ -111,7 +104,6 @@ def _parse_csv_bytes(
     data: bytes,
     default_platform: str,
     default_product: str,
-    default_max_count: int,
     default_fetch_replies: bool,
 ) -> ParseResult:
     """解析 CSV / TXT 字节数据"""
@@ -152,7 +144,6 @@ def _parse_csv_bytes(
                     normalized,
                     default_platform,
                     default_product,
-                    default_max_count,
                     default_fetch_replies,
                 )
             )
@@ -167,7 +158,6 @@ def _parse_csv_bytes(
                     keyword,
                     default_platform,
                     default_product,
-                    default_max_count,
                     default_fetch_replies,
                 )
             )
@@ -179,7 +169,6 @@ def _parse_excel_bytes(
     data: bytes,
     default_platform: str,
     default_product: str,
-    default_max_count: int,
     default_fetch_replies: bool,
 ) -> ParseResult:
     """解析 Excel 字节数据"""
@@ -228,7 +217,6 @@ def _parse_excel_bytes(
                     row_map,
                     default_platform,
                     default_product,
-                    default_max_count,
                     default_fetch_replies,
                 )
             )
@@ -244,7 +232,6 @@ def _parse_excel_bytes(
                     keyword,
                     default_platform,
                     default_product,
-                    default_max_count,
                     default_fetch_replies,
                 )
             )
@@ -263,7 +250,6 @@ def _parse_excel_bytes(
         "上传 CSV / TXT / Excel 文件，解析为任务列表预览。\n\n"
         "**支持的列名**（CSV 表头或 Excel 第一行）：\n"
         "- `keyword`（必须）：搜索关键词\n"
-        "- `max_count`：采集数量上限（默认 0=不限）\n"
         "- `product`：内容类型 Top/Latest/Photos/Videos（默认 Top）\n"
         "- `platform`：平台 x/weibo（默认 x）\n"
         "- `fetch_replies`：是否抓取评论 true/false（默认 false）\n"
@@ -282,9 +268,6 @@ async def parse_import_file(
     default_product: str = Form(
         default="Top", description="默认内容类型（文件中未指定时使用）"
     ),
-    default_max_count: int = Form(
-        default=0, description="默认采集数量（文件中未指定时使用）"
-    ),
     default_fetch_replies: bool = Form(
         default=False, description="默认是否抓评论（文件中未指定时使用）"
     ),
@@ -300,11 +283,11 @@ async def parse_import_file(
 
     if filename_lower.endswith((".csv", ".txt")):
         return _parse_csv_bytes(
-            data, default_platform, default_product, default_max_count, default_fetch_replies
+            data, default_platform, default_product, default_fetch_replies
         )
     elif filename_lower.endswith((".xlsx", ".xls")):
         return _parse_excel_bytes(
-            data, default_platform, default_product, default_max_count, default_fetch_replies
+            data, default_platform, default_product, default_fetch_replies
         )
     else:
         raise HTTPException(

@@ -2,9 +2,9 @@
 X 搜索自动时间分割。
 
 统一使用固定天数窗口切分时间范围：
-- 普通任务：达到触发阈值后按 configured window_days 切分
-- 无上限抓取：使用 unlimited_window_days
-- 复爬任务：沿用同一套固定窗口规则，不再单独使用更细粒度
+- 达到触发阈值后按固定窗口切分
+- 长跨度任务继续使用 unlimited_window_days 配置
+- 复爬任务沿用同一套固定窗口规则
 """
 from __future__ import annotations
 
@@ -60,7 +60,6 @@ def build_query_with_window(base_query: str, since: str, until: str) -> str:
 def build_time_split_plan(
     query: str,
     *,
-    max_count: int,
     enabled: bool,
     trigger_days: int,
     window_days: int,
@@ -81,7 +80,7 @@ def build_time_split_plan(
     if span_days < max(1, trigger_days):
         return TimeSplitPlan(False, base_query, since, until, 0, ())
 
-    configured_window = max(1, unlimited_window_days if max_count == 0 else window_days)
+    configured_window = max(1, int(unlimited_window_days))
     resolved_window = _resolve_window_days(span_days=span_days, configured_window=configured_window)
     resolved_max_segments = _resolve_max_segments(
         span_days=span_days,

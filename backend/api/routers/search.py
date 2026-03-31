@@ -27,7 +27,6 @@ async def create_search_task(
 ) -> TaskOut:
     task_id = task_manager.create_task(
         keyword=req.keyword,
-        max_count=req.max_count,
         product=req.product,
         task_id=req.task_id if req.resume and req.task_id else None,
         fetch_replies=req.fetch_replies,

@@ -31,7 +31,6 @@ export function useResumeCheckpointMutation() {
         mutationFn: (checkpoint: CheckpointInfo) =>
             api.search.create({
                 keyword: checkpoint.keyword,
-                max_count: 0,
                 product: checkpoint.product as "Top" | "Latest" | "Photos" | "Videos",
                 resume: true,
                 task_id: checkpoint.task_id,

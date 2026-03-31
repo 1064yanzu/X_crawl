@@ -70,13 +70,12 @@ def _default_comment_backfill_progress() -> dict:
     }
 
 
-def _default_task_state(*, task_id: str, keyword: str, product: str, max_count: int) -> dict:
+def _default_task_state(*, task_id: str, keyword: str, product: str) -> dict:
     return {
         "task_id": task_id,
         "status": "pending",
         "keyword": keyword,
         "product": product,
-        "max_count": max_count,
         "result_count": 0,
         "current_page": 0,
         "created_at": _now_iso(),
@@ -542,8 +541,8 @@ def count_active_tasks() -> int:
 
 def create_task(
     keyword: str,
-    max_count: int,
-    product: str,
+    legacy_limit: int = 0,
+    product: str = "Top",
     task_id: Optional[str] = None,
     fetch_replies: bool = False,
     max_replies_per_tweet: int = 20,
@@ -577,7 +576,6 @@ def create_task(
             task_id=tid,
             keyword=keyword,
             product=product,
-            max_count=max_count,
         )
         _tasks[tid] = {
             **existing,
@@ -585,7 +583,6 @@ def create_task(
             "status": "pending",
             "keyword": keyword,
             "product": product,
-            "max_count": max_count,
             "finished_at": None,
             "error": None,
             "risk_state": "none",
@@ -644,8 +641,8 @@ def prepare_task_for_recrawl(
     task_id: str,
     *,
     keyword: str,
-    max_count: int,
-    product: str,
+    legacy_limit: int = 0,
+    product: str = "Top",
     fetch_replies: bool = False,
     max_replies_per_tweet: int = 20,
     reply_depth: int = 2,
@@ -674,7 +671,6 @@ def prepare_task_for_recrawl(
                 "status": "pending",
                 "keyword": keyword,
                 "product": product,
-                "max_count": max_count,
                 "current_page": 0,
                 "created_at": task.get("created_at") or _now_iso(),
                 "finished_at": None,

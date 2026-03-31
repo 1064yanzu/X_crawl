@@ -21,7 +21,6 @@ export interface TaskOut {
     status: TaskStatus;
     keyword: string;
     product: string;
-    max_count: number;
     result_count: number;
     current_page: number;
     created_at: string;
@@ -80,7 +79,6 @@ export interface CheckpointInfo {
 
 export interface SearchRequest {
     keyword: string;
-    max_count: number;
     product: "Top" | "Latest" | "Photos" | "Videos";
     resume?: boolean;
     task_id?: string;
@@ -96,7 +94,6 @@ export interface SearchRequest {
 
 export interface TaskQueueItemRequest {
     keyword: string;
-    max_count: number;
     product: "Top" | "Latest" | "Photos" | "Videos";
     fetch_replies?: boolean;
     max_replies_per_tweet?: number;
@@ -189,7 +186,6 @@ export interface BatchUpdateReplyCollectionResponse {
 // 批量导入
 export interface BatchImportTask {
     keyword: string;
-    max_count: number;
     product: "Top" | "Latest" | "Photos" | "Videos";
     platform: Platform;
     fetch_replies: boolean;
@@ -912,14 +908,12 @@ export const api = {
             file: File;
             defaultPlatform?: Platform;
             defaultProduct?: string;
-            defaultMaxCount?: number;
             defaultFetchReplies?: boolean;
         }) => {
             const formData = new FormData();
             formData.append("file", params.file);
             if (params.defaultPlatform) formData.append("default_platform", params.defaultPlatform);
             if (params.defaultProduct) formData.append("default_product", params.defaultProduct);
-            if (params.defaultMaxCount !== undefined) formData.append("default_max_count", String(params.defaultMaxCount));
             if (params.defaultFetchReplies !== undefined) formData.append("default_fetch_replies", String(params.defaultFetchReplies));
             return fetchFormApi<BatchImportParseResult>("/api/v1/batch-import/parse", formData);
         },

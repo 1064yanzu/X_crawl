@@ -23,7 +23,6 @@ class ConcurrentSearchRequest(BaseModel):
     """并发搜索请求"""
     keywords: List[str] = Field(..., description="搜索关键词列表")
     product: str = Field(default="Top", description="搜索类型")
-    max_count: int = Field(default=100, description="每个关键词的最大爬取数")
     fetch_replies: bool = Field(default=False, description="是否爬取回复")
     max_replies_per_tweet: int = Field(default=20, description="每条推文的最大回复数")
     reply_depth: int = Field(default=2, description="回复深度")
@@ -58,7 +57,6 @@ async def create_concurrent_search(req: ConcurrentSearchRequest):
         task_id = task_manager.create_task(
             keyword=keyword,
             product=req.product,
-            max_count=req.max_count,
             fetch_replies=req.fetch_replies,
             max_replies_per_tweet=req.max_replies_per_tweet,
             reply_depth=req.reply_depth,

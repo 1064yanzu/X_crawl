@@ -106,7 +106,7 @@ def fetch_nested_replies(
             sub_replies, failure_info = _fetch_replies(
                 tweet_id=reply_id,
                 screen_name=reply_screen_name,
-                max_count=max_replies_per_tweet,
+                reply_limit=max_replies_per_tweet,
                 task_id=task_id,
                 timeout=timeout,
                 expected_count=reply_count,

@@ -58,8 +58,6 @@ export function TaskDetailHeader({
     active,
     isRunning,
     isPaused,
-    hasLimit,
-    progressPct,
     exportReady,
     canBackfill,
     backfilling,
@@ -80,8 +78,6 @@ export function TaskDetailHeader({
     active: boolean;
     isRunning: boolean;
     isPaused: boolean;
-    hasLimit: boolean;
-    progressPct: number;
     exportReady: boolean;
     canBackfill: boolean;
     backfilling: boolean;
@@ -191,8 +187,8 @@ export function TaskDetailHeader({
             <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <SummaryCard
                     label={task.task_kind === "comment_backfill" ? "补采结果" : "结果数量"}
-                    value={task.task_kind === "comment_backfill" ? (backfillSummary || `${task.result_count}`) : hasLimit ? `${task.result_count} / ${task.max_count}` : `${task.result_count}`}
-                    hint={hasLimit ? `完成度 ${progressPct}%` : "未设置数量上限"}
+                    value={task.task_kind === "comment_backfill" ? (backfillSummary || `${task.result_count}`) : `${task.result_count}`}
+                    hint="任务会持续抓取直到数据耗尽或被终止"
                 />
                 <SummaryCard label="实时通道" value={task.status === "pending" ? `队列第 ${task.queue_position ?? "-"} 位` : connected ? "实时推送中" : "轮询模式"} hint={lastMessageAt ? `最近消息 ${new Date(lastMessageAt).toLocaleTimeString("zh-CN")}` : "等待首条消息"} />
                 <SummaryCard label="创建时间" value={formatDateTime(task.created_at)} hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "任务仍在进行中"} />

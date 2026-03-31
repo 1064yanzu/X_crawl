@@ -204,7 +204,7 @@ def _summary_params(task: dict) -> dict:
         "status": task["status"],
         "keyword": task["keyword"],
         "product": task["product"],
-        "max_count": task["max_count"],
+        "max_count": int(task.get("max_count", 0) or 0),
         "result_count": task.get("result_count", 0),
         "current_page": task.get("current_page", 0),
         "created_at": task["created_at"],

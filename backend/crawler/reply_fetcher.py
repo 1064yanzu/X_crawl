@@ -316,7 +316,7 @@ def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance
 def fetch_replies(
     tweet_id: str,
     screen_name: str,
-    max_count: int = 20,
+    reply_limit: int = 20,
     task_id: Optional[str] = None,
     timeout: Optional[float] = None,
     existing_tab=None,
@@ -329,7 +329,7 @@ def fetch_replies(
     Args:
         tweet_id:       目标推文 ID
         screen_name:    发推用户的 screen_name（构建 URL 用）
-        max_count:      最多获取回复数量（0 表示不限制）
+        reply_limit:    最多获取回复数量（0 表示不限制）
         task_id:        爬取任务 ID（用于原始响应存储路径 + 信号检查）
         timeout:        等待数据包超时（秒），默认使用全局配置
         existing_tab:   复用已有标签页（不传则新开）
@@ -547,9 +547,9 @@ def fetch_replies(
                         break
 
 
-                if max_count and len(all_replies) >= max_count:
-                    all_replies = all_replies[:max_count]
-                    logger.info(f"  已达回复上限 {max_count} 条，停止")
+                if reply_limit and len(all_replies) >= reply_limit:
+                    all_replies = all_replies[:reply_limit]
+                    logger.info(f"  已达回复上限 {reply_limit} 条，停止")
                     break
 
                 # 无更多评论（API 没有返回 bottom_cursor）
@@ -774,7 +774,7 @@ def fetch_replies_batch(
             replies, failure_info = fetch_replies(
                 tweet_id=tweet_id,
                 screen_name=screen_name,
-                max_count=max_replies_per_tweet,
+                reply_limit=max_replies_per_tweet,
                 task_id=task_id,
                 timeout=timeout,
                 expected_count=expected_count,
@@ -958,7 +958,7 @@ def fetch_replies_single(
         replies, failure_info = fetch_replies(
             tweet_id=tweet_id,
             screen_name=screen_name,
-            max_count=max_replies_per_tweet,
+            reply_limit=max_replies_per_tweet,
             task_id=task_id,
             timeout=timeout,
             existing_tab=existing_tab,

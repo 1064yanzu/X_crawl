@@ -76,7 +76,7 @@ function TaskPreviewBody({
                                 ? `原始 ${(task.exclude_count ?? 0).toLocaleString()} · 新增 ${task.result_count.toLocaleString()}`
                                 : `${task.result_count.toLocaleString()}`
                         }
-                        hint={task.max_count > 0 ? `目标 ${task.max_count}` : "未设上限"}
+                        hint="持续抓取直到数据耗尽或被终止"
                     />
                     <PreviewStat
                         label={task.task_kind === "comment_backfill" ? "补采进度" : "当前页"}

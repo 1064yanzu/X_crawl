@@ -558,7 +558,6 @@ def _do_recrawl_task(task_id: str) -> tuple[str | None, int, str | None, bool]:
     prepared = task_manager.prepare_task_for_recrawl(
         root_source_task_id,
         keyword=recrawl_keyword,
-        max_count=source_task["max_count"],
         product=source_task["product"],
         fetch_replies=source_task.get("fetch_replies", False),
         max_replies_per_tweet=source_task.get("max_replies_per_tweet", 20),

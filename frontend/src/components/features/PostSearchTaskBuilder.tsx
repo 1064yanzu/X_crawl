@@ -33,8 +33,6 @@ export function PostSearchTaskBuilder() {
         loading,
         keyword,
         setKeyword,
-        maxCount,
-        setMaxCount,
         product,
         setProduct,
         advancedParams,
@@ -63,7 +61,6 @@ export function PostSearchTaskBuilder() {
     const summaryRows = [
         { label: "采集平台", value: platform === "x" ? "𝕏 Twitter" : "微博" },
         { label: "内容模式", value: selectedTab.label },
-        { label: "目标数量", value: maxCount > 0 ? `${maxCount} 条` : "不限数量" },
         { label: "评论抓取", value: fetchReplies ? `开启 · ${replyDepth} 层` : "关闭" },
     ];
     const {
@@ -96,40 +93,24 @@ export function PostSearchTaskBuilder() {
                         <PlatformButton active={platform === "weibo"} label="微博" description="适合指定时间范围批量回采" onClick={() => setPlatform("weibo")} />
                     </div>
 
-                    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-foreground">目标关键词</label>
-                            <div className="relative">
-                                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                                <Input
-                                    value={keyword}
-                                    onChange={(event) => setKeyword(event.target.value)}
-                                    onKeyDown={handleKeyDown}
-                                    placeholder="输入要追踪的话题、品牌、人物或事件"
-                                    className="h-11 rounded-xl bg-background pl-10"
-                                    autoFocus
-                                />
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                                {platform === "x"
-                                    ? "可直接输入关键词，也可以只使用下方高级搜索拼装查询。"
-                                    : "微博仅使用这里的关键词与日期范围；关键词会按原样提交，如需兼容旧版 OR 自动拆分可在设置中开启。"}
-                            </p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label htmlFor="max_count" className="text-sm font-medium text-foreground">目标采集数量</label>
+                    <div className="space-y-2">
+                        <label className="text-sm font-medium text-foreground">目标关键词</label>
+                        <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                             <Input
-                                id="max_count"
-                                type="number"
-                                min={0}
-                                step={1}
-                                value={maxCount}
-                                onChange={(event) => setMaxCount(Math.max(0, Number(event.target.value) || 0))}
-                                className="h-11 rounded-xl bg-background font-mono"
+                                value={keyword}
+                                onChange={(event) => setKeyword(event.target.value)}
+                                onKeyDown={handleKeyDown}
+                                placeholder="输入要追踪的话题、品牌、人物或事件"
+                                className="h-11 rounded-xl bg-background pl-10"
+                                autoFocus
                             />
-                            <p className="text-xs text-muted-foreground">输入 `0` 表示不限数量，持续抓取直到数据耗尽或手动终止。</p>
                         </div>
+                        <p className="text-xs text-muted-foreground">
+                            {platform === "x"
+                                ? "可直接输入关键词，也可以只使用下方高级搜索拼装查询。任务会持续抓取直到当前结果耗尽或被你手动终止。"
+                                : "微博仅使用这里的关键词与日期范围；关键词会按原样提交，如需兼容旧版 OR 自动拆分可在设置中开启。"}
+                        </p>
                     </div>
 
                     {platform === "weibo" ? (

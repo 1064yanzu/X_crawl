@@ -128,8 +128,6 @@ export default function TaskResultPage() {
     const isPaused = task.status === "paused";
     const isRiskPaused = isPaused && task.risk_state !== "none";
     const active = isTaskActive(task.status);
-    const hasLimit = task.max_count > 0;
-    const progressPct = hasLimit ? Math.min(100, Math.round((task.result_count / task.max_count) * 100)) : 0;
     const exportReady = task.result_count > 0;
     const canBackfill = canCreateCommentBackfillFromTask(task);
 
@@ -140,8 +138,6 @@ export default function TaskResultPage() {
                 active={active}
                 isRunning={isRunning}
                 isPaused={isPaused}
-                hasLimit={hasLimit}
-                progressPct={progressPct}
                 exportReady={exportReady}
                 canBackfill={canBackfill}
                 backfilling={backfilling}
@@ -163,7 +159,6 @@ export default function TaskResultPage() {
                 task={task}
                 active={active}
                 isRiskPaused={isRiskPaused}
-                progressPct={progressPct}
                 latestActionEvent={latestActionEvent}
                 streamConnected={stream.connected}
                 streamEvents={stream.events}

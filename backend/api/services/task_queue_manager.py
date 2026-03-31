@@ -162,7 +162,6 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
     for index, payload in enumerate(task_payloads, start=1):
         task_id = task_manager.create_task(
             keyword=payload["keyword"],
-            max_count=payload.get("max_count", 0),
             product=payload.get("product", "Top"),
             fetch_replies=payload.get("fetch_replies", False),
             max_replies_per_tweet=payload.get("max_replies_per_tweet", 0),

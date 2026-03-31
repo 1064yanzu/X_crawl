@@ -101,7 +101,7 @@ def _retry_worker(task_id: str, pending_records: list[dict]) -> None:
             replies, failure_info = fetch_replies(
                 tweet_id=tweet_id,
                 screen_name=screen_name,
-                max_count=0,  # 不限制
+                reply_limit=0,  # 不限制
                 task_id=task_id,
                 expected_count=expected,
             )

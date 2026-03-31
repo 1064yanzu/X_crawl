@@ -11,7 +11,6 @@ QueueStatus = Literal["running", "paused", "completed"]
 
 class TaskQueueItemRequest(BaseModel):
     keyword: str = Field(description="搜索关键词", min_length=1, max_length=200)
-    max_count: int = Field(default=0, ge=0, description="最多获取的结果数量（0 表示不限制）")
     product: Literal["Top", "Latest", "Photos", "Videos"] = Field(default="Top")
     fetch_replies: bool = Field(default=False, description="是否抓取评论回复")
     max_replies_per_tweet: int = Field(default=0, ge=0, description="每条帖子最多抓取的回复数量（0 代表不限）")

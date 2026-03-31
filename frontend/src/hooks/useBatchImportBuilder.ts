@@ -22,8 +22,6 @@ export interface BatchImportState {
     setPlatform: (p: Platform) => void;
     product: "Top" | "Latest" | "Photos" | "Videos";
     setProduct: (p: "Top" | "Latest" | "Photos" | "Videos") => void;
-    maxCount: number;
-    setMaxCount: (n: number) => void;
     fetchReplies: boolean;
     setFetchReplies: (fn: boolean | ((prev: boolean) => boolean)) => void;
     replyDepth: number;
@@ -56,7 +54,6 @@ export function useBatchImportBuilder(): BatchImportState {
 
     const [platform, setPlatform] = useState<Platform>("x");
     const [product, setProduct] = useState<"Top" | "Latest" | "Photos" | "Videos">("Top");
-    const [maxCount, setMaxCount] = useState(0);
     const [fetchReplies, setFetchReplies] = useState(false);
     const [replyDepth, setReplyDepth] = useState(2);
 
@@ -95,7 +92,6 @@ export function useBatchImportBuilder(): BatchImportState {
             seen.add(line);
             tasks.push({
                 keyword: line,
-                max_count: maxCount,
                 product,
                 platform,
                 fetch_replies: fetchReplies,
@@ -110,7 +106,7 @@ export function useBatchImportBuilder(): BatchImportState {
         setParsedTasks(tasks);
         setParseErrors(errors);
         setParsed(true);
-    }, [textInput, maxCount, product, platform, fetchReplies, replyDepth]);
+    }, [textInput, product, platform, fetchReplies, replyDepth]);
 
     // 解析上传文件
     const parseFile = useCallback(async () => {
@@ -123,7 +119,6 @@ export function useBatchImportBuilder(): BatchImportState {
                 file: selectedFile,
                 defaultPlatform: platform,
                 defaultProduct: product,
-                defaultMaxCount: maxCount,
                 defaultFetchReplies: fetchReplies,
             });
             setParsedTasks(result.tasks);
@@ -134,7 +129,7 @@ export function useBatchImportBuilder(): BatchImportState {
         } finally {
             setParsing(false);
         }
-    }, [selectedFile, platform, product, maxCount, fetchReplies]);
+    }, [selectedFile, platform, product, fetchReplies]);
 
     // 移除单条任务
     const removeTask = useCallback((index: number) => {
@@ -158,7 +153,6 @@ export function useBatchImportBuilder(): BatchImportState {
                 name: queueName || `批量导入 · ${parsedTasks.length} 个关键词`,
                 tasks: parsedTasks.map((t) => ({
                     keyword: t.keyword,
-                    max_count: t.max_count,
                     product: t.product,
                     platform: t.platform,
                     fetch_replies: t.fetch_replies,
@@ -193,8 +187,6 @@ export function useBatchImportBuilder(): BatchImportState {
         setPlatform,
         product,
         setProduct,
-        maxCount,
-        setMaxCount,
         fetchReplies,
         setFetchReplies,
         replyDepth,

@@ -145,11 +145,6 @@ function LiveStatusBanner({
                         条，预览最新{" "}
                         <span className="font-semibold text-foreground">{previewCount}</span> 条
                     </span>
-                    {task.result_count > 0 && task.max_count > 0 && isRunning && (
-                        <span className="text-xs font-mono text-muted-foreground ml-auto">
-                            {Math.round((task.result_count / task.max_count) * 100)}%
-                        </span>
-                    )}
                 </div>
                 {/* 精确阶段状态（来自后端） */}
                 {phaseNode as unknown as ReactNode}

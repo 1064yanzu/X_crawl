@@ -263,7 +263,6 @@ def _prepare_search_session(tab, task_id: Optional[str], slot_id: Optional[int] 
 
 def search(
     keyword: str,
-    max_count: int = 100,
     task_id: Optional[str] = None,
     resume: bool = True,
     fetch_comments: bool = False,
@@ -330,14 +329,9 @@ def search(
                                 task_id,
                                 f"正在执行微博子查询 {variant_idx + 1}/{len(query_plan.variants)}: {variant_keyword}"
                             )
-                        existing_new_count = max(0, len(merged_posts) - seed_count)
-                        remaining = max(0, max_count - existing_new_count) if max_count > 0 else 0
-                        if max_count > 0 and remaining <= 0:
-                            break
 
                         variant_result = search(
                             keyword=variant_keyword,
-                            max_count=remaining if max_count > 0 else 0,
                             task_id=task_id,
                             resume=False,
                             fetch_comments=fetch_comments,
@@ -435,7 +429,6 @@ def search(
                     start_date,
                     end_date,
                     max_pages=max_pages,
-                    target_count=max_count,
                     window_days=int(getattr(settings, "weibo_time_split_window_days", 7)),
                     max_segments=int(getattr(settings, "weibo_time_split_max_segments", 600)),
                 )
@@ -483,13 +476,8 @@ def search(
                                 f"{seg_start} ~ {seg_end}"
                             )
                         # 递归调用自身，每段单独搜索
-                        existing_new_count = max(0, len(all_results) - seed_count)
-                        remaining = max(0, max_count - existing_new_count) if max_count > 0 else 0
-                        if max_count > 0 and remaining <= 0:
-                            break
                         seg_result = search(
                             keyword=keyword,
-                            max_count=remaining if max_count > 0 else 0,
                             task_id=task_id,
                             resume=False,
                             fetch_comments=False,  # 分片阶段只搜帖子，全部分片完成后统一抓评论
@@ -798,10 +786,6 @@ def search(
                             end_date=end_date,
                         ),
                     )
-
-                # 检查是否达到 max_count
-                if max_count > 0 and max(0, len(all_posts_dicts) - seed_count) >= max_count:
-                    break
 
                 if not has_next:
                     break

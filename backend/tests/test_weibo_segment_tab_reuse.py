@@ -74,7 +74,6 @@ def test_weibo_segment_search_reuses_same_tab_and_session(monkeypatch):
 
     result = searcher.search(
         keyword="测试关键词",
-        max_count=0,
         task_id=None,
         resume=False,
         fetch_comments=False,

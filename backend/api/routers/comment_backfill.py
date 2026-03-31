@@ -65,7 +65,6 @@ async def import_comment_backfill(
 
     task_id = task_manager.create_task(
         keyword=keyword,
-        max_count=result.summary["eligible_posts"],
         product="Comments",
         fetch_replies=True,
         max_replies_per_tweet=max_replies_per_tweet,
@@ -166,7 +165,6 @@ async def create_comment_backfill_from_tasks(
         queue_payloads.append(
             {
                 "keyword": f"{platform_label} 评论补采 · {summary['source_keyword'] or summary['source_task_id'][:8]}",
-                "max_count": summary["eligible_posts"],
                 "product": "Comments",
                 "fetch_replies": True,
                 "max_replies_per_tweet": req.max_replies_per_tweet,
@@ -197,7 +195,6 @@ async def create_comment_backfill_from_tasks(
         payload = queue_payloads[0]
         task_id = task_manager.create_task(
             keyword=payload["keyword"],
-            max_count=payload["max_count"],
             product=payload["product"],
             fetch_replies=payload["fetch_replies"],
             max_replies_per_tweet=payload["max_replies_per_tweet"],

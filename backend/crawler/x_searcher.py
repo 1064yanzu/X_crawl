@@ -241,7 +241,6 @@ def _build_segment_progress(
 def _search_with_time_splits(
     *,
     keyword: str,
-    max_count: int,
     product: ProductType,
     timeout: Optional[float],
     task_id: Optional[str],
@@ -269,7 +268,6 @@ def _search_with_time_splits(
         else:
             plan = build_time_split_plan(
                 keyword,
-                max_count=max_count,
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
                 trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
                 window_days=int(getattr(settings, "x_time_split_window_days", 7)),
@@ -310,16 +308,11 @@ def _search_with_time_splits(
                     f"正在执行时间分段 {seg_idx + 1}/{total_segments}: {segment.since} ~ {segment.until}",
                 )
 
-            remaining = max(0, max_count - len(aggregated)) if max_count > 0 else 0
-            if max_count > 0 and remaining <= 0:
-                break
-
             segment_keyword = build_query_with_window(
                 base_query, segment.since, segment.until
             )
             segment_result = search(
                 keyword=segment_keyword,
-                max_count=remaining if max_count > 0 else 0,
                 product=product,
                 timeout=timeout,
                 task_id=task_id,
@@ -397,10 +390,7 @@ def _search_with_time_splits(
                     },
                 )
 
-            if max_count > 0 and len(seen_ids) >= max_count:
-                break
-
-        final_tweets = aggregated[:max_count] if max_count else aggregated
+        final_tweets = aggregated
         actual_completed = seg_idx + 1 if seg_idx < total_segments else total_segments
         if task_id:
             actual_current = (
@@ -741,7 +731,6 @@ def _sync_reply_browser_cookies(
 
 def search(
     keyword: str,
-    max_count: int = 0,
     product: ProductType = "Top",
     timeout: Optional[float] = None,
     task_id: Optional[str] = None,
@@ -764,7 +753,6 @@ def search(
 
     Args:
         keyword:               搜索关键词
-        max_count:             最多获取的推文数量（0 表示不限制）
         product:               搜索类型
         timeout:               等待每个数据包的超时（秒）
         task_id:               任务 ID（用于检查点文件命名和原始响应存储）
@@ -936,7 +924,6 @@ def search(
         if _time_split_plan_cache is None:
             _time_split_plan_cache = build_time_split_plan(
                 keyword,
-                max_count=max_count,
                 enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
                 trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
                 window_days=int(getattr(settings, "x_time_split_window_days", 7)),
@@ -951,7 +938,6 @@ def search(
     def _dispatch_time_splits():
         return _search_with_time_splits(
             keyword=keyword,
-            max_count=max_count,
             product=product,
             timeout=timeout,
             task_id=task_id,
@@ -970,7 +956,7 @@ def search(
     logger.info(
         f"DEBUG: task_id={task_id}, resume={resume}, time_split_active={time_split_active}, "
         f"seed_tweets_count={len(seed_tweets) if seed_tweets else 0}, all_tweets_count={len(all_tweets)}, "
-        f"max_count={max_count}, _recrawl_mode={_recrawl_mode}"
+        f"_recrawl_mode={_recrawl_mode}"
     )
     if task_id and resume:
         ckpt = load_checkpoint(task_id)
@@ -992,7 +978,6 @@ def search(
         ):
             return _search_with_time_splits(
                 keyword=keyword,
-                max_count=max_count,
                 product=product,
                 timeout=timeout,
                 task_id=task_id,
@@ -1039,58 +1024,18 @@ def search(
             logger.info(
                 f"从断点恢复：task_id={task_id}，"
                 f"已有 {len(all_tweets)} 条，cursor={'有' if start_cursor else '无'}，"
-                f"_recrawl_mode={_recrawl_mode}，max_count={max_count}"
+                f"_recrawl_mode={_recrawl_mode}"
             )
 
             # ── 无 cursor 时的分支处理 ──
             if not start_cursor:
-                # Case 1: 无限模式（max_count=0）或 Recrawl 模式 → 从头搜索拾取新推文
-                if not max_count or _recrawl_mode:
-                    logger.info(
-                        f"断点恢复（无cursor/{'recrawl' if _recrawl_mode else '无限'}模式）：保留 {len(all_tweets)} 条旧推文用于去重，"
-                        f"开始新搜索以拾取新推文"
-                    )
-                    page_fetched = 0  # 重置页码
-                    # recrawl 从头搜索时，旧推文都会被去重，空页是正常的，提高容忍度
-                    if _recrawl_mode:
-                        _MAX_CONSECUTIVE_EMPTY_PAGES = 10
-                        logger.info(f"recrawl 从头搜索：空页容忍度提高到 {_MAX_CONSECUTIVE_EMPTY_PAGES}")
-                    # 不 return，继续走搜索流程
-                # Case 2: 有限模式（max_count>0）且已达到目标 → 完成搜索，进入回复抓取
-                elif max_count and len(all_tweets) >= max_count:
-                    # 断点恢复时若搜索已完成，直接进入回复抓取阶段
-                    _resume_failed: list[dict] = []
-                    if fetch_replies:
-                        # 检查是否还有未抓取回复的推文（跳过已有 replies 的推文由下层处理）
-                        tweets_without_replies = [
-                            t for t in all_tweets if not t.get("replies")
-                        ]
-                        if tweets_without_replies:
-                            logger.info(
-                                f"断点恢复：{len(all_tweets)} 条推文中 {len(tweets_without_replies)} 条"
-                                f"尚未抓取回复，继续抓取..."
-                            )
-                            all_tweets, _resume_failed = _fetch_replies_for_tweets(
-                                all_tweets,
-                                max_replies_per_tweet,
-                                task_id,
-                                timeout,
-                                crawl_strategy,
-                                reply_depth=reply_depth,
-                                browser_instance=browser_instance,
-                            )
-                        else:
-                            logger.info("断点恢复：所有推文已有回复数据，跳过回复抓取")
-                    return SearchResult(
-                        tweets=all_tweets[:max_count] if max_count else all_tweets,
-                        total_fetched=len(
-                            all_tweets[:max_count] if max_count else all_tweets
-                        ),
-                        keyword=keyword,
-                        resumed=resumed,
-                        replies_fetched=_count_replies(all_tweets),
-                        failed_replies=_resume_failed,
-                    )
+                logger.info(
+                    f"断点恢复（无 cursor）：保留 {len(all_tweets)} 条旧推文用于去重，开始从头检查是否有新增内容"
+                )
+                page_fetched = 0
+                if _recrawl_mode:
+                    _MAX_CONSECUTIVE_EMPTY_PAGES = 10
+                    logger.info(f"recrawl 从头搜索：空页容忍度提高到 {_MAX_CONSECUTIVE_EMPTY_PAGES}")
 
     if task_id and not time_split_active and ckpt is None:
         if _get_time_split_plan().enabled:
@@ -1172,8 +1117,7 @@ def search(
         search_url = _build_search_url(keyword, product)
         logger.info(
             f"开始搜索: keyword='{keyword}', product={product}, "
-            f"max_count={max_count}, strategy=unified_dfs, "
-            f"fetch_replies={fetch_replies}, 从断点={resumed}, "
+            f"strategy=unified_dfs, fetch_replies={fetch_replies}, 从断点={resumed}, "
             f"高级搜索={'是' if _has_search_operators(keyword) else '否'}, "
             f"排除已有={_exclude_count if _exclude_count else 0}, "
             f"账号={'池(' + str(pool.get_active_account_count()) + '个)' if current_account else '默认'}"
@@ -1211,7 +1155,7 @@ def search(
 
         page_num = page_fetched + 1
 
-        while not max_count or len(all_tweets) < max_count:
+        while True:
             # 每页开始前检查控制信号
             check_signal(task_id)
 
@@ -1466,10 +1410,6 @@ def search(
                 if not bottom_cursor:
                     logger.info("无更多数据（bottom_cursor 为空），停止")
                     break
-                if max_count and len(all_tweets) >= max_count:
-                    logger.info(f"已达目标 {max_count} 条，停止")
-                    break
-
                 # ── 休息节律（大幅缩减，仅保留必要的反风控节奏） ──────────
                 # 复爬模式全速推进：跳过所有休息节律
                 if (
@@ -1626,14 +1566,10 @@ def search(
             except Exception:
                 pass
 
-    if max_count:
-        all_tweets = all_tweets[:max_count]
-
     # ── BFS 分支已移除：统一使用 DFS，每批搜索结果中已即时处理评论 ──
 
-    # 爬取完成，删除检查点（仅在有限模式且达到目标数量时删除）
-    # 无限模式(max_count=0)保留 checkpoint，便于后续恢复继续爬取新推文
-    if task_id and max_count and len(all_tweets) >= max_count:
+    # 搜索流程正常跑完后删除检查点，避免任务已完成却长期残留旧断点。
+    if task_id:
         delete_checkpoint(task_id)
 
     result = SearchResult(
