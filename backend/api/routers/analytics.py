@@ -1,16 +1,17 @@
 """
 数据分析看板路由
-GET /api/v1/analytics/overview     全局数据聚合统计
-GET /api/v1/analytics/live-rates   运行中任务实时采集速率
+GET /api/v1/analytics/overview       全局数据聚合统计
+GET /api/v1/analytics/live-rates     运行中任务实时采集速率
+GET /api/v1/analytics/crawl-volume   10 分钟粒度采集量趋势
 """
 from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from api.services import task_manager
 
@@ -236,3 +237,35 @@ def _clean_keyword(keyword: str) -> str:
     if not cleaned:
         return keyword[:40]
     return cleaned[:40]
+
+
+@router.get("/crawl-volume", summary="10 分钟粒度采集量趋势")
+async def get_crawl_volume(
+    hours_back: float = Query(default=24.0, ge=1.0, le=168.0, description="查询最近多少小时的数据"),
+):
+    """返回 10 分钟粒度的采集量分桶数据，用于趋势图。
+
+    每个分桶代表该 10 分钟内累计新采集的推文和评论数量。
+    适用于实时监控爬取速率的时序折线图。
+    """
+    try:
+        from api.services.crawl_volume_db import query_volume
+        since_dt = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        # bucket_key 格式 "YYYY-MM-DDTHH:MM"，截断到分钟
+        since_str = since_dt.strftime("%Y-%m-%dT%H:%M")
+        # 每小时 6 个桶，最多 168 小时 * 6 = 1008 个
+        limit = max(12, int(hours_back * 6) + 6)
+        buckets = query_volume(since=since_str, limit=limit)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"查询采集量分桶失败: {e}", exc_info=True)
+        buckets = []
+
+    return {
+        "hours_back": hours_back,
+        "bucket_minutes": 10,
+        "buckets": buckets,
+        "total_tweets": sum(b["tweets"] for b in buckets),
+        "total_replies": sum(b["replies"] for b in buckets),
+    }
+

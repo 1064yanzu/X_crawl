@@ -316,7 +316,16 @@ def _ensure_db() -> None:
 
         db = _get_db()
         db.init_db(settings.tasks_db_path)
+
+        # 初始化采集量分桶数据库（与主库共用同一文件）
+        try:
+            from api.services.crawl_volume_db import init_volume_db
+            init_volume_db(settings.tasks_db_path)
+        except Exception as _e:
+            logger.warning(f"采集量分桶数据库初始化失败（忽略）: {_e}")
+
         history = db.load_all_tasks()
+
         from crawler import telemetry
 
         with _tasks_lock:
@@ -1037,7 +1046,15 @@ def update_preview_tweets(task_id: str, current_page: int, tweets_for_preview: l
         risk_state=risk_state,
         meta={"preview_count": len(tweets_for_preview)},
     )
+    # 写入 10 分钟采集量分桶
+    if delta_tweets > 0 or delta_replies_telemetry > 0:
+        try:
+            from api.services.crawl_volume_db import write_volume
+            write_volume(delta_tweets=delta_tweets, delta_replies=delta_replies_telemetry)
+        except Exception:
+            pass
     _persist(task_id)
+
 
 
 def set_task_seed_tweets(task_id: str, tweets_for_preview: list[dict], *, current_page: int = 0) -> None:

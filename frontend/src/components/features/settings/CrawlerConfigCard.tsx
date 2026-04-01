@@ -48,8 +48,11 @@ export function CrawlerConfigCard() {
                             <ConfigRow label="实时预览条数" description="任务详情中实时预览保留的最大条数。" value={config.crawler_preview_count} onChange={set("crawler_preview_count")} min={1} max={50} step={1} unit="条" />
                             <ConfigRow label="软重试次数" description="监听超时后的轻量恢复次数。" value={config.crawler_packet_soft_retries} onChange={set("crawler_packet_soft_retries")} min={0} max={8} step={1} unit="次" />
                             <ConfigRow label="硬刷新次数" description="软重试失败后执行整页刷新恢复的次数。" value={config.crawler_refresh_max_retries} onChange={set("crawler_refresh_max_retries")} min={1} max={10} step={1} unit="次" />
-                            <ConfigRow label="挑战页重试次数" description="遇到风控挑战时自动重试的次数。" value={config.crawler_challenge_retry_times} onChange={set("crawler_challenge_retry_times")} min={0} max={8} step={1} unit="次" />
-                            <ConfigRow label="挑战页冷却时间" description="每次风控重试前的冷却时间。" value={config.crawler_challenge_cooldown} onChange={set("crawler_challenge_cooldown")} min={1} max={60} />
+                            <ConfigRow label="挑战页重试次数" description="遇到风控挑战时自动重试的次数（含 Cloudflare 等待轮次）。" value={config.crawler_challenge_retry_times} onChange={set("crawler_challenge_retry_times")} min={0} max={10} step={1} unit="次" />
+                            <ConfigRow label="挑战页冷却时间" description="每次普通风控重试前的冷却时间。" value={config.crawler_challenge_cooldown} onChange={set("crawler_challenge_cooldown")} min={1} max={60} />
+                            <ConfigRow label="Cloudflare 等待时间" description="检测到 Cloudflare 验证时每轮等待时长，给用户充足时间完成手动验证。" value={config.crawler_cloudflare_wait_seconds ?? 60} onChange={set("crawler_cloudflare_wait_seconds")} min={10} max={300} />
+                            <ConfigRow label="错误冻结阈值" description="连续错误页累计达到此次数后，触发长时间冻结休眠以等待 X 服务端恢复。" value={config.crawler_error_freeze_threshold ?? 15} onChange={set("crawler_error_freeze_threshold")} min={3} max={50} step={1} unit="次" />
+                            <ConfigRow label="冻结休眠时长" description="触发冻结后的休眠时间（秒），默认 10 分钟。休眠结束后自动恢复采集。" value={config.crawler_error_freeze_seconds ?? 600} onChange={set("crawler_error_freeze_seconds")} min={60} max={3600} step={60} />
                             <ConfigRow label="并发任务上限" description="调度器允许同时运行的任务数量。" value={config.crawler_max_concurrent_tasks} onChange={set("crawler_max_concurrent_tasks")} min={1} max={5} step={1} unit="个" />
                             <ConfigRow label="间隔下限" description="启用自适应等待时允许的最小翻页间隔。" value={config.crawler_page_interval_min ?? 2.5} onChange={set("crawler_page_interval_min")} min={0.5} max={120} />
                             <ConfigRow label="间隔上限" description="启用自适应等待时允许的最大翻页间隔。" value={config.crawler_page_interval_max ?? 8} onChange={set("crawler_page_interval_max")} min={0.5} max={180} />
@@ -63,6 +66,7 @@ export function CrawlerConfigCard() {
                             <ConfigRow label="X 无限量窗口" description="无限量抓取时使用的固定时间窗口天数。" value={config.x_time_split_window_days_unlimited ?? 7} onChange={set("x_time_split_window_days_unlimited")} min={1} max={30} step={1} unit="天" />
                             <ConfigRow label="X 最大分段数" description="X 时间分段安全上限；超出时会显式失败，不会静默截断。" value={config.x_time_split_max_segments ?? 600} onChange={set("x_time_split_max_segments")} min={1} max={2000} step={1} unit="段" />
                         </div>
+
 
                         <div className="mt-4 grid gap-3 sm:grid-cols-2">
                             <ToggleField

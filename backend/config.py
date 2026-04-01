@@ -106,10 +106,19 @@ class Settings(BaseSettings):
         default=3, description="软重试失败后的硬刷新重试次数"
     )
     crawler_challenge_retry_times: int = Field(
-        default=2, description="检测到风控挑战页时自动重试次数"
+        default=5, description="检测到风控挑战页时自动重试次数（含 Cloudflare 验证等待）"
     )
     crawler_challenge_cooldown: float = Field(
         default=8.0, description="挑战页重试前冷却时间（秒）"
+    )
+    crawler_cloudflare_wait_seconds: float = Field(
+        default=60.0, description="检测到 Cloudflare 验证时每次等待时长（秒），给用户充足时间完成验证"
+    )
+    crawler_error_freeze_threshold: int = Field(
+        default=15, description="连续错误页累计次数达到此阈值后触发长时间冻结"
+    )
+    crawler_error_freeze_seconds: float = Field(
+        default=600.0, description="连续错误触发冻结后的休眠时长（秒），默认 10 分钟"
     )
     crawler_max_concurrent_tasks: int = Field(
         default=1, description="允许并发运行的任务数上限（1 表示串行）"

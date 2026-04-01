@@ -12,7 +12,7 @@ from typing import Optional
 
 from crawler.crawl_signals import ChallengeSignal, RiskState
 from crawler.browser import promote_browser_for_manual_interaction
-from crawler.page_state import PageState, detect_page_state, is_error_like_state
+from crawler.page_state import PageState, detect_page_state, is_error_like_state, detect_cloudflare_challenge
 from crawler.recovery_policy import sleep_with_jitter, backoff_seconds
 from crawler.runtime_metrics import bump_metric
 from crawler.utils import interruptible_sleep
@@ -37,6 +37,7 @@ _COOLDOWN_TIERS = [
     (5, 15.0),   # 连续 5 次后等 15 秒
     (8, 30.0),   # 连续 8 次后等 30 秒
     (12, 60.0),  # 连续 12 次后等 60 秒
+    # freeze 阈值由 settings.crawler_error_freeze_threshold 控制，在 _record_error 中处理
 ]
 
 
@@ -53,6 +54,19 @@ def _record_error(task_id: str | None = None) -> float:
         tag = f"task={task_id[:8]}" if task_id else "no-task"
         logger.info(f"[{tag}] 连续错误页累计 {count} 次，追加冷却 {extra:.0f}s")
     return extra
+
+
+def _get_error_count(task_id: str | None = None) -> int:
+    """获取当前任务连续错误次数（线程安全）。"""
+    with _error_lock:
+        return _per_task_errors.get(task_id, 0)
+
+
+def _should_freeze(task_id: str | None = None) -> bool:
+    """判断是否已达到长时间冻结阈值。"""
+    from config import settings
+    threshold = int(getattr(settings, "crawler_error_freeze_threshold", 15))
+    return _get_error_count(task_id) >= threshold
 
 
 def _record_success(task_id: str | None = None) -> None:
@@ -249,7 +263,17 @@ def navigate_with_retry(
                     f"hit={challenge_hits}/{challenge_retry_times}"
                 )
                 if challenge_hits <= challenge_retry_times:
-                    sleep_with_jitter(challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+                    from config import settings
+                    is_cf = detect_cloudflare_challenge(tab)
+                    # Cloudflare 验证使用更长的等待时间
+                    if is_cf:
+                        cf_wait = float(getattr(settings, "crawler_cloudflare_wait_seconds", 60.0))
+                        logger.info(
+                            f"{log_prefix}检测到 Cloudflare 验证，等待 {cf_wait:.0f}s 供用户完成..."
+                        )
+                        interruptible_sleep(cf_wait, task_id=task_id)
+                    else:
+                        sleep_with_jitter(challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
                     # 冷却后重新检测（不刷新，等用户手动完成验证）
                     recheck_state, _ = detect_page_state(tab)
                     if recheck_state == PageState.OK:
@@ -269,18 +293,57 @@ def navigate_with_retry(
 
             if is_error_like_state(state):
                 extra_cooldown = _record_error(task_id)
-                # 尝试点击 X 错误页 Retry 按钮，避免刷新整页
+                # 检查是否触发长时间冻结
+                if _should_freeze(task_id):
+                    from config import settings
+                    freeze_sec = float(getattr(settings, "crawler_error_freeze_seconds", 600.0))
+                    err_count = _get_error_count(task_id)
+                    freeze_msg = (
+                        f"连续错误 {err_count} 次，进入冷却休息 {freeze_sec/60:.0f} 分钟..."
+                    )
+                    logger.warning(f"{log_prefix}{freeze_msg}")
+                    telemetry.record_event(
+                        task_id,
+                        "freeze_start",
+                        phase=freeze_msg,
+                        meta={"freeze_sec": freeze_sec, "error_count": err_count},
+                    )
+                    # 使用可中断睡眠，用户可以手动暂停/停止
+                    interruptible_sleep(freeze_sec, task_id=task_id)
+                    # 冻结结束，重置错误计数，重新触发页面刷新
+                    _record_success(task_id)
+                    telemetry.record_event(
+                        task_id,
+                        "freeze_end",
+                        phase="冷却休息结束，恢复采集...",
+                    )
+                    # 刷新页面重新尝试
+                    try:
+                        tab.refresh()
+                        interruptible_sleep(2.0, task_id=task_id)
+                    except Exception:
+                        pass
+                    continue
+
+                # 尝试点击 X 错误页 Retry 按钮（多次尝试），避免刷新整页
                 try:
                     from crawler.page_state import click_retry_button_if_present
-                    if click_retry_button_if_present(tab):
-                        interruptible_sleep(2.0, task_id=task_id)
-                        state2, _ = detect_page_state(tab)
-                        if state2 == PageState.OK:
+                    retry_times = max(1, int(getattr(
+                        __import__("config", fromlist=["settings"]).settings,
+                        "crawler_packet_soft_retries", 2
+                    )))
+                    clicked, recovered = click_retry_button_if_present(
+                        tab, max_attempts=min(retry_times, 3)
+                    )
+                    if clicked:
+                        if recovered:
                             _record_success(task_id)
                             logger.info(f"{log_prefix}点击 Retry 按钮后页面恢复正常")
                             if post_load_wait > 0:
                                 interruptible_sleep(post_load_wait, task_id=task_id)
                             return True
+                        else:
+                            logger.info(f"{log_prefix}Retry 按钮点击后页面未恢复，继续重试流程")
                 except Exception:
                     pass
                 if extra_cooldown > 0:

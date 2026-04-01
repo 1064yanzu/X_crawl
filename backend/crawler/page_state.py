@@ -36,6 +36,20 @@ _CHALLENGE_MARKERS = [
     "安全验证",
 ]
 
+# Cloudflare 专属特征词（比一般 challenge 更精准）
+_CLOUDFLARE_MARKERS = [
+    "checking if the site connection is secure",
+    "checking your browser",
+    "please wait…",            # Cloudflare 常见期待文案
+    "enable javascript and cookies to continue",
+    "cloudflare",
+    "正在验证",                  # 有时中文 CF 页面会显示
+    "verification required",
+    "ddos protection by",
+    "attention required",
+    "ray id",                   # Cloudflare 错误页常见的跟踪 ID
+]
+
 _RATE_LIMIT_MARKERS = [
     "rate limit exceeded",
     "too many requests",
@@ -145,6 +159,16 @@ def detect_page_state(tab) -> tuple[PageState, str]:
     return PageState.OK, "页面状态正常"
 
 
+def detect_cloudflare_challenge(tab) -> bool:
+    """检测页面是否为 Cloudflare 五秒盾验证页。
+
+    Cloudflare 验证页的特征比一般 challenge 更精准，
+    需要用户在浏览器中手动完成验证。
+    """
+    text = _normalize_visible_text(tab)
+    return any(marker in text for marker in _CLOUDFLARE_MARKERS)
+
+
 def is_error_like_state(state: PageState) -> bool:
     return state in {PageState.TRANSIENT_ERROR, PageState.RATE_LIMITED}
 
@@ -252,50 +276,85 @@ import logging as _logging
 _retry_logger = _logging.getLogger(__name__)
 
 
-def click_retry_button_if_present(tab) -> bool:
+def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, bool]:
     """
-    检测 X 页面是否出现错误页的 Retry 按钮，若有则点击并返回 True。
-
-    X 的 "Something went wrong. Try again." 错误页面会出现一个 Retry 按钮，
-    点击后可触发重新加载内容，而无需刷新整个页面。
+    检测 X 页面是否出现错误页的 Retry 按钮，若有则点击，支持多次尝试并检测恢复状态。
 
     Returns:
-        True  = 检测到 Retry 按钮并点击了
-        False = 未检测到（页面正常，或非错误页）
+        (clicked, recovered):
+            clicked   = 是否点击了 Retry 按钮
+            recovered = 点击后页面是否恢复正常（仅当 clicked=True 时有意义）
     """
+    import time as _time
     try:
         text = _normalize_visible_text(tab)
-        # 仅在有错误页特征时才尝试查找按钮，避免误触
         if not any(marker in text for marker in _RETRY_PAGE_MARKERS):
-            return False
+            return False, False
 
-        for selector in _RETRY_BUTTON_SELECTORS:
-            try:
-                # DrissionPage 支持 CSS 选择器；:contains 是其扩展语法
-                btn = tab.ele(f"css:{selector}", timeout=1.0)
-                if btn:
-                    _retry_logger.info(f"检测到 X 错误页 Retry 按钮（selector={selector!r}），正在点击...")
-                    btn.click()
-                    return True
-            except Exception:
-                continue
-
-        # 兜底：遍历所有按钮文字
-        try:
-            buttons = tab.eles("tag:button")
-            for btn in buttons:
+        clicked = False
+        for attempt in range(max(1, max_attempts)):
+            _found = False
+            # 尝试 CSS 选择器
+            for selector in _RETRY_BUTTON_SELECTORS:
                 try:
-                    btn_text = (btn.text or "").strip().lower()
-                    if btn_text in {"retry", "try again", "重试", "再试一次"}:
-                        _retry_logger.info(f"检测到 X 错误页 Retry 按钮（text={btn_text!r}），正在点击...")
+                    btn = tab.ele(f"css:{selector}", timeout=1.0)
+                    if btn:
+                        _retry_logger.info(
+                            f"Retry 按钮 attempt={attempt+1}/{max_attempts} "
+                            f"selector={selector!r}，点击..."
+                        )
                         btn.click()
-                        return True
+                        clicked = True
+                        _found = True
+                        break
                 except Exception:
                     continue
-        except Exception:
-            pass
+
+            # 兜底：遍历所有按钮文字
+            if not _found:
+                try:
+                    buttons = tab.eles("tag:button")
+                    for btn in buttons:
+                        try:
+                            btn_text = (btn.text or "").strip().lower()
+                            if btn_text in {"retry", "try again", "重试", "再试一次"}:
+                                _retry_logger.info(
+                                    f"Retry 按钮 attempt={attempt+1} text={btn_text!r}，点击..."
+                                )
+                                btn.click()
+                                clicked = True
+                                _found = True
+                                break
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            if not clicked:
+                return False, False
+
+            # 点击后等待页面响应
+            _time.sleep(2.0)
+
+            # 检测页面是否已恢复
+            new_state, _ = detect_page_state(tab)
+            if new_state == PageState.OK:
+                _retry_logger.info(
+                    f"Retry 点击后页面已恢复正常（attempt={attempt+1})"
+                )
+                return True, True
+
+            # 未恢复，等待后再试
+            if attempt < max_attempts - 1:
+                _time.sleep(2.0)
+                text = _normalize_visible_text(tab)
+                if not any(marker in text for marker in _RETRY_PAGE_MARKERS):
+                    new_state, _ = detect_page_state(tab)
+                    return True, new_state == PageState.OK
+
+        return clicked, False
 
     except Exception as e:
         _retry_logger.debug(f"Retry 按钮检测异常（忽略）: {e}")
+        return False, False
 
-    return False

@@ -60,13 +60,17 @@ export default function AnalyticsPage() {
             ) : (
                 <div className="space-y-6">
                     <AnalyticsSummaryCards summary={data.summary} />
-                    <DailyVolumeChart data={data.daily_volume} />
                     <div className="grid gap-6 xl:grid-cols-2">
                         <PlatformDistribution data={data.platform_distribution} />
                         <TopKeywords data={data.top_keywords} />
                     </div>
                 </div>
             )}
+
+            {/* 采集量趋势图：独立 fetch，始终展示 */}
+            <div className="rounded-[1.5rem] border border-border/60 bg-card/90 backdrop-blur-sm p-5">
+                <DailyVolumeChart />
+            </div>
         </div>
     );
 }

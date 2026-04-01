@@ -259,7 +259,11 @@ export interface CrawlerConfig {
     x_time_split_window_days?: number;
     x_time_split_window_days_unlimited?: number;
     x_time_split_max_segments?: number;
+    crawler_cloudflare_wait_seconds?: number;    // Cloudflare 验证每次等待时长（秒）
+    crawler_error_freeze_threshold?: number;     // 连续错误次数触发冻结的阈值
+    crawler_error_freeze_seconds?: number;       // 冻结休眠时长（秒）
 }
+
 
 // 失败评论记录
 export interface FailedReplyRecord {
@@ -971,6 +975,8 @@ export const api = {
             fetchApi<AnalyticsOverview>("/api/v1/analytics/overview"),
         liveRates: () =>
             fetchApi<LiveRatesResponse>("/api/v1/analytics/live-rates"),
+        crawlVolume: (hoursBack = 24) =>
+            fetchApi<CrawlVolumeResponse>(`/api/v1/analytics/crawl-volume?hours_back=${hoursBack}`),
     },
 };
 
@@ -1036,3 +1042,18 @@ export interface LiveRatesResponse {
     };
     task_rates: TaskRateItem[];
 }
+
+export interface CrawlVolumeBucket {
+    bucket: string;   // "YYYY-MM-DDTHH:MM"
+    tweets: number;
+    replies: number;
+}
+
+export interface CrawlVolumeResponse {
+    hours_back: number;
+    bucket_minutes: number;
+    buckets: CrawlVolumeBucket[];
+    total_tweets: number;
+    total_replies: number;
+}
+
