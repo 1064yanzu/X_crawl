@@ -24,6 +24,9 @@ export function BrowserPoolPanel() {
     const crossPlatformEnabled = Boolean(data?.cross_platform_concurrent);
     const activeXAccounts = data?.active_x_accounts ?? 0;
     const effectiveXLimit = data?.effective_x_concurrency_limit ?? configuredMax;
+    const totalInstances = data?.total_instances ?? data?.total_slots ?? 0;
+    const auxInstances = data?.aux_instances ?? 0;
+    const aliveInstances = data?.alive_instances ?? totalInstances;
 
     const handleResize = async (delta: -1 | 1) => {
         if (!data) return;
@@ -79,6 +82,9 @@ export function BrowserPoolPanel() {
                             </p>
                             <p className="text-[11px] text-muted-foreground">
                                 X 实际并发 {effectiveXLimit} · 活跃账号 {activeXAccounts}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground">
+                                浏览器实例 {aliveInstances}/{totalInstances} · 辅助实例 {auxInstances}
                             </p>
                         </div>
                     </div>
@@ -174,7 +180,7 @@ export function BrowserPoolPanel() {
             <div className="border-t border-border/40 bg-muted/10 px-4 py-2">
                 <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                     <Cpu className="h-3 w-3" />
-                    这里调整的是单平台并发上限；X 任务实际并发还会受活跃账号数限制。推荐单平台 1–3，并保持一号一任务。
+                    这里调整的是单平台并发上限；上方“浏览器实例”已包含主 slot 与回复/评论辅助实例。推荐单平台 1–3，并保持一号一任务。
                 </p>
             </div>
         </Card>

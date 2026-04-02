@@ -14,6 +14,7 @@
 然后再启动爬虫服务，即可完整复用你的浏览器指纹和登录状态。
 """
 import os
+import json
 import logging
 import socket
 import subprocess
@@ -29,6 +30,10 @@ from crawler.browser_detector import detect_all_browsers, detect_preferred_brows
 from crawler.platform_runtime import (
     should_force_headless_on_linux,
     linux_headless_args_enabled,
+)
+from crawler.browser_resource_policy import (
+    apply_browser_option_policies,
+    apply_tab_resource_policies,
 )
 from crawler.stealth import apply_stealth_to_tab
 
@@ -411,6 +416,58 @@ def _resolve_browser_paths() -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+def _resolve_profile_directory_name(user_data_path: str) -> Optional[str]:
+    """
+    为 Chromium 用户数据根目录推断一个具体 profile 目录名。
+
+    只传 `--user-data-dir` 而不指定 `--profile-directory` 时，
+    某些多 profile 环境会先弹出“谁在使用 Chrome?” 选择页，导致爬虫卡住。
+    这里优先读取 `Local State` 中的 `profile.last_used`，否则回退到 `Default`
+    或首个 `Profile *` 目录。
+    """
+    if not user_data_path or not os.path.isdir(user_data_path):
+        return None
+
+    # 爬虫自建隔离目录固定使用 Default，避免首次启动落到 profile picker
+    if os.path.abspath(user_data_path) == os.path.abspath(_CRAWLER_PROFILE_DIR):
+        return "Default"
+
+    local_state_path = os.path.join(user_data_path, "Local State")
+    if os.path.isfile(local_state_path):
+        try:
+            with open(local_state_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            profile_meta = data.get("profile") or {}
+            candidates = []
+            last_used = profile_meta.get("last_used")
+            if isinstance(last_used, str) and last_used:
+                candidates.append(last_used)
+            for name in profile_meta.get("last_active_profiles") or []:
+                if isinstance(name, str) and name and name not in candidates:
+                    candidates.append(name)
+            for name in candidates:
+                if os.path.isdir(os.path.join(user_data_path, name)):
+                    return name
+        except Exception as e:
+            logger.debug("读取 Local State 失败，回退目录扫描: %s", e)
+
+    if os.path.isdir(os.path.join(user_data_path, "Default")):
+        return "Default"
+
+    try:
+        profile_names = sorted(
+            name
+            for name in os.listdir(user_data_path)
+            if name.startswith("Profile ") and os.path.isdir(os.path.join(user_data_path, name))
+        )
+        if profile_names:
+            return profile_names[0]
+    except Exception:
+        pass
+
+    return None
+
+
 def _create_browser() -> Chromium:
     debug_port = settings.browser_debug_port  # 默认 9222
 
@@ -461,12 +518,16 @@ def _create_browser() -> Chromium:
         candidate_user_data = None
     user_data = candidate_user_data or _CRAWLER_PROFILE_DIR
     os.makedirs(user_data, exist_ok=True)
+    profile_directory = _resolve_profile_directory_name(user_data)
 
     # 专用目录出现孤儿锁文件时自动清理，避免 BrowserConnectError
     if user_data == _CRAWLER_PROFILE_DIR and _is_user_data_locked(user_data):
         _cleanup_stale_singleton_locks(user_data)
 
     co.set_user_data_path(user_data)
+    if profile_directory:
+        co.set_argument("--profile-directory", profile_directory)
+        logger.info(f"使用浏览器 Profile: {profile_directory}")
     logger.info(f"使用用户数据目录: {user_data}")
 
     # 代理
@@ -494,7 +555,7 @@ def _create_browser() -> Chromium:
 
     _update_session_info(
         session_mode="crawler_profile",
-        effective_user_data_path=user_data,
+        effective_user_data_path=os.path.join(user_data, profile_directory) if profile_directory else user_data,
         debug_port=local_port,
         browser_pid=None,
         browser_alive=True,
@@ -529,9 +590,11 @@ def _create_browser() -> Chromium:
             logger.info("Linux 无头稳定性参数已启用（no-sandbox/dev-shm/gpu/setuid）")
 
     # 图片加载策略
-    co.no_imgs(settings.browser_block_images)
+    apply_browser_option_policies(co)
     if settings.browser_block_images:
         logger.info("已启用禁图模式（browser_block_images=True）")
+    if settings.browser_block_videos:
+        logger.info("已启用禁视频模式（browser_block_videos=True）")
 
     # 统一加载模式配置
     load_mode = settings.browser_load_mode if settings.browser_load_mode in ("normal", "eager", "none") else "normal"
@@ -558,6 +621,7 @@ def get_new_tab(background: Optional[bool] = None, *, _retried: bool = False):
         tab = get_browser().new_tab(background=background)
         # 始终注入 stealth 脚本（反检测是基本需求，不应默认关闭）
         apply_stealth_to_tab(tab, enabled=True)
+        apply_tab_resource_policies(tab)
         return tab
     except Exception as e:
         err_name = type(e).__name__

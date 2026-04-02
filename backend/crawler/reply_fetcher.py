@@ -12,7 +12,7 @@ import random
 import time
 from typing import Optional
 
-from crawler.auth import check_login, ensure_login_detailed
+from crawler.auth import check_login, ensure_login_detailed, ensure_x_domain_context
 from crawler.browser import get_new_tab, promote_browser_for_manual_interaction
 from crawler.cookie_manager import _build_cookie_dict
 from crawler.reply_parser import parse_tweet_detail_response, TWEET_DETAIL_PATTERN
@@ -20,7 +20,14 @@ from crawler.response_saver import save_reply_response
 from crawler.page_health import navigate_with_retry
 from crawler.page_state import detect_page_state, PageState
 from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body, extract_packet_body_dict
-from crawler.recovery_policy import RecoveryPolicy, soft_recover_for_packet, backoff_seconds, sleep_with_jitter
+from crawler.recovery_policy import (
+    RecoveryPolicy,
+    soft_recover_for_packet,
+    backoff_seconds,
+    sleep_with_jitter,
+    build_challenge_wait_plan,
+    wait_for_challenge,
+)
 from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
 from crawler.scroll_safe import safe_scroll_down, safe_scroll_up, safe_scroll_to_bottom
@@ -40,6 +47,66 @@ logger = logging.getLogger(__name__)
 
 # 连续无新评论的最大重试次数（超过后认为评论区已到底）
 _MAX_EMPTY_PAGES = 3
+
+
+def _dynamic_max_empty_pages(expected_count: int) -> int:
+    """根据预期评论数动态调整连续空页退出阈值。
+
+    大评论量推文的评论区翻页更容易出现重复数据导致的"假空页"，
+    需要更大的容忍度才能触发更多真实加载。
+    """
+    if expected_count <= 50:
+        return _MAX_EMPTY_PAGES  # 3
+    if expected_count <= 500:
+        return 5
+    if expected_count <= 2000:
+        return 8
+    return 12
+
+# ── 登录验证 TTL 缓存 ────────────────────────────────────────
+# 同一 tab 在 TTL 内跳过重复的登录检查和域切换
+_LOGIN_CHECK_TTL = 120.0  # 秒
+
+import threading
+_login_cache_lock = threading.Lock()
+# key: tab id → {"verified_at": float}
+_login_cache: dict[int, dict] = {}
+
+
+def _is_login_cached(tab) -> bool:
+    """检查 tab 的登录验证缓存是否仍然有效。"""
+    tab_id = id(tab)
+    with _login_cache_lock:
+        entry = _login_cache.get(tab_id)
+        if entry and (time.monotonic() - entry["verified_at"]) < _LOGIN_CHECK_TTL:
+            return True
+    return False
+
+
+def _mark_login_cached(tab) -> None:
+    """标记 tab 的登录验证通过时间。"""
+    tab_id = id(tab)
+    with _login_cache_lock:
+        _login_cache[tab_id] = {"verified_at": time.monotonic()}
+
+
+def _invalidate_login_cache(tab) -> None:
+    """使 tab 的登录缓存失效。"""
+    tab_id = id(tab)
+    with _login_cache_lock:
+        _login_cache.pop(tab_id, None)
+
+
+def _safe_stop_listener(tab) -> None:
+    try:
+        listener = getattr(tab, "listen", None)
+        if listener is None:
+            return
+        if getattr(listener, "_driver", None) is None:
+            return
+        listener.stop()
+    except Exception as e:
+        logger.debug("停止监听器失败，已忽略: %s", e)
 
 
 def _to_risk_state(state: PageState) -> RiskState:
@@ -135,7 +202,16 @@ def _wait_reply_packet_with_recovery(
                 f"  回复第 {page_num} 页风险状态 state={state.value}，"
                 f"等待用户完成验证（{risk_hits}/{policy.challenge_retry_times}）"
             )
-            sleep_with_jitter(policy.challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+            wait_plan = build_challenge_wait_plan(
+                tab,
+                challenge_cooldown=policy.challenge_cooldown,
+                cloudflare_wait_seconds=policy.cloudflare_wait_seconds,
+            )
+            if wait_plan.is_cloudflare:
+                logger.info(
+                    f"  回复第 {page_num} 页命中 Cloudflare 验证，等待 {wait_plan.seconds:.0f}s 供用户手动完成"
+                )
+            wait_for_challenge(wait_plan, task_id=task_id)
             # 冷却后重新检测（不刷新，等用户手动完成验证）
             recheck_state, _ = detect_page_state(tab)
             if recheck_state == PageState.OK:
@@ -147,18 +223,17 @@ def _wait_reply_packet_with_recovery(
             soft_recover_for_packet(tab, soft_attempt)
             continue
 
-    for hard_attempt in range(policy.refresh_max_retries):
+    # 回复翻页场景下限制硬恢复次数为 min(2, policy 配置)，避免无效等待
+    reply_hard_retries = min(2, policy.refresh_max_retries)
+    for hard_attempt in range(reply_hard_retries):
         bump_metric(task_id, "hard_refreshes")
-        wait = backoff_seconds(hard_attempt, base=2.0, cap=35.0)
+        wait = backoff_seconds(hard_attempt, base=2.0, cap=12.0)
         logger.warning(
-            f"  回复第 {page_num} 页硬恢复刷新 {hard_attempt + 1}/{policy.refresh_max_retries}，"
+            f"  回复第 {page_num} 页硬恢复刷新 {hard_attempt + 1}/{reply_hard_retries}，"
             f"退避 {wait:.1f}s"
         )
         sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.6)
-        try:
-            tab.listen.stop()
-        except Exception:
-            pass
+        _safe_stop_listener(tab)
         tab.listen.start(TWEET_DETAIL_PATTERN)
         ok = navigate_with_retry(
             tab,
@@ -239,7 +314,7 @@ def _inject_browser_instance_cookies_to_tab(tab, browser_instance) -> int:
     return injected
 
 
-def _try_inject_pool_account_cookies(tab, task_id: Optional[str]) -> bool:
+def _try_inject_pool_account_cookies(tab, task_id: Optional[str], browser_instance=None) -> bool:
     """
     尝试从账号池中获取任务绑定账号的 Cookie 并注入 tab。
     注入成功且登录验证通过时返回 True，否则返回 False。
@@ -257,9 +332,13 @@ def _try_inject_pool_account_cookies(tab, task_id: Optional[str]) -> bool:
         pool = get_pool()
         if pool.get_active_account_count() == 0:
             return False
+        browser_bound_account_id = None
+        if browser_instance is not None and hasattr(browser_instance, "get_bound_account"):
+            browser_bound_account_id, _ = browser_instance.get_bound_account()
         bound_account_id, _ = _task_mgr.get_task_account(task_id)
-        account = pool.get_account(bound_account_id) if bound_account_id else None
-        if account is None:
+        preferred_account_id = browser_bound_account_id or bound_account_id
+        account = pool.get_account(preferred_account_id) if preferred_account_id else None
+        if account is None and browser_instance is None:
             account = pool.pick_next_account()
         if account is None:
             return False
@@ -269,18 +348,26 @@ def _try_inject_pool_account_cookies(tab, task_id: Optional[str]) -> bool:
                 f"评论抓取前通过账号池账号 {account.alias!r} 恢复登录态成功"
             )
             return True
-        logger.warning(
-            f"评论抓取前账号池账号 {account.alias!r} 登录验证失败，reason={result.reason}"
-        )
+        logger.warning(f"评论抓取前账号池账号 {account.alias!r} 登录验证失败，reason={result.reason}")
     except Exception as e:
         logger.debug(f"评论抓取前尝试账号池注入失败: {e}")
     return False
 
 
 def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance=None) -> None:
-    """抓评论前确保当前 tab 已处于可用登录态。"""
+    """抓评论前确保当前 tab 已处于可用登录态。支持 TTL 缓存避免重复检查。"""
+    # TTL 内跳过重复检查
+    if _is_login_cached(tab):
+        return
+
+    try:
+        ensure_x_domain_context(tab)
+    except Exception as e:
+        logger.debug(f"评论抓取前建立 X 域上下文失败，将继续后续恢复: {e}")
+
     try:
         if check_login(tab):
+            _mark_login_cached(tab)
             return
     except Exception as e:
         logger.debug(f"评论抓取前快速检查登录态失败，将走完整校验: {e}")
@@ -291,16 +378,19 @@ def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance
         time.sleep(0.5)
         try:
             if check_login(tab):
+                _mark_login_cached(tab)
                 return
         except Exception:
             pass
 
     # 优先尝试通过账号池绑定账号恢复登录态（比默认 ensure_login_detailed 更精准）
-    if _try_inject_pool_account_cookies(tab, task_id):
+    if _try_inject_pool_account_cookies(tab, task_id, browser_instance=browser_instance):
+        _mark_login_cached(tab)
         return
 
     result = ensure_login_detailed(tab)
     if result.ok:
+        _mark_login_cached(tab)
         return
 
     risk_state: RiskState = "challenge" if result.reason == "challenge_required" else "login_required"
@@ -349,6 +439,7 @@ def fetch_replies(
     seen_ids: set[str] = set()
     page_num = 0
     empty_page_count = 0  # 连续无新评论计数
+    max_empty_pages = _dynamic_max_empty_pages(expected_count or 0)
 
     # 决定是否使用外部传入的 tab（DFS 时复用避免频繁开关）
     if existing_tab is not None:
@@ -504,9 +595,9 @@ def fetch_replies(
                         )
                         break
                     bump_metric(task_id, "empty_pages")
-                    if empty_page_count >= _MAX_EMPTY_PAGES:
+                    if empty_page_count >= max_empty_pages:
                         logger.info(
-                            f"  连续 {_MAX_EMPTY_PAGES} 页无新评论，停止翻页"
+                            f"  连续 {max_empty_pages} 页无新评论，停止翻页"
                         )
                         break
                 else:
@@ -556,6 +647,14 @@ def fetch_replies(
                 if not bottom_cursor:
                     if expected_count and len(all_replies) < expected_count * 0.5:
                         # 覆盖率不足但 API 没给 cursor，尝试额外滚动
+                        # 纳入空页计数，避免无限循环
+                        empty_page_count += 1
+                        if empty_page_count >= max_empty_pages:
+                            logger.info(
+                                f"  API 无 cursor 且连续 {max_empty_pages} 次无新数据，"
+                                f"停止翻页（{len(all_replies)}/{expected_count}）"
+                            )
+                            break
                         logger.info(
                             f"  API 无 cursor 但仅抓到 {len(all_replies)}/{expected_count} 条，"
                             f"尝试额外滚动触发加载..."
@@ -579,7 +678,7 @@ def fetch_replies(
                 break
 
     finally:
-        tab.listen.stop()
+        _safe_stop_listener(tab)
         if should_close:
             try:
                 tab.close()
@@ -664,16 +763,21 @@ def fetch_replies_batch(
     updated_tweets = []
     failed_records: list[dict] = []
 
-    # ── 创建 batch 级共享 tab（避免每条推文都开关 tab） ──────────────
     _shared_reply_tab = None
     _owns_shared_tab = False
-    if browser_instance is not None:
-        _shared_reply_tab = browser_instance.new_tab()
-        _owns_shared_tab = True
-    elif reply_depth <= 1:
-        # 非嵌套模式：batch 内共享同一个 tab
-        _shared_reply_tab = get_new_tab()
-        _owns_shared_tab = True
+
+    def _ensure_shared_reply_tab():
+        nonlocal _shared_reply_tab, _owns_shared_tab
+        if _shared_reply_tab is not None:
+            return _shared_reply_tab
+        if browser_instance is not None:
+            _shared_reply_tab = browser_instance.new_tab()
+            _owns_shared_tab = True
+        elif reply_depth <= 1:
+            # 非嵌套模式：batch 内共享同一个 tab
+            _shared_reply_tab = get_new_tab()
+            _owns_shared_tab = True
+        return _shared_reply_tab
 
     for i, tweet in enumerate(tweets):
         # 每条推文前检查信号
@@ -768,7 +872,7 @@ def fetch_replies_batch(
         if need_nested:
             reply_tab = browser_instance.new_tab() if browser_instance is not None else get_new_tab()
         else:
-            reply_tab = _shared_reply_tab  # 复用 batch 级共享 tab
+            reply_tab = _ensure_shared_reply_tab()
 
         try:
             replies, failure_info = fetch_replies(
@@ -817,12 +921,14 @@ def fetch_replies_batch(
             merge_remaining(updated_tweets, tweets, i + 1)
             raise StopSignal(str(e), partial_tweets=updated_tweets)
         except ChallengeSignal:
+            _invalidate_login_cache(reply_tab)
             raise
         except Exception as e:
             import traceback
             error_msg = str(e).lower()
             if "disconnected" in error_msg or "connection lost" in error_msg or "target closed" in error_msg:
                 logger.warning(f"检测到浏览器断开连接，尝试恢复浏览器: {e}")
+                _invalidate_login_cache(reply_tab)
                 from crawler.browser import ensure_browser_alive
                 ensure_browser_alive()
             logger.error(f"抓取 tweet_id={tweet_id} 回复失败: {e}", exc_info=True)

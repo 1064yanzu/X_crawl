@@ -242,6 +242,19 @@ def _classify_resumable_tasks(
     return user_paused, risk_paused
 
 
+def _sort_tasks_by_priority(tasks: list[dict]) -> list[dict]:
+    """
+    排序任务优先级：普通搜索任务 > 评论补采任务。
+    同类任务保持原有顺序不变（稳定排序）。
+    """
+    def _priority(task: dict) -> int:
+        if task.get("task_kind") == "comment_backfill":
+            return 1  # 评论补采优先级低
+        return 0      # 普通搜索优先级高
+
+    return sorted(tasks, key=_priority)
+
+
 def _do_resume_tasks(
     target_tasks: list[dict],
     all_tasks: list[dict],
@@ -250,6 +263,8 @@ def _do_resume_tasks(
     """对目标任务执行恢复操作，返回 (resumed_ids, already_running_ids, failed_ids)。"""
     resumable_statuses = {"paused", "stopped", "failed"}
     queue_task_map: dict[str, list[dict]] = {}
+    # 排序：普通搜索任务优先于评论补采任务入队
+    target_tasks = _sort_tasks_by_priority(target_tasks)
     target_ids = {t.get("task_id", "") for t in target_tasks}
 
     for task in all_tasks:

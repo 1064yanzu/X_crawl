@@ -101,6 +101,27 @@ def test_acquire_falls_back_to_cross_platform_sharing_when_pool_is_full(monkeypa
     assert pool.status()["total_slots"] == 2
 
 
+def test_status_includes_aux_instance_counts(monkeypatch):
+    import config
+    from crawler import browser_pool
+
+    monkeypatch.setattr(config.settings, "browser_pool_auto_close_idle", False, raising=False)
+    monkeypatch.setattr(browser_pool, "BrowserInstance", _DummyInstance)
+
+    pool = browser_pool.BrowserPool(max_size=2)
+    pool.acquire("task-x-1", platform="x")
+    aux = pool.acquire_aux("task-x-1", purpose="reply")
+
+    status = pool.status()
+
+    assert aux.instance_id >= 10000
+    assert status["total_slots"] == 1
+    assert status["aux_instances"] == 1
+    assert status["alive_aux_instances"] == 1
+    assert status["total_instances"] == 2
+    assert status["alive_instances"] == 2
+
+
 def test_cleanup_stale_pool_browsers_respects_max_size(monkeypatch):
     from crawler import browser_pool
 

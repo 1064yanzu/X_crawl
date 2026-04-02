@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskCommentBackfillButton";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
-import { canCreateCommentBackfillFromTask, canRecrawlTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, canRecrawlTask, canResumeTask, formatDateTime, getCommentBackfillPercent, getCommentBackfillSummary, getCoverageSummary, getRiskStateHint, getRiskStateLabel, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, isTaskActive } from "@/lib/task-ui";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
 
@@ -43,6 +43,7 @@ function TaskPreviewBody({
     const coverage = getCoverageSummary(task.time_coverage as Record<string, unknown> | undefined);
     const active = isTaskActive(task.status);
     const backfillSummary = getCommentBackfillSummary(task);
+    const backfillPercent = getCommentBackfillPercent(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
     const canRecrawl = canRecrawlTask(task);
 
@@ -78,11 +79,24 @@ function TaskPreviewBody({
                         }
                         hint="持续抓取直到数据耗尽或被终止"
                     />
-                    <PreviewStat
-                        label={task.task_kind === "comment_backfill" ? "补采进度" : "当前页"}
-                        value={task.task_kind === "comment_backfill" ? (backfillSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
-                        hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "仍在持续更新"}
-                    />
+                    {task.task_kind === "comment_backfill" ? (
+                        <div className="rounded-2xl border border-border/60 bg-background/70 px-4 py-4 shadow-sm">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">补采进度</p>
+                            <div className="mt-2 flex items-center gap-2">
+                                <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                                    <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${backfillPercent}%` }} />
+                                </div>
+                                <span className="text-lg font-semibold tabular-nums text-foreground">{backfillPercent}%</span>
+                            </div>
+                            <p className="mt-1 text-xs text-muted-foreground">{backfillSummary || "--"}</p>
+                        </div>
+                    ) : (
+                        <PreviewStat
+                            label="当前页"
+                            value={task.current_page > 0 ? `${task.current_page}` : "--"}
+                            hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "仍在持续更新"}
+                        />
+                    )}
                     <PreviewStat label="覆盖时间" value={coverage} hint={formatDateTime(task.created_at)} />
                     <PreviewStat label="风控状态" value={getRiskStateLabel(task.risk_state)} hint={task.status === "done" ? "任务已完成" : active ? getRiskStateHint(task.risk_state) : "可在详情页复盘"} />
                 </div>

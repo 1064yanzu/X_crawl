@@ -36,7 +36,11 @@ class BrowserPoolStatusResponse(BaseModel):
     cross_platform_concurrent: bool = Field(description="是否开启跨平台并发")
     active_x_accounts: int = Field(description="当前可用于 X 任务的活跃账号数")
     effective_x_concurrency_limit: int = Field(description="X 任务当前实际并发上限（已受账号数约束）")
+    total_instances: int = Field(description="当前主实例 + 辅助实例总数")
+    alive_instances: int = Field(description="当前存活的主实例 + 辅助实例总数")
     total_slots: int = Field(description="已创建的浏览器实例总数")
+    aux_instances: int = Field(description="当前已借出的辅助浏览器实例总数")
+    alive_aux_instances: int = Field(description="当前存活的辅助浏览器实例总数")
     active_slots: int = Field(description="当前有任务占用的槽位数")
     idle_slots: int = Field(description="空闲（无任务占用）的槽位数")
     slots: list[SlotInfo] = Field(default_factory=list)
@@ -102,7 +106,11 @@ async def get_pool_status() -> BrowserPoolStatusResponse:
         cross_platform_concurrent=cross_platform_concurrent,
         active_x_accounts=active_x_accounts,
         effective_x_concurrency_limit=effective_x_concurrency_limit,
+        total_instances=raw.get("total_instances", raw["total_slots"]),
+        alive_instances=raw.get("alive_instances", raw["total_slots"]),
         total_slots=raw["total_slots"],
+        aux_instances=raw.get("aux_instances", 0),
+        alive_aux_instances=raw.get("alive_aux_instances", 0),
         active_slots=active,
         idle_slots=raw["total_slots"] - active,
         slots=slots,

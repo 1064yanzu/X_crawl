@@ -20,6 +20,7 @@ class ScheduledTask:
     task_id: str
     payload: dict
     platform: str = "x"
+    task_kind: str = "search"
 
 
 class SchedulerBackend(Protocol):
@@ -97,14 +98,14 @@ class TaskScheduler:
             self._backend = self._make_backend()
             logger.info(f"调度后端已刷新: {settings.scheduler_backend}")
 
-    def enqueue(self, task_id: str, payload: dict, platform: str = "x") -> bool:
+    def enqueue(self, task_id: str, payload: dict, platform: str = "x", task_kind: str = "search") -> bool:
         with self._lock:
             if task_id in self._running or task_id in self._queued_ids:
                 return False
             self._queued_ids.add(task_id)
             self._queued_order.append(task_id)
             self._queued_platforms[task_id] = platform
-            self._backend.put(ScheduledTask(task_id=task_id, payload=payload, platform=platform))
+            self._backend.put(ScheduledTask(task_id=task_id, payload=payload, platform=platform, task_kind=task_kind))
             return True
 
     def mark_done(self, task_id: str) -> None:
@@ -234,9 +235,15 @@ class TaskScheduler:
                 time.sleep(0.5)
 
     def _try_dispatch_pending(self) -> bool:
-        """尝试从 pending 列表中找到可调度的任务并执行。"""
+        """尝试从 pending 列表中找到可调度的任务并执行。
+        按优先级排序：普通搜索任务优先于评论补采任务。
+        """
         dispatched = False
         with self._lock:
+            # 排序：search 优先于 comment_backfill
+            self._pending_items.sort(
+                key=lambda it: 1 if it.task_kind == "comment_backfill" else 0
+            )
             if self._pending_items:
                 logger.debug(
                     "_try_dispatch_pending: pending=%d, running=%d, items=%s",

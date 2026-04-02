@@ -91,3 +91,33 @@ def test_resolve_browser_paths_can_disable_user_data_dir_preference(monkeypatch)
 
     assert exec_path == "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     assert user_data_path is None
+
+
+def test_resolve_profile_directory_name_prefers_last_used_from_local_state(tmp_path):
+    import json
+    from crawler import browser
+
+    user_data = tmp_path / "Chrome"
+    user_data.mkdir()
+    (user_data / "Default").mkdir()
+    (user_data / "Profile 1").mkdir()
+    (user_data / "Local State").write_text(
+        json.dumps({"profile": {"last_used": "Profile 1"}}),
+        encoding="utf-8",
+    )
+
+    profile_name = browser._resolve_profile_directory_name(str(user_data))
+
+    assert profile_name == "Profile 1"
+
+
+def test_resolve_profile_directory_name_falls_back_to_default(tmp_path):
+    from crawler import browser
+
+    user_data = tmp_path / "Chrome"
+    user_data.mkdir()
+    (user_data / "Default").mkdir()
+
+    profile_name = browser._resolve_profile_directory_name(str(user_data))
+
+    assert profile_name == "Default"

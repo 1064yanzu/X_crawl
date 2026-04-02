@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { TaskMetaBlock } from "@/components/features/tasks/TaskMetaBlock";
 import { getPlatformMeta } from "@/lib/platformRegistry";
-import { canCreateCommentBackfillFromTask, canRecrawlTask, canResumeTask, formatDateTime, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
+import { canCreateCommentBackfillFromTask, canRecrawlTask, canResumeTask, formatDateTime, getCommentBackfillPercent, getCommentBackfillSummary, getCoverageSummary, getTaskKindLabel, getTaskLastUpdated, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
 import { cn } from "@/lib/utils";
 import type { DensityMode } from "@/hooks/useTaskListState";
 
@@ -134,6 +134,7 @@ function TaskListCardComfortable({
     const coverage = getCoverageSummary(task.time_coverage as Record<string, unknown> | undefined);
     const isBackfill = task.task_kind === "comment_backfill";
     const progressSummary = getCommentBackfillSummary(task);
+    const backfillPercent = getCommentBackfillPercent(task);
     const queueLabel = getTaskQueueLabel(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
     const showRecrawl = canRecrawlTask(task);
@@ -179,10 +180,26 @@ function TaskListCardComfortable({
                                         : `${task.result_count.toLocaleString()}`
                                 }
                             />
-                            <TaskMetaBlock
-                                label={isBackfill ? "补采进度" : "当前页"}
-                                value={isBackfill ? (progressSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
-                            />
+                            {isBackfill ? (
+                                <div className="flex flex-col gap-1.5">
+                                    <span className="text-xs font-medium text-muted-foreground">补采进度</span>
+                                    <div className="flex items-center gap-2">
+                                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                                            <div
+                                                className="h-full rounded-full bg-primary transition-all duration-500"
+                                                style={{ width: `${backfillPercent}%` }}
+                                            />
+                                        </div>
+                                        <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground">{backfillPercent}%</span>
+                                    </div>
+                                    <span className="text-[11px] text-muted-foreground">{progressSummary || "--"}</span>
+                                </div>
+                            ) : (
+                                <TaskMetaBlock
+                                    label="当前页"
+                                    value={task.current_page > 0 ? `${task.current_page}` : "--"}
+                                />
+                            )}
                             <TaskMetaBlock label="覆盖时间" value={coverage} />
                             <TaskMetaBlock label="最近更新" value={lastUpdated} />
                         </div>
@@ -301,6 +318,7 @@ function TaskListCardCompact({
     const lastUpdated = formatDateTime(getTaskLastUpdated(task));
     const isBackfill = task.task_kind === "comment_backfill";
     const progressSummary = getCommentBackfillSummary(task);
+    const backfillPercent = getCommentBackfillPercent(task);
     const queueLabel = getTaskQueueLabel(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
     const showRecrawl = canRecrawlTask(task);
@@ -353,12 +371,27 @@ function TaskListCardCompact({
                                 : task.result_count.toLocaleString()}
                         </p>
                     </div>
-                    <div className="text-right">
-                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">{isBackfill ? "进度" : "页码"}</p>
-                        <p className="font-medium tabular-nums text-foreground">
-                            {isBackfill ? (progressSummary || "--") : task.current_page > 0 ? `${task.current_page}` : "--"}
-                        </p>
-                    </div>
+                    {isBackfill ? (
+                        <div className="flex min-w-[100px] flex-col items-end gap-0.5">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">进度</p>
+                            <div className="flex w-full items-center gap-1.5">
+                                <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                                    <div
+                                        className="h-full rounded-full bg-primary transition-all duration-500"
+                                        style={{ width: `${backfillPercent}%` }}
+                                    />
+                                </div>
+                                <span className="text-[11px] font-medium tabular-nums text-foreground">{backfillPercent}%</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-right">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">页码</p>
+                            <p className="font-medium tabular-nums text-foreground">
+                                {task.current_page > 0 ? `${task.current_page}` : "--"}
+                            </p>
+                        </div>
+                    )}
                     <div className="hidden text-right lg:block">
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">更新</p>
                         <p className="font-medium text-foreground">{lastUpdated}</p>

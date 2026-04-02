@@ -42,6 +42,8 @@ from crawler.recovery_policy import (
     soft_recover_for_packet,
     backoff_seconds,
     sleep_with_jitter,
+    build_challenge_wait_plan,
+    wait_for_challenge,
 )
 from crawler.crawl_signals import (
     StopSignal,
@@ -594,7 +596,16 @@ def _wait_search_packet_with_recovery(
                 f"第 {page_num} 页检测到风险状态 state={state.value}，"
                 f"等待用户完成验证（{challenge_hits}/{policy.challenge_retry_times}）"
             )
-            sleep_with_jitter(policy.challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+            wait_plan = build_challenge_wait_plan(
+                tab,
+                challenge_cooldown=policy.challenge_cooldown,
+                cloudflare_wait_seconds=policy.cloudflare_wait_seconds,
+            )
+            if wait_plan.is_cloudflare:
+                logger.info(
+                    f"第 {page_num} 页命中 Cloudflare 验证，等待 {wait_plan.seconds:.0f}s 供用户手动完成"
+                )
+            wait_for_challenge(wait_plan, task_id=task_id)
             # 冷却后重新检测（不刷新，等用户手动完成验证）
             recheck_state, _ = detect_page_state(tab)
             if recheck_state == PageState.OK:
@@ -698,6 +709,8 @@ def _try_rotate_account(
                 reply_browser_instance,
                 next_acc.cookies,
                 label=f"账号 {next_acc.alias}",
+                account_id=next_acc.account_id,
+                account_alias=next_acc.alias,
             )
             if task_id:
                 _task_mgr.bind_account(task_id, next_acc.account_id, next_acc.alias)
@@ -709,7 +722,12 @@ def _try_rotate_account(
 
 
 def _sync_reply_browser_cookies(
-    reply_browser_instance, cookies: list[dict], *, label: str
+    reply_browser_instance,
+    cookies: list[dict],
+    *,
+    label: str,
+    account_id: str | None = None,
+    account_alias: str | None = None,
 ) -> None:
     """将搜索侧确认可用的登录 Cookie 同步给评论专用浏览器实例。"""
     if reply_browser_instance is None:
@@ -723,7 +741,11 @@ def _sync_reply_browser_cookies(
         logger.warning(f"{label} 登录已确认，但没有可同步到评论浏览器的 Cookie")
         return
     try:
-        reply_browser_instance.set_cookies(normalized)
+        reply_browser_instance.set_cookies(
+            normalized,
+            account_id=account_id,
+            account_alias=account_alias,
+        )
         logger.info(f"已将 {label} 的 {len(normalized)} 条 Cookie 同步到评论浏览器实例")
     except Exception as e:
         logger.warning(f"同步 {label} Cookie 到评论浏览器实例失败: {e}")
@@ -1092,6 +1114,8 @@ def search(
                         reply_browser_instance,
                         current_account.cookies,
                         label=f"账号 {current_account.alias}",
+                        account_id=current_account.account_id,
+                        account_alias=current_account.alias,
                     )
                     logger.info(
                         f"使用账号池登录: {current_account.alias!r}，"

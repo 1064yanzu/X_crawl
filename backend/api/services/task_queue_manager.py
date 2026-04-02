@@ -149,6 +149,17 @@ def _build_queue_view(queue: dict) -> dict:
     }
 
 
+def _sort_task_ids_by_priority(task_ids: list[str], task_manager) -> list[str]:
+    """对任务按优先级排序：普通搜索任务优先于评论补采任务。"""
+    task_id_with_kind: list[tuple[str, str]] = []
+    for tid in task_ids:
+        t = task_manager.get_task_summary(tid)
+        kind = t.get("task_kind", "search") if t else "search"
+        task_id_with_kind.append((tid, kind))
+    task_id_with_kind.sort(key=lambda x: 1 if x[1] == "comment_backfill" else 0)
+    return [tid for tid, _ in task_id_with_kind]
+
+
 def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
     _ensure_loaded()
 
@@ -203,8 +214,11 @@ def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
             _task_to_queue[task_id] = queue_id
         _persist_queue(queue)
 
+    # 对任务按优先级排序后再提交：普通搜索任务优先于评论补采任务
+    sorted_ids_for_dispatch = _sort_task_ids_by_priority(task_ids, task_manager)
+
     # 将所有任务一次性提交给调度器，调度器自己根据并发上限控制执行顺序
-    for task_id in task_ids:
+    for task_id in sorted_ids_for_dispatch:
         task_summary = task_manager.get_task_summary(task_id)
         if task_summary:
             crawl_service.start_crawler_thread(task_id, task_summary, resume=False)
@@ -370,6 +384,15 @@ def resume_queue(queue_id: str) -> dict:
         if not queue:
             raise ValueError(f"任务队列不存在: {queue_id}")
         task_ids = list(queue.get("task_ids", []))
+
+    # 对任务按优先级排序：普通搜索任务优先于评论补采任务入队
+    task_id_with_kind: list[tuple[str, str]] = []
+    for tid in task_ids:
+        t = task_manager.get_task_summary(tid)
+        kind = t.get("task_kind", "search") if t else "search"
+        task_id_with_kind.append((tid, kind))
+    task_id_with_kind.sort(key=lambda x: 1 if x[1] == "comment_backfill" else 0)
+    task_ids = [tid for tid, _ in task_id_with_kind]
 
     resumed_ids: list[str] = []
     skipped_ids: list[str] = []

@@ -193,6 +193,8 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 1.0) -> tuple[Optional[s
         (html, error) — 成功时 error 为 None，失败时 html 为 None
     """
     try:
+        from .http_418_guard import detect_weibo_http_418
+
         tab.get(url, timeout=20)
 
         # 动态等待：先等一个较短的基础时间，然后检测页面内容是否就绪
@@ -216,6 +218,9 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 1.0) -> tuple[Optional[s
         anti_crawl_reason = _check_anti_crawl(tab)
         if anti_crawl_reason:
             return None, f"反爬拦截: {anti_crawl_reason}"
+
+        if detect_weibo_http_418(tab):
+            return None, "微博 HTTP 418 错误页"
 
         html = tab.html
         if not html:
@@ -286,6 +291,7 @@ def search(
     from api.services.task_manager import update_preview_tweets, update_task_phase
     from crawler.utils import check_signal, StopSignal, jittered_sleep, interruptible_sleep
     from .html_parser import parse_search_page
+    from .http_418_guard import wait_weibo_http_418_cooldown
     from .comment_fetcher import fetch_comments as do_fetch_comments
     from .query_planner import build_weibo_query_plan
 
@@ -641,6 +647,19 @@ def search(
                         except Exception as e:
                             logger.error(f"重建 Tab 失败: {e}")
                         interruptible_sleep(RETRY_DELAY, task_id=task_id)
+                    elif "http 418" in error_lower and retry < MAX_PAGE_RETRIES:
+                        wait_weibo_http_418_cooldown(
+                            task_id=task_id,
+                            cooldown_seconds=float(
+                                getattr(settings, "weibo_http_418_cooldown_seconds", 600.0)
+                            ),
+                            context="搜索页",
+                            phase_callback=(lambda msg: update_task_phase(task_id, msg)) if task_id else None,
+                        )
+                        try:
+                            tab = _rebuild_weibo_tab(browser_instance=browser_instance)
+                        except Exception as e:
+                            logger.error(f"微博 418 冷却后重建 Tab 失败: {e}")
                     elif "反爬拦截" in (page_error or ""):
                         # 反爬拦截：加大延迟后重试
                         wait = RETRY_DELAY * (retry + 1) * 2

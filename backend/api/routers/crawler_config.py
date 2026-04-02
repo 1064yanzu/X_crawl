@@ -26,6 +26,7 @@ class CrawlerConfig(BaseModel):
     crawler_refresh_max_retries: int = Field(description="硬刷新最大重试次数", ge=1, le=10)
     crawler_challenge_retry_times: int = Field(description="挑战页自动重试次数", ge=0, le=8)
     crawler_challenge_cooldown: float = Field(description="挑战页重试冷却时间（秒）", ge=1.0, le=60.0)
+    crawler_cloudflare_wait_seconds: float = Field(default=60.0, description="Cloudflare 验证等待时长（秒）", ge=10.0, le=300.0)
     crawler_max_concurrent_tasks: int = Field(description="并发运行任务上限", ge=1, le=5)
     crawler_cross_platform_concurrent: bool = Field(default=True, description="是否允许 X 和微博任务跨平台并发执行")
     scheduler_backend: str = Field(default="memory", description="调度后端：memory/redis")
@@ -70,6 +71,7 @@ class CrawlerConfig(BaseModel):
     browser_proxy: Optional[str] = Field(default=None, description="代理配置，格式：http://ip:port")
     browser_load_mode: Optional[str] = Field(default=None, description="页面加载模式：normal 或 eager")
     browser_block_images: Optional[bool] = Field(default=None, description="是否禁用图片加载")
+    browser_block_videos: Optional[bool] = Field(default=None, description="是否禁用视频/流媒体加载")
     browser_stealth_enabled: Optional[bool] = Field(default=None, description="是否启用平衡档伪装脚本")
     browser_linux_hardening: Optional[bool] = Field(default=None, description="Linux 无头环境是否启用稳定性参数")
     browser_pool_auto_close_idle: Optional[bool] = Field(default=None, description="任务结束后是否自动关闭空闲浏览器实例")
@@ -84,6 +86,12 @@ class CrawlerConfig(BaseModel):
     )
     weibo_time_split_window_days: int = Field(default=7, ge=1, le=365, description="微博固定时间窗口天数")
     weibo_time_split_max_segments: int = Field(default=600, ge=1, le=2000, description="微博时间分段安全上限，超出时显式报错")
+    weibo_http_418_cooldown_seconds: float = Field(
+        default=600.0,
+        ge=60.0,
+        le=3600.0,
+        description="微博命中 HTTP 418 错误页后的冷却时长（秒）",
+    )
     x_auto_time_split_enabled: bool = Field(default=True, description="是否启用 X 搜索自动时间分割")
     x_time_split_trigger_days: int = Field(default=30, ge=1, le=3650, description="X 搜索时间跨度达到该值后触发时间分割")
     x_time_split_window_days: int = Field(default=7, ge=1, le=365, description="X 固定时间窗口天数")
@@ -109,6 +117,7 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_refresh_max_retries=settings.crawler_refresh_max_retries,
         crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
         crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
+        crawler_cloudflare_wait_seconds=settings.crawler_cloudflare_wait_seconds,
         crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
         crawler_cross_platform_concurrent=settings.crawler_cross_platform_concurrent,
         scheduler_backend=settings.scheduler_backend,
@@ -134,6 +143,7 @@ async def get_crawler_config() -> CrawlerConfig:
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
+        browser_block_videos=settings.browser_block_videos,
         browser_stealth_enabled=settings.browser_stealth_enabled,
         browser_linux_hardening=settings.browser_linux_hardening,
         browser_pool_auto_close_idle=settings.browser_pool_auto_close_idle,
@@ -143,6 +153,7 @@ async def get_crawler_config() -> CrawlerConfig:
         weibo_auto_split_or_keywords=settings.weibo_auto_split_or_keywords,
         weibo_time_split_window_days=settings.weibo_time_split_window_days,
         weibo_time_split_max_segments=settings.weibo_time_split_max_segments,
+        weibo_http_418_cooldown_seconds=settings.weibo_http_418_cooldown_seconds,
         x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
         x_time_split_trigger_days=settings.x_time_split_trigger_days,
         x_time_split_window_days=settings.x_time_split_window_days,
@@ -172,6 +183,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.crawler_refresh_max_retries = config.crawler_refresh_max_retries
     settings.crawler_challenge_retry_times = config.crawler_challenge_retry_times
     settings.crawler_challenge_cooldown = config.crawler_challenge_cooldown
+    settings.crawler_cloudflare_wait_seconds = config.crawler_cloudflare_wait_seconds
     settings.crawler_max_concurrent_tasks = config.crawler_max_concurrent_tasks
     settings.crawler_cross_platform_concurrent = config.crawler_cross_platform_concurrent
     settings.scheduler_backend = (config.scheduler_backend or "memory").strip().lower()
@@ -204,6 +216,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.weibo_auto_split_or_keywords = config.weibo_auto_split_or_keywords
     settings.weibo_time_split_window_days = config.weibo_time_split_window_days
     settings.weibo_time_split_max_segments = config.weibo_time_split_max_segments
+    settings.weibo_http_418_cooldown_seconds = config.weibo_http_418_cooldown_seconds
     settings.x_auto_time_split_enabled = config.x_auto_time_split_enabled
     settings.x_time_split_trigger_days = config.x_time_split_trigger_days
     settings.x_time_split_window_days = config.x_time_split_window_days
@@ -221,6 +234,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "crawler_refresh_max_retries": config.crawler_refresh_max_retries,
         "crawler_challenge_retry_times": config.crawler_challenge_retry_times,
         "crawler_challenge_cooldown": config.crawler_challenge_cooldown,
+        "crawler_cloudflare_wait_seconds": config.crawler_cloudflare_wait_seconds,
         "crawler_max_concurrent_tasks": config.crawler_max_concurrent_tasks,
         "crawler_cross_platform_concurrent": settings.crawler_cross_platform_concurrent,
         "scheduler_backend": settings.scheduler_backend,
@@ -245,6 +259,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "weibo_auto_split_or_keywords": settings.weibo_auto_split_or_keywords,
         "weibo_time_split_window_days": settings.weibo_time_split_window_days,
         "weibo_time_split_max_segments": settings.weibo_time_split_max_segments,
+        "weibo_http_418_cooldown_seconds": settings.weibo_http_418_cooldown_seconds,
         "x_auto_time_split_enabled": settings.x_auto_time_split_enabled,
         "x_time_split_trigger_days": settings.x_time_split_trigger_days,
         "x_time_split_window_days": settings.x_time_split_window_days,
@@ -278,6 +293,9 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     if config.browser_block_images is not None:
         settings.browser_block_images = config.browser_block_images
         persist["browser_block_images"] = config.browser_block_images
+    if config.browser_block_videos is not None:
+        settings.browser_block_videos = config.browser_block_videos
+        persist["browser_block_videos"] = config.browser_block_videos
     if config.browser_stealth_enabled is not None:
         settings.browser_stealth_enabled = config.browser_stealth_enabled
         persist["browser_stealth_enabled"] = config.browser_stealth_enabled
@@ -315,6 +333,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         crawler_refresh_max_retries=settings.crawler_refresh_max_retries,
         crawler_challenge_retry_times=settings.crawler_challenge_retry_times,
         crawler_challenge_cooldown=settings.crawler_challenge_cooldown,
+        crawler_cloudflare_wait_seconds=settings.crawler_cloudflare_wait_seconds,
         crawler_max_concurrent_tasks=settings.crawler_max_concurrent_tasks,
         crawler_cross_platform_concurrent=settings.crawler_cross_platform_concurrent,
         scheduler_backend=settings.scheduler_backend,
@@ -340,6 +359,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         browser_proxy=settings.browser_proxy,
         browser_load_mode=settings.browser_load_mode,
         browser_block_images=settings.browser_block_images,
+        browser_block_videos=settings.browser_block_videos,
         browser_stealth_enabled=settings.browser_stealth_enabled,
         browser_linux_hardening=settings.browser_linux_hardening,
         browser_pool_auto_close_idle=settings.browser_pool_auto_close_idle,
@@ -349,6 +369,7 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         weibo_auto_split_or_keywords=settings.weibo_auto_split_or_keywords,
         weibo_time_split_window_days=settings.weibo_time_split_window_days,
         weibo_time_split_max_segments=settings.weibo_time_split_max_segments,
+        weibo_http_418_cooldown_seconds=settings.weibo_http_418_cooldown_seconds,
         x_auto_time_split_enabled=settings.x_auto_time_split_enabled,
         x_time_split_trigger_days=settings.x_time_split_trigger_days,
         x_time_split_window_days=settings.x_time_split_window_days,

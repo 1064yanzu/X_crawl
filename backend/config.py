@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     browser_block_images: bool = Field(
         default=False, description="是否禁用图片加载（稳健模式建议关闭）"
     )
+    browser_block_videos: bool = Field(
+        default=False, description="是否禁用视频/流媒体加载（用于节省流量）"
+    )
     browser_stealth_enabled: bool = Field(
         default=False, description="是否启用轻量伪装注入（默认关闭，按需开启）"
     )
@@ -271,6 +274,9 @@ class Settings(BaseSettings):
     )
     weibo_time_split_max_segments: int = Field(
         default=600, description="微博时间分段安全上限（超出时显式报错）"
+    )
+    weibo_http_418_cooldown_seconds: float = Field(
+        default=600.0, description="微博命中浏览器 HTTP 418 错误页后的冷却时长（秒）"
     )
     x_auto_time_split_enabled: bool = Field(
         default=True, description="X 搜索是否自动启用时间分割"

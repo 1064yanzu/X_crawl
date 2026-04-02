@@ -81,7 +81,8 @@ def start_crawler_thread(
         resume=resume,
     )
     platform = task.get("platform", "x")
-    enqueued = scheduler.enqueue(task_id, payload, platform=platform)
+    task_kind = task.get("task_kind", "search")
+    enqueued = scheduler.enqueue(task_id, payload, platform=platform, task_kind=task_kind)
     if enqueued:
         task_manager.update_task_status(task_id, "pending")
         task_manager.update_task_phase(task_id, "任务已进入调度队列，等待执行...")
@@ -184,7 +185,7 @@ def run_search_task(
         pool_obj = get_browser_pool()
         _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
         # 如果需要抓取回复/评论，分配独立的浏览器实例（独立 Chrome 进程）
-        if fetch_replies:
+        if fetch_replies and task_kind != "comment_backfill":
             _reply_browser_instance = pool_obj.acquire_aux(
                 task_id,
                 purpose="reply" if platform == "x" else "comment",
@@ -213,6 +214,7 @@ def run_search_task(
                 platform=platform,
                 max_replies_per_tweet=max_replies_per_tweet,
                 reply_depth=reply_depth,
+                browser_instance=_browser_instance,
             )
             runtime_metrics = get_metrics(task_id)
             quality_state = "partial" if result.failed_records else "complete"
@@ -597,7 +599,11 @@ def _inject_account_cookies(
 
     try:
         # 设置到浏览器实例，后续所有新 tab 自动继承
-        browser_instance.set_cookies(account.cookies)
+        browser_instance.set_cookies(
+            account.cookies,
+            account_id=account.account_id,
+            account_alias=account.alias,
+        )
         logger.info(
             f"账号 {account.alias} 已设置 {len(account.cookies)} 条 Cookie 到浏览器实例"
         )

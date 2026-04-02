@@ -54,8 +54,10 @@ def test_comment_backfill_runner_falls_back_to_source_task(monkeypatch):
     def fake_set_task_seed_tweets(task_id: str, tweets: list[dict], *, current_page: int = 0):
         seeded.append((task_id, tweets, current_page))
 
-    def fake_run_weibo_comment_backfill(*, task_id: str, tweets: list[dict]):
-        received.append({"task_id": task_id, "tweets": tweets})
+    browser_instance = object()
+
+    def fake_run_weibo_comment_backfill(*, task_id: str, tweets: list[dict], browser_instance=None):
+        received.append({"task_id": task_id, "tweets": tweets, "browser_instance": browser_instance})
         return CommentBackfillResult(
             tweets=tweets,
             replies_fetched=0,
@@ -72,11 +74,12 @@ def test_comment_backfill_runner_falls_back_to_source_task(monkeypatch):
         platform="weibo",
         max_replies_per_tweet=0,
         reply_depth=2,
+        browser_instance=browser_instance,
     )
 
     assert result.tweets[0]["id"] == "1001"
     assert seeded == [("backfill-task-001", result.tweets, 0)]
-    assert received == [{"task_id": "backfill-task-001", "tweets": result.tweets}]
+    assert received == [{"task_id": "backfill-task-001", "tweets": result.tweets, "browser_instance": browser_instance}]
 
 
 def test_comment_backfill_runner_still_rejects_empty_task_without_source(monkeypatch):

@@ -180,6 +180,37 @@ def _wait_comment_packet(tab, timeout: float = _PACKET_TIMEOUT):
     return None
 
 
+def _open_post_page_with_retry(
+    tab,
+    *,
+    page_url: str,
+    task_id: Optional[str],
+    phase_callback=None,
+) -> bool:
+    """打开微博帖子详情页，命中浏览器 HTTP 418 错误页时执行长冷却后重试。"""
+    from config import settings
+    from crawler.utils import interruptible_sleep
+    from .http_418_guard import detect_weibo_http_418, wait_weibo_http_418_cooldown
+
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        tab.get(page_url, timeout=20)
+        interruptible_sleep(random.uniform(2.0, 3.5), task_id=task_id)
+        if not detect_weibo_http_418(tab):
+            return True
+        if attempt >= max_attempts - 1:
+            return False
+        wait_weibo_http_418_cooldown(
+            task_id=task_id,
+            cooldown_seconds=float(
+                getattr(settings, "weibo_http_418_cooldown_seconds", 600.0)
+            ),
+            context="评论页",
+            phase_callback=phase_callback,
+        )
+    return False
+
+
 def _parse_packet_body(packet) -> Optional[dict]:
     """从拦截到的数据包中提取 JSON body。"""
     try:
@@ -332,8 +363,15 @@ def fetch_comments(
     try:
         # ─── 阶段 1：访问帖子页面 + 网络拦截首批评论 ────────────────
         tab.listen.start(COMMENT_API_PATTERN)
-        tab.get(page_url, timeout=20)
-        interruptible_sleep(random.uniform(2.0, 3.5), task_id=task_id)
+        opened = _open_post_page_with_retry(
+            tab,
+            page_url=page_url,
+            task_id=task_id,
+            phase_callback=_update_phase,
+        )
+        if not opened:
+            logger.warning(f"评论抓取：帖子页面连续命中 HTTP 418，mid={mid}")
+            return WeiboCommentFetchResult(truncated_reason="http_418_cooldown_exhausted")
 
         # 检查重定向
         current_url = tab.url or ""

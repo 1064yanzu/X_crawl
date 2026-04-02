@@ -234,7 +234,7 @@ def _refresh_x_home(tab: ChromiumTab) -> None:
         logger.warning(f"刷新页面失败: {e}")
 
 
-def _ensure_x_domain_context(tab: ChromiumTab) -> None:
+def ensure_x_domain_context(tab: ChromiumTab) -> None:
     """在首次登录检查前确保标签页已进入 X 域，避免 about:blank 误判未登录。"""
     try:
         current_url = _current_url(tab)
@@ -245,6 +245,10 @@ def _ensure_x_domain_context(tab: ChromiumTab) -> None:
         time.sleep(1.0)
     except Exception as e:
         logger.warning(f"建立 X 域上下文失败，将继续按当前页面校验登录: {e}")
+
+
+# 向后兼容旧的私有函数名，避免遗漏调用点。
+_ensure_x_domain_context = ensure_x_domain_context
 
 
 def _finalize_login_result(
@@ -277,7 +281,7 @@ def ensure_login_detailed(tab: ChromiumTab) -> EnsureLoginResult:
     优先复用当前 profile 中已有登录态；若缺失，再尝试注入持久化 Cookie 兜底。
     注意：Cloudflare challenge 不是登录问题，Cookie 注入无法解决——直接返回失败让任务暂停。
     """
-    _ensure_x_domain_context(tab)
+    ensure_x_domain_context(tab)
     current = _finalize_login_result(tab, source="profile", injected_count=0, attempted_injection=False)
     if current.ok:
         try:
@@ -360,7 +364,7 @@ def ensure_login_with_pool_detailed(tab: ChromiumTab, account: "AccountEntry") -
     """
     from crawler.account_pool import get_pool
 
-    _ensure_x_domain_context(tab)
+    ensure_x_domain_context(tab)
     current = _finalize_login_result(tab, source="account_profile", injected_count=0, attempted_injection=False)
 
     # ── 已有登录态时，验证当前 twid 是否匹配目标账号 ──────────────────

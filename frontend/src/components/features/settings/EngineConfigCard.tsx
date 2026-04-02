@@ -12,6 +12,8 @@ export function EngineConfigCard() {
     const [backgroundTabs, setBackgroundTabs] = React.useState(false);
     const [foregroundOnLogin, setForegroundOnLogin] = React.useState(true);
     const [preferUserDataDir, setPreferUserDataDir] = React.useState(true);
+    const [blockImages, setBlockImages] = React.useState(false);
+    const [blockVideos, setBlockVideos] = React.useState(false);
     const [stealth, setStealth] = React.useState(true);
     const [linuxHardening, setLinuxHardening] = React.useState(true);
     const [autoCloseIdleBrowsers, setAutoCloseIdleBrowsers] = React.useState(true);
@@ -31,6 +33,8 @@ export function EngineConfigCard() {
                 setBackgroundTabs(Boolean(data.browser_background_tabs ?? false));
                 setForegroundOnLogin(Boolean(data.browser_foreground_on_login ?? true));
                 setPreferUserDataDir(Boolean(data.browser_prefer_user_data_dir ?? true));
+                setBlockImages(Boolean(data.browser_block_images ?? false));
+                setBlockVideos(Boolean(data.browser_block_videos ?? false));
                 setStealth(Boolean(data.browser_stealth_enabled ?? true));
                 setLinuxHardening(Boolean(data.browser_linux_hardening ?? true));
                 setAutoCloseIdleBrowsers(Boolean(data.browser_pool_auto_close_idle ?? true));
@@ -54,6 +58,8 @@ export function EngineConfigCard() {
                 browser_background_tabs: backgroundTabs,
                 browser_foreground_on_login: foregroundOnLogin,
                 browser_prefer_user_data_dir: preferUserDataDir,
+                browser_block_images: blockImages,
+                browser_block_videos: blockVideos,
                 browser_stealth_enabled: stealth,
                 browser_linux_hardening: linuxHardening,
                 browser_pool_auto_close_idle: autoCloseIdleBrowsers,
@@ -90,6 +96,8 @@ export function EngineConfigCard() {
                             <ToggleField label="后台标签页" description="任务创建的新标签页保持在后台，减少前台打断。" checked={backgroundTabs} onChange={setBackgroundTabs} disabled={saving} />
                             <ToggleField label="登录时切回前台" description="遇到登录或风控时主动唤起浏览器，便于人工介入。" checked={foregroundOnLogin} onChange={setForegroundOnLogin} disabled={saving} />
                             <ToggleField label="优先复用用户目录" description="启动新浏览器时优先使用真实用户数据目录；若目录正被占用，会自动回退到隔离 Profile。" checked={preferUserDataDir} onChange={setPreferUserDataDir} disabled={saving} />
+                            <ToggleField label="无图模式" description="阻止图片资源加载，适合纯文本/抓包型采集，能明显省流量。" checked={blockImages} onChange={setBlockImages} disabled={saving} />
+                            <ToggleField label="无视频模式" description="阻止视频与流媒体资源加载，降低带宽占用；不影响接口抓包结果。" checked={blockVideos} onChange={setBlockVideos} disabled={saving} />
                             <ToggleField label="Stealth 伪装" description="增强浏览器伪装配置，优先提高平台兼容性。" checked={stealth} onChange={setStealth} disabled={saving} />
                             <ToggleField label="Linux 加固" description="针对 Linux 服务器启用更稳妥的浏览器运行参数。" checked={linuxHardening} onChange={setLinuxHardening} disabled={saving} />
                             <ToggleField label="空闲实例自动关闭" description="任务结束后自动关闭空闲浏览器实例，避免堆积多个可见窗口。" checked={autoCloseIdleBrowsers} onChange={setAutoCloseIdleBrowsers} disabled={saving} />

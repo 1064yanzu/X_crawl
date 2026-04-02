@@ -247,6 +247,7 @@ export interface CrawlerConfig {
     browser_proxy?: string;            // 代理配置
     browser_load_mode?: "normal" | "eager";
     browser_block_images?: boolean;
+    browser_block_videos?: boolean;
     browser_stealth_enabled?: boolean;
     browser_linux_hardening?: boolean;
     browser_pool_auto_close_idle?: boolean;
@@ -254,6 +255,7 @@ export interface CrawlerConfig {
     weibo_auto_split_or_keywords?: boolean;
     weibo_time_split_window_days?: number;
     weibo_time_split_max_segments?: number;
+    weibo_http_418_cooldown_seconds?: number;
     x_auto_time_split_enabled?: boolean;
     x_time_split_trigger_days?: number;
     x_time_split_window_days?: number;
@@ -434,7 +436,11 @@ export interface BrowserPoolStatus {
     cross_platform_concurrent: boolean;
     active_x_accounts: number;
     effective_x_concurrency_limit: number;
+    total_instances: number;
+    alive_instances: number;
     total_slots: number;
+    aux_instances: number;
+    alive_aux_instances: number;
     active_slots: number;
     idle_slots: number;
     slots: BrowserPoolSlot[];
@@ -1056,4 +1062,3 @@ export interface CrawlVolumeResponse {
     total_tweets: number;
     total_replies: number;
 }
-

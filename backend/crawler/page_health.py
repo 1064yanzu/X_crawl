@@ -12,8 +12,13 @@ from typing import Optional
 
 from crawler.crawl_signals import ChallengeSignal, RiskState
 from crawler.browser import promote_browser_for_manual_interaction
-from crawler.page_state import PageState, detect_page_state, is_error_like_state, detect_cloudflare_challenge
-from crawler.recovery_policy import sleep_with_jitter, backoff_seconds
+from crawler.page_state import PageState, detect_page_state, is_error_like_state
+from crawler.recovery_policy import (
+    sleep_with_jitter,
+    backoff_seconds,
+    build_challenge_wait_plan,
+    wait_for_challenge,
+)
 from crawler.runtime_metrics import bump_metric
 from crawler.utils import interruptible_sleep
 from crawler import telemetry
@@ -264,16 +269,18 @@ def navigate_with_retry(
                 )
                 if challenge_hits <= challenge_retry_times:
                     from config import settings
-                    is_cf = detect_cloudflare_challenge(tab)
-                    # Cloudflare 验证使用更长的等待时间
-                    if is_cf:
-                        cf_wait = float(getattr(settings, "crawler_cloudflare_wait_seconds", 60.0))
+                    wait_plan = build_challenge_wait_plan(
+                        tab,
+                        challenge_cooldown=challenge_cooldown,
+                        cloudflare_wait_seconds=float(
+                            getattr(settings, "crawler_cloudflare_wait_seconds", 60.0)
+                        ),
+                    )
+                    if wait_plan.is_cloudflare:
                         logger.info(
-                            f"{log_prefix}检测到 Cloudflare 验证，等待 {cf_wait:.0f}s 供用户完成..."
+                            f"{log_prefix}检测到 Cloudflare 验证，等待 {wait_plan.seconds:.0f}s 供用户完成..."
                         )
-                        interruptible_sleep(cf_wait, task_id=task_id)
-                    else:
-                        sleep_with_jitter(challenge_cooldown, jitter_ratio=0.1, minimum=0.8)
+                    wait_for_challenge(wait_plan, task_id=task_id)
                     # 冷却后重新检测（不刷新，等用户手动完成验证）
                     recheck_state, _ = detect_page_state(tab)
                     if recheck_state == PageState.OK:

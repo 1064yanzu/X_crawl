@@ -110,7 +110,17 @@ export function getCommentBackfillSummary(task: Pick<TaskOut, "task_kind" | "com
     if (task.task_kind !== "comment_backfill") return "";
     const progress = task.comment_backfill_progress;
     if (!progress) return "等待导入结果";
-    return `${progress.processed_posts}/${progress.eligible_posts} 已处理`;
+    const { processed_posts, eligible_posts, succeeded_posts, failed_posts } = progress;
+    const parts = [`${processed_posts}/${eligible_posts} 已处理`];
+    if (failed_posts > 0) parts.push(`${failed_posts} 失败`);
+    return parts.join("，");
+}
+
+export function getCommentBackfillPercent(task: Pick<TaskOut, "task_kind" | "comment_backfill_progress">): number {
+    if (task.task_kind !== "comment_backfill") return 0;
+    const progress = task.comment_backfill_progress;
+    if (!progress || progress.eligible_posts <= 0) return 0;
+    return Math.min(100, Math.round((progress.processed_posts / progress.eligible_posts) * 100));
 }
 
 export function getTaskQueueLabel(task: Pick<TaskOut, "queue_total" | "queue_order" | "queue_name">) {

@@ -25,6 +25,7 @@ def run_comment_backfill_task(
     platform: str,
     max_replies_per_tweet: int,
     reply_depth: int,
+    browser_instance=None,
 ) -> CommentBackfillResult:
     task = task_manager.get_task_full(task_id)
     if not task:
@@ -35,12 +36,17 @@ def run_comment_backfill_task(
         raise RuntimeError("评论补采任务没有可处理的帖子")
 
     if platform == "weibo":
-        return _run_weibo_comment_backfill(task_id=task_id, tweets=tweets)
+        return _run_weibo_comment_backfill(
+            task_id=task_id,
+            tweets=tweets,
+            browser_instance=browser_instance,
+        )
     return _run_x_comment_backfill(
         task_id=task_id,
         tweets=tweets,
         max_replies_per_tweet=max_replies_per_tweet,
         reply_depth=reply_depth,
+        browser_instance=browser_instance,
     )
 
 
@@ -146,6 +152,7 @@ def _run_x_comment_backfill(
     tweets: list[dict],
     max_replies_per_tweet: int,
     reply_depth: int,
+    browser_instance=None,
 ) -> CommentBackfillResult:
     from crawler.reply_fetcher import fetch_replies_batch
 
@@ -157,7 +164,8 @@ def _run_x_comment_backfill(
     tweet_index: dict[str, dict] = {}
     counted_ids = _processed_ids(tweets)
     processed_count = baseline["processed_posts"]
-    working_tweets = copy.deepcopy(tweets)
+    working_tweets = _sort_tweets_by_reply_count(copy.deepcopy(tweets))
+    logger.info("评论补采推文已按评论数降序排列: task_id=%s, 总计 %d 条", task_id, len(working_tweets))
     previous_reply_totals = {
         str(tweet.get("id") or ""): _count_reply_tree(tweet.get("replies") or [])
         for tweet in tweets
@@ -205,6 +213,7 @@ def _run_x_comment_backfill(
         progress_callback=_on_progress,
         strategy="bfs",
         reply_depth=reply_depth,
+        browser_instance=browser_instance,
     )
 
     failed_ids = {str(item.get("tweet_id") or "") for item in failed_records if item.get("tweet_id")}
@@ -228,6 +237,7 @@ def _run_weibo_comment_backfill(
     *,
     task_id: str,
     tweets: list[dict],
+    browser_instance=None,
 ) -> CommentBackfillResult:
     from config import settings
     from crawler.utils import check_signal, jittered_sleep
@@ -237,7 +247,8 @@ def _run_weibo_comment_backfill(
     total = len(tweets)
     failed_records: list[dict] = []
     counted_ids = _processed_ids(tweets)
-    working_tweets = copy.deepcopy(tweets)
+    working_tweets = _sort_tweets_by_reply_count(copy.deepcopy(tweets))
+    logger.info("微博评论补采推文已按评论数降序排列: task_id=%s, 总计 %d 条", task_id, len(working_tweets))
     task_manager.update_task_phase(task_id, "正在准备微博评论补采任务...")
     task_manager.update_comment_backfill_progress(task_id, _compute_backfill_progress(working_tweets))
 
@@ -260,6 +271,7 @@ def _run_weibo_comment_backfill(
                 max_comments=500,
                 page_interval=settings.crawler_page_interval,
                 task_id=task_id,
+                browser_instance=browser_instance,
             )
             replies = [comment.to_dict() for comment in result.comments]
             tweet["replies"] = replies
@@ -309,6 +321,22 @@ def _run_weibo_comment_backfill(
         failed_records=failed_records,
         progress=progress,
     )
+
+
+def _sort_tweets_by_reply_count(tweets: list[dict]) -> list[dict]:
+    """
+    按预期评论数从高到低排序推文，优先采集高价值推文。
+    已处理过（replies 不为 None）的推文排在最后，避免影响未处理推文的优先级。
+    同评论数的推文保持原始顺序（稳定排序）。
+    """
+    def _sort_key(tweet: dict) -> tuple[int, int]:
+        # 已处理的排最后
+        already_done = 0 if tweet.get("replies") is None else 1
+        # 评论数取负（高到低）
+        reply_count = int((tweet.get("metrics") or {}).get("replies") or 0)
+        return (already_done, -reply_count)
+
+    return sorted(tweets, key=_sort_key)
 
 
 def _processed_ids(tweets: list[dict]) -> set[str]:

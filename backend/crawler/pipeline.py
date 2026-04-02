@@ -108,26 +108,7 @@ class CrawlPipeline:
     # ─────────────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """启动 reply worker 线程，并分配专属 reply_tab。
-
-        优先使用 reply_browser_instance（独立 Chrome 进程）创建 tab，
-        确保回复抓取与搜索翻页真正并行（不共享 CDP WebSocket）。
-        """
-        # 优先使用独立的回复浏览器实例，确保真正并行
-        if self.reply_browser_instance is not None:
-            self._reply_tab = self.reply_browser_instance.new_tab()
-        elif self.browser_instance is not None:
-            # 回退：使用同一实例的新 tab（CDP 串行化，效率降低）
-            logger.warning(
-                "[Pipeline] 未提供独立 reply_browser_instance，"
-                "回退为同实例新 tab（CDP 串行化，并发效率降低）"
-            )
-            self._reply_tab = self.browser_instance.new_tab()
-        else:
-            from crawler.browser import get_new_tab
-            self._reply_tab = get_new_tab()
-        self._owns_reply_tab = True
-
+        """启动 reply worker 线程。reply tab 在首次真正消费任务时再按需创建。"""
         name = f"reply-worker-{(self.task_id or 'anon')[:8]}"
         self._reply_thread = threading.Thread(
             target=self._reply_worker,
@@ -180,6 +161,25 @@ class CrawlPipeline:
             self._reply_tab = None
             self._owns_reply_tab = False
 
+    def _ensure_reply_tab(self):
+        if self._reply_tab is not None:
+            return self._reply_tab
+
+        if self.reply_browser_instance is not None:
+            self._reply_tab = self.reply_browser_instance.new_tab()
+        elif self.browser_instance is not None:
+            logger.warning(
+                "[Pipeline] 未提供独立 reply_browser_instance，"
+                "回退为同实例新 tab（CDP 串行化，并发效率降低）"
+            )
+            self._reply_tab = self.browser_instance.new_tab()
+        else:
+            from crawler.browser import get_new_tab
+
+            self._reply_tab = get_new_tab()
+        self._owns_reply_tab = True
+        return self._reply_tab
+
     def _drain_queue(self) -> None:
         """清空队列（发生致命错误时调用，确保不挂起）。"""
         while True:
@@ -225,6 +225,7 @@ class CrawlPipeline:
                 else:
                     # 检查任务信号（pause/stop）
                     check_signal(self.task_id)
+                    reply_tab = self._ensure_reply_tab()
 
                     updated_tweet, failure_info = fetch_replies_single(
                         tweet=tweet,
@@ -232,7 +233,7 @@ class CrawlPipeline:
                         timeout=self.timeout,
                         max_replies_per_tweet=self.max_replies_per_tweet,
                         reply_depth=self.reply_depth,
-                        existing_tab=self._reply_tab,
+                        existing_tab=reply_tab,
                         browser_instance=effective_browser,
                     )
 
@@ -318,20 +319,6 @@ class WeiboCommentPipeline:
         self._owns_comment_tab = False
 
     def start(self) -> None:
-        # 优先使用独立的评论浏览器实例，确保真正并行
-        if self.comment_browser_instance is not None:
-            self._comment_tab = self.comment_browser_instance.new_tab()
-        elif self.browser_instance is not None:
-            logger.warning(
-                "[WeiboCommentPipeline] 未提供独立 comment_browser_instance，"
-                "回退为同实例新 tab（CDP 串行化，并发效率降低）"
-            )
-            self._comment_tab = self.browser_instance.new_tab()
-        else:
-            from crawler.browser import get_new_tab
-            self._comment_tab = get_new_tab()
-        self._owns_comment_tab = True
-
         name = f"comment-worker-{(self.task_id or 'anon')[:8]}"
         self._comment_thread = threading.Thread(
             target=self._comment_worker,

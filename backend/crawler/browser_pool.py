@@ -220,6 +220,8 @@ class BrowserInstance:
         self._lock = threading.Lock()
         # ── Cookie 继承机制：新 tab 自动注入这些 cookie ──
         self._cookies_to_inject: list[dict] = []
+        self._bound_account_id: Optional[str] = None
+        self._bound_account_alias: Optional[str] = None
 
     @property
     def is_alive(self) -> bool:
@@ -247,7 +249,7 @@ class BrowserInstance:
             _cleanup_stale_singleton_locks,
             _is_user_data_locked,
         )
-        from crawler.stealth import apply_stealth_to_tab
+        from crawler.browser_resource_policy import apply_browser_option_policies
         from crawler.platform_runtime import (
             should_force_headless_on_linux,
             linux_headless_args_enabled,
@@ -264,6 +266,7 @@ class BrowserInstance:
         port = _pick_free_local_port()
         co.set_local_port(port)
         co.set_user_data_path(self.profile_dir)
+        co.set_argument("--profile-directory", "Default")
 
         exec_path, _ = _resolve_browser_paths()
         if exec_path:
@@ -305,8 +308,13 @@ class BrowserInstance:
 
         load_mode = settings.browser_load_mode if settings.browser_load_mode in ("normal", "eager", "none") else "normal"
         co.set_load_mode(load_mode)
-        co.no_imgs(settings.browser_block_images)
+        apply_browser_option_policies(co)
         co.mute(True)
+        if settings.browser_block_videos:
+            logger.info(
+                "[BrowserPool] 实例 #%s 已启用禁视频模式（browser_block_videos=True）",
+                self.instance_id,
+            )
 
         logger.info(f"[BrowserPool] 启动浏览器实例 #{self.instance_id}，port={port}，profile={self.profile_dir}")
         browser = Chromium(co)
@@ -353,15 +361,27 @@ class BrowserInstance:
                 )
         os.makedirs(self.profile_dir, exist_ok=True)
 
-    def set_cookies(self, cookies: list[dict]) -> None:
+    def set_cookies(
+        self,
+        cookies: list[dict],
+        *,
+        account_id: Optional[str] = None,
+        account_alias: Optional[str] = None,
+    ) -> None:
         """设置此实例的 cookie 列表，后续新 tab 会自动注入这些 cookie。"""
         with self._lock:
             self._cookies_to_inject = list(cookies)
+            self._bound_account_id = account_id
+            self._bound_account_alias = account_alias
 
     def get_cookies(self) -> list[dict]:
         """返回此实例当前待注入的新 tab Cookie 副本。"""
         with self._lock:
             return list(self._cookies_to_inject)
+
+    def get_bound_account(self) -> tuple[Optional[str], Optional[str]]:
+        with self._lock:
+            return self._bound_account_id, self._bound_account_alias
 
     def _inject_cookies_to_tab(self, tab) -> int:
         """将 _cookies_to_inject 注入指定 tab，返回注入数量。"""
@@ -391,6 +411,7 @@ class BrowserInstance:
 
     def new_tab(self, *, _retried: bool = False):
         """在此实例上创建新 tab（已注入 stealth 和 cookie）。断连时自动重建浏览器实例。"""
+        from crawler.browser_resource_policy import apply_tab_resource_policies
         from crawler.stealth import apply_stealth_to_tab
         from config import settings
 
@@ -399,6 +420,7 @@ class BrowserInstance:
             browser = self.get_browser()
             tab = browser.new_tab(background=background)
             apply_stealth_to_tab(tab, enabled=True)
+            apply_tab_resource_policies(tab)
             # ── 自动注入预设 cookie ──
             injected = self._inject_cookies_to_tab(tab)
             if injected > 0:
@@ -434,6 +456,8 @@ class BrowserInstance:
                     logger.warning(f"[BrowserPool] 关闭实例 #{self.instance_id} 出错: {e}")
                 finally:
                     self._browser = None
+                    self._bound_account_id = None
+                    self._bound_account_alias = None
 
 
 class _Slot:
@@ -526,6 +550,16 @@ class BrowserPool:
         # 4) 所有 slot 该平台都被占用
         return None
 
+    def _warm_instance(self, instance: BrowserInstance, *, reason: str) -> None:
+        """尽早拉起浏览器进程，避免任务实际运行后才懒启动。"""
+        getter = getattr(instance, "get_browser", None)
+        if not callable(getter):
+            return
+        try:
+            getter()
+        except Exception as e:
+            logger.warning("[BrowserPool] 预热浏览器实例失败（%s）: %s", reason, e)
+
     def acquire(self, task_id: str, platform: str = "x", timeout: float = 120.0) -> tuple[BrowserInstance, int]:
         """
         借出一个浏览器实例给指定任务。
@@ -534,33 +568,45 @@ class BrowserPool:
             (BrowserInstance, slot_id) 元组。slot_id 可用于账号池按索引分配不同账号。
         """
         deadline = time.monotonic() + timeout
+        assigned_instance: BrowserInstance | None = None
+        assigned_slot_id: int | None = None
         with self._condition:
             # 如果该 task 已持有 slot，直接返回
             if task_id in self._task_slot:
                 slot = self._slots[self._task_slot[task_id]]
-                return slot.instance, slot.slot_id
+                assigned_instance = slot.instance
+                assigned_slot_id = slot.slot_id
+            else:
+                while assigned_instance is None:
+                    slot = self._find_slot_for(platform)
+                    if slot is not None:
+                        slot.occupy(platform, task_id)
+                        self._task_slot[task_id] = slot.slot_id
+                        peers = ", ".join(f"{p}={tid[:8]}" for p, tid in slot.platforms.items() if tid != task_id)
+                        peer_info = f"（共享: {peers}）" if peers else ""
+                        logger.info(
+                            f"[BrowserPool] task={task_id[:8]} platform={platform} → "
+                            f"slot #{slot.slot_id}{peer_info}"
+                        )
+                        assigned_instance = slot.instance
+                        assigned_slot_id = slot.slot_id
+                        break
 
-            while True:
-                slot = self._find_slot_for(platform)
-                if slot is not None:
-                    slot.occupy(platform, task_id)
-                    self._task_slot[task_id] = slot.slot_id
-                    peers = ", ".join(f"{p}={tid[:8]}" for p, tid in slot.platforms.items() if tid != task_id)
-                    peer_info = f"（共享: {peers}）" if peers else ""
-                    logger.info(
-                        f"[BrowserPool] task={task_id[:8]} platform={platform} → "
-                        f"slot #{slot.slot_id}{peer_info}"
-                    )
-                    return slot.instance, slot.slot_id
+                    # 所有 slot 该平台都被占用，等待
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"[BrowserPool] 等待可用 slot 超时（{timeout}s），"
+                            f"task={task_id[:8]}，platform={platform}"
+                        )
+                    self._condition.wait(timeout=min(remaining, 2.0))
 
-                # 所有 slot 该平台都被占用，等待
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise TimeoutError(
-                        f"[BrowserPool] 等待可用 slot 超时（{timeout}s），"
-                        f"task={task_id[:8]}，platform={platform}"
-                    )
-                self._condition.wait(timeout=min(remaining, 2.0))
+        assert assigned_instance is not None and assigned_slot_id is not None
+        self._warm_instance(
+            assigned_instance,
+            reason=f"task={task_id[:8]} slot={assigned_slot_id}",
+        )
+        return assigned_instance, assigned_slot_id
 
     def acquire_aux(self, task_id: str, purpose: str = "reply") -> BrowserInstance:
         """
@@ -703,17 +749,27 @@ class BrowserPool:
     def status(self) -> dict:
         with self._lock:
             slots_info = []
+            alive_main_instances = 0
             for sid, slot in self._slots.items():
+                alive = slot.instance.is_alive
+                if alive:
+                    alive_main_instances += 1
                 slots_info.append({
                     "slot_id": sid,
                     "platforms": dict(slot.platforms),
-                    "alive": slot.instance.is_alive,
+                    "alive": alive,
                 })
-            aux_count = sum(len(v) for v in self._aux_instances.values())
+            aux_instances = [inst for inst_list in self._aux_instances.values() for inst in inst_list]
+            aux_count = len(aux_instances)
+            alive_aux_instances = sum(1 for inst in aux_instances if inst.is_alive)
             return {
                 "max_size": self._max_size,
                 "total_slots": len(self._slots),
                 "aux_instances": aux_count,
+                "alive_aux_instances": alive_aux_instances,
+                "alive_main_instances": alive_main_instances,
+                "total_instances": len(self._slots) + aux_count,
+                "alive_instances": alive_main_instances + alive_aux_instances,
                 "slots": slots_info,
             }
 

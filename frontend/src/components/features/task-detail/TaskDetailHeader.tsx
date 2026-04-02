@@ -7,7 +7,7 @@ import { TaskCommentBackfillButton } from "@/components/features/tasks/TaskComme
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { getPlatformMeta } from "@/lib/platformRegistry";
 import { cn } from "@/lib/utils";
-import { formatDateTime, getCommentBackfillSummary, getTaskKindLabel, getTaskModeLabel, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
+import { formatDateTime, getCommentBackfillPercent, getCommentBackfillSummary, getTaskKindLabel, getTaskModeLabel, getTaskPhase, getTaskQueueLabel } from "@/lib/task-ui";
 
 function SummaryCard({ label, value, hint }: { label: string; value: string; hint: string }) {
     return (
@@ -97,6 +97,7 @@ export function TaskDetailHeader({
     const platformMeta = getPlatformMeta(task.platform);
     const phase = getTaskPhase(task);
     const backfillSummary = getCommentBackfillSummary(task);
+    const backfillPercent = getCommentBackfillPercent(task);
 
     return (
         <div className="rounded-[1.75rem] border border-border/60 bg-card/90 p-6 shadow-sm backdrop-blur-sm sm:p-8">
@@ -185,11 +186,24 @@ export function TaskDetailHeader({
             </div>
 
             <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <SummaryCard
-                    label={task.task_kind === "comment_backfill" ? "补采结果" : "结果数量"}
-                    value={task.task_kind === "comment_backfill" ? (backfillSummary || `${task.result_count}`) : `${task.result_count}`}
-                    hint="任务会持续抓取直到数据耗尽或被终止"
-                />
+                {task.task_kind === "comment_backfill" ? (
+                    <div className="rounded-[1.25rem] border border-border/60 bg-background/70 px-5 py-4 shadow-sm">
+                        <p className="text-sm font-medium text-muted-foreground">补采进度</p>
+                        <div className="mt-2 flex items-center gap-3">
+                            <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                                <div className="h-full rounded-full bg-primary transition-all duration-500" style={{ width: `${backfillPercent}%` }} />
+                            </div>
+                            <span className="text-xl font-bold tabular-nums text-foreground">{backfillPercent}%</span>
+                        </div>
+                        <p className="mt-1.5 text-xs text-muted-foreground">{backfillSummary || `共 ${task.result_count} 条`}</p>
+                    </div>
+                ) : (
+                    <SummaryCard
+                        label="结果数量"
+                        value={`${task.result_count}`}
+                        hint="任务会持续抓取直到数据耗尽或被终止"
+                    />
+                )}
                 <SummaryCard label="实时通道" value={task.status === "pending" ? `队列第 ${task.queue_position ?? "-"} 位` : connected ? "实时推送中" : "轮询模式"} hint={lastMessageAt ? `最近消息 ${new Date(lastMessageAt).toLocaleTimeString("zh-CN")}` : "等待首条消息"} />
                 <SummaryCard label="创建时间" value={formatDateTime(task.created_at)} hint={task.finished_at ? `结束于 ${formatDateTime(task.finished_at)}` : "任务仍在进行中"} />
                 <SummaryCard

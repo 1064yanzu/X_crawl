@@ -1,5 +1,104 @@
 # Changelog
 
+## [2026-04-02] 爬虫性能优化：调度优先级修复 + 回复抓取效率提升
+
+### 问题
+1. `create_queue` 创建任务队列时不做优先级排序，评论补采任务可能先于普通搜索任务被调度执行
+2. 调度器 `_pending_items` 暂缓队列无优先级排序，槽位释放后评论补采任务可能先于普通搜索任务被分发
+3. 每条推文回复抓取都重新验证登录 + 导航 x.com/home，大量浪费时间（日志中 3000 行出现 53 次域切换）
+4. 回复翻页硬恢复最多 3 次、退避 cap=35s，单次触发浪费 50-75 秒
+5. 大评论量推文（如 3912 条）与小评论量推文使用相同的"连续空页退出阈值=3"，导致覆盖率仅 9%
+
+### 改动
+
+#### 1. `create_queue` 添加任务优先级排序
+- **`backend/api/services/task_queue_manager.py`**：新增 `_sort_task_ids_by_priority()` 函数，`create_queue()` 在提交任务给调度器前先排序，普通搜索任务优先于评论补采任务入队。与 `resume_queue()` 逻辑保持一致。
+
+#### 1.5. 调度器 pending 队列优先级排序
+- **`backend/api/services/task_scheduler.py`**：`ScheduledTask` 新增 `task_kind` 字段，`_try_dispatch_pending()` 每次分发前按 task_kind 排序（search 优先于 comment_backfill）。
+- **`backend/api/services/crawl_service.py`**：`start_crawler_thread()` 传入 `task_kind` 给调度器。
+
+#### 2. 登录验证 TTL 缓存
+- **`backend/crawler/reply_fetcher.py`**：新增 `_login_cache` 线程安全缓存机制（TTL=120s），`_ensure_reply_session_ready()` 在 TTL 内跳过重复的登录检查和域切换。登录失败（ChallengeSignal、浏览器断连）时自动使缓存失效。
+
+#### 3. 回复硬恢复策略优化
+- **`backend/crawler/reply_fetcher.py`**：回复翻页场景下硬恢复次数从 `policy.refresh_max_retries`（默认 3）降为 `min(2, policy)`，退避 cap 从 35s 降为 12s。单次硬恢复循环时间从 50-75s 降至约 20-30s。
+
+#### 4. 动态空页退出阈值
+- **`backend/crawler/reply_fetcher.py`**：新增 `_dynamic_max_empty_pages()` 根据 expected_count 动态计算阈值：≤50 条→3，≤500→5，≤2000→8，>2000→12。大评论量推文有更多机会触发有效翻页。同时"无 cursor 但覆盖率不足"的额外滚动也纳入空页计数，避免无限循环。
+
+---
+
+## [2026-04-02] 评论补采优先级、效率与进度展示优化
+
+### 改动
+
+#### 1. 批量恢复任务优先级排序
+- **`backend/api/routers/tasks.py`**：新增 `_sort_tasks_by_priority()`，`_do_resume_tasks()` 中先按 task_kind 排序，普通搜索任务优先入队，评论补采任务排后。
+- **`backend/api/services/task_queue_manager.py`**：`resume_queue()` 恢复队列时同样按 task_kind 排序，普通搜索优先于评论补采。
+
+#### 2. 评论补采按评论数降序采集
+- **`backend/crawler/comment_backfill_runner.py`**：新增 `_sort_tweets_by_reply_count()`，X 和微博评论补采均按推文预期评论数从高到低排序，优先采集高价值推文，即使中断也能最大化产出。
+
+#### 3. 前端评论补采进度条展示
+- **`frontend/src/lib/task-ui.ts`**：新增 `getCommentBackfillPercent()` 计算百分比；`getCommentBackfillSummary()` 增加失败数显示。
+- **`frontend/src/components/features/tasks/TaskListCard.tsx`**：Comfortable 和 Compact 模式评论补采任务显示进度条 + 百分比 + 文字摘要。
+- **`frontend/src/components/features/tasks/TaskPreview.tsx`**：快速预览面板评论补采任务显示进度条。
+- **`frontend/src/components/features/task-detail/TaskDetailHeader.tsx`**：任务详情页评论补采任务显示进度条。
+
+---
+
+## [2026-04-02] 修复 X 回复链路空白页与误导性 `about:blank` 日志
+
+### 问题
+- 排查 `backend/logs/xcrawl.log` 发现，`2026-04-02 13:53` 到 `13:55` 这段实际只有微博任务在跑，没有新的 X 搜索日志。
+- 但 X 侧更早的日志里反复出现：
+  - `url=about:blank | missing=['auth_token', 'twid'] | cookies=[]`
+- 这会让用户看到 Chrome 里挂着几个 `about:blank` 空白标签页，误以为 X 主搜索页没有正常导航。
+
+### 根因
+- `backend/crawler/reply_fetcher.py`
+  - 评论/回复抓取 tab 在还停留 `about:blank` 时，就先做了 `check_login()` 快速校验，导致先打出“未登录”的误导性日志。
+- `backend/crawler/pipeline.py`
+  - X 的 reply worker 会在真正消费队列前就预创建 reply tab。
+  - 微博 comment worker 也有同类“预开 tab”的副作用，而且那个 tab 实际没有参与评论抓取。
+- `backend/crawler/reply_fetcher.py`
+  - batch 共享回复 tab 也是在批次一开始就创建，即使后续推文被跳过或去重，也会留下可见空白页。
+
+### 修复
+- `backend/crawler/auth.py`
+  - 抽出并公开 `ensure_x_domain_context()`，统一负责把 tab 先带入 `x.com` 域。
+- `backend/crawler/reply_fetcher.py`
+  - 回复抓取前先建立 X 域上下文，再做快速登录检查。
+  - batch 共享 reply tab 改为按需创建，不再一进批次就开空白页。
+- `backend/crawler/pipeline.py`
+  - X 的 reply worker tab 改为首次真正消费任务时再创建。
+  - 微博 comment worker 删除无实际用途的预开 tab 副作用。
+- 测试
+  - `backend/tests/test_reply_session_sync.py`
+  - `backend/tests/test_pipeline.py`
+
+### 验证
+- `python3 -m py_compile backend/crawler/auth.py backend/crawler/reply_fetcher.py backend/crawler/pipeline.py`
+- `PYTHONPATH=backend backend/.venv/bin/pytest backend/tests/test_reply_session_sync.py backend/tests/test_pipeline.py -q`
+- 结果：`9 passed`
+
+## [2026-04-01] 修复 Cloudflare 验证页等待时间过短
+
+### 问题
+X 爬虫命中 Cloudflare 验证页时，虽然会提示用户去浏览器手动处理，但主抓取恢复链路仍按普通 challenge 的短冷却执行。结果就是几秒内就继续刷新，五秒盾甚至还没完全展示出来就被打断。
+
+### 修复
+- `backend/api/routers/crawler_config.py`：补齐 `crawler_cloudflare_wait_seconds` 的读取、更新和持久化
+- `backend/crawler/recovery_policy.py`：新增 Cloudflare 专用等待配置与统一 challenge 等待计划
+- `backend/crawler/x_searcher.py` / `backend/crawler/reply_fetcher.py`：命中 Cloudflare 时改走长等待，不再快速刷新
+- `frontend/src/hooks/useCrawlerConfig.ts`：补上 `crawler_cloudflare_wait_seconds` 默认值
+- `backend/tests/test_crawler_config_and_recovery_policy.py`：补充回归测试
+
+### 结果
+- Cloudflare 验证页会为用户保留更充足的手动验证时间
+- 普通 challenge 仍保持原有短冷却，不影响其他恢复路径
+
 ## [2026-03-31] 复爬任务移除 `max_count` 限制
 
 ### 问题
@@ -946,3 +1045,38 @@ X 的 "Something went wrong. Try again." 错误页面带有 Retry 按钮，
 - 评论抓取前新增登录兜底：会先补注入浏览器实例 Cookie，再校验/恢复 X 登录态；如果仍不可用，会按登录失效或挑战直接暂停，不再以游客态继续抓空评论。
 - 修复 `backend/crawler/pipeline.py` 中 reply/comment worker 收到结束哨兵后不退出的问题，避免评论流水线线程卡死。
 - 新增回归测试 `backend/tests/test_reply_session_sync.py`，并复跑 `backend/tests/test_reply_session_sync.py`、`backend/tests/test_pipeline.py`、`backend/tests/test_browser_pool.py`，共 `13 passed`。
+
+## 2026-04-02
+
+### 修复
+- 浏览器池主实例和回复/评论辅助实例现在会在借出时立即预热拉起，避免并发任务已开始但浏览器进程仍停留在懒启动状态，导致体感上像“只占用一个实例”。
+- `/api/v1/browser-pool/status` 新增总实例数、存活实例数、辅助实例数统计；任务页浏览器并发面板同步展示“主 slot + 辅助实例”的真实结构。
+
+### 新增
+- 新增 `browser_block_videos` 配置，并在设置页提供“无视频模式”开关。
+- 新增统一资源策略模块 `backend/crawler/browser_resource_policy.py`，把禁图与禁视频集中接到主浏览器和浏览器池新 tab 的创建流程里。
+
+### 验证
+- 已执行后端编译检查与回归测试：`backend/tests/test_browser_pool.py`、`backend/tests/test_browser_resource_policy.py`，结果 `13 passed`。
+- 已执行前端 `tsc --noEmit` 与目标文件 `eslint` 检查，通过。
+
+### 修复补充
+- 修复 Chrome 复用真实用户目录时未指定具体 profile 的问题：现在会自动读取 `Local State.profile.last_used`，并补上 `--profile-directory`，避免启动后卡在“谁在使用 Chrome?” 的 profile 选择页。
+- 浏览器池隔离实例固定使用 `Default` profile，避免新实例落入 Chrome 首次 profile 选择流程。
+- 辅助评论浏览器不再在借出时立即预热启动，减少并发任务一开始就唤醒过多 Chrome 实例。
+- 浏览器实例现在会显式绑定账号；回复链路恢复登录态时优先使用实例绑定账号，不再在同一个实例里回退尝试其他账号。
+- 修复 `reply_fetcher` 在 challenge/异常收尾阶段调用 `tab.listen.stop()` 时的空指针问题，避免 `'NoneType' object has no attribute 'stop'`。
+
+### 修复补充：微博 418 冷却恢复与评论补采浏览器实例收口
+- 新增 `backend/crawler/weibo/http_418_guard.py`，统一识别微博浏览器错误页 `HTTP ERROR 418`，并在搜索页/评论页命中后执行长冷却等待。
+- `backend/crawler/weibo/searcher.py` 与 `backend/crawler/weibo/comment_fetcher.py` 接入 418 冷却恢复逻辑；默认冷却 `600` 秒，结束后自动重试当前页。
+- `backend/config.py`、`backend/api/routers/crawler_config.py`、`frontend/src/hooks/useCrawlerConfig.ts`、`frontend/src/services/api/index.ts`、`frontend/src/components/features/settings/CrawlerConfigCard.tsx` 新增 `weibo_http_418_cooldown_seconds` 配置链路，设置页可直接调整。
+- `backend/api/services/crawl_service.py` 修正 `comment_backfill` 任务的浏览器池借出策略：补采任务不再额外申请 reply/comment 辅助实例。
+- `backend/crawler/comment_backfill_runner.py` 改为显式复用上层传入的浏览器实例执行 X/微博评论补采，避免浏览器池借出和实际抓取脱节。
+- 新增回归测试：`backend/tests/test_comment_backfill_runner.py`、`backend/tests/test_crawl_service_comment_backfill.py`、`backend/tests/test_crawler_config_and_recovery_policy.py`。
+- 已验证：
+  - `backend/.venv/bin/python -m py_compile crawler/comment_backfill_runner.py api/services/crawl_service.py crawler/weibo/searcher.py crawler/weibo/comment_fetcher.py crawler/weibo/http_418_guard.py`
+  - `backend/.venv/bin/pytest tests/test_comment_backfill_runner.py tests/test_crawl_service_comment_backfill.py tests/test_crawler_config_and_recovery_policy.py`
+  - `frontend/./node_modules/.bin/tsc --noEmit`
+  - `frontend/./node_modules/.bin/eslint src/components/features/settings/CrawlerConfigCard.tsx src/hooks/useCrawlerConfig.ts src/services/api/index.ts`
+  - 结果：后端 `10 passed in 0.53s`，前端静态检查通过。
