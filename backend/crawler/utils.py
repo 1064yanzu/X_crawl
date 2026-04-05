@@ -69,7 +69,7 @@ def jittered_sleep(base_seconds: float, task_id: Optional[str] = None, fast_mode
             if pressure_state == "critical":
                 bump_metric(task_id, "resource_critical_hits")
     jitter = base * 0.2
-    actual = max(0.5, base + random.uniform(-jitter, jitter))
+    actual = max(0.3, base + random.uniform(-jitter, jitter))
     interruptible_sleep(actual, task_id=task_id)
 
 
@@ -101,7 +101,7 @@ def check_signal(task_id: Optional[str]) -> None:
                     should_log = True
             if should_log:
                 logger.info(f"任务 {task_id} 已暂停，等待继续信号...")
-            interruptible_sleep(1.0)
+            interruptible_sleep(0.3)
         else:
             with _PAUSE_LOG_LOCK:
                 _PAUSE_LOG_TS.pop(task_id, None)

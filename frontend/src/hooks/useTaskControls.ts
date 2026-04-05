@@ -36,7 +36,10 @@ export function useTaskControls(
 
         try {
             if (action === "pause") await api.tasks.pause(task.task_id);
-            else if (action === "resume") await api.tasks.resume(task.task_id);
+            else if (action === "resume") {
+                const concurrency = task.task_kind === "comment_backfill_group" ? (task.concurrency ?? 1) : undefined;
+                await api.tasks.resume(task.task_id, concurrency && concurrency > 1 ? { concurrency } : undefined);
+            }
             else await api.tasks.stop(task.task_id);
 
             await refetch();

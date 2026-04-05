@@ -71,6 +71,7 @@ class CrawlPipeline:
         reply_depth: int,
         browser_instance=None,
         reply_browser_instance=None,
+        nested_browser_instance=None,
         on_reply_done: Optional[Callable[[str, list[dict]], None]] = None,
         reply_worker_count: int = 1,
     ):
@@ -81,8 +82,10 @@ class CrawlPipeline:
             max_replies_per_tweet:  每条推文最多抓取的回复数
             reply_depth:            回复层级深度（>1 时启用独立 nested_worker 抓二级评论）
             browser_instance:       搜索用浏览器池实例（备用）
-            reply_browser_instance: 回复专用独立浏览器实例（独立 Chrome 进程）
-            on_reply_done:          每条推文所有层级回复完成后的回调 (tweet_id, replies)
+            reply_browser_instance: L1 回复专用独立浏览器实例（独立 Chrome 进程）
+            nested_browser_instance: L2 二级评论专用独立浏览器实例（完全与 L1 解耦）
+            on_reply_done:          每条推文 L1 完成后立即回调 (tweet_id, replies)；
+                                    L2 完成后再次回调以更新完整 replies。
             reply_worker_count:     reply_worker 并行数（补采模式可设为 2-3 提升效率）
         """
         self.task_id = task_id
@@ -91,6 +94,7 @@ class CrawlPipeline:
         self.reply_depth = reply_depth
         self.browser_instance = browser_instance
         self.reply_browser_instance = reply_browser_instance
+        self.nested_browser_instance = nested_browser_instance
         self.on_reply_done = on_reply_done
         self.reply_worker_count = max(1, reply_worker_count)
 
@@ -254,6 +258,15 @@ class CrawlPipeline:
             owns_tab = False
 
         logger.debug(f"[Pipeline] reply worker #{worker_id} 进入主循环")
+        # 通知用户浏览器准备就绪，即将开始抓取评论
+        try:
+            import api.services.task_manager as _task_mgr
+            _task_mgr.update_task_phase(
+                self.task_id,
+                f"浏览器就绪，开始抓取评论...",
+            )
+        except Exception:
+            pass
 
         while True:
             try:
@@ -308,16 +321,16 @@ class CrawlPipeline:
                         with self._failed_records_lock:
                             self.failed_records.append(failure_info)
 
-                    # 有二级评论需求时，把一级结果推入 nested_queue
+                    # L1 完成后立即触发回调（进度对用户实时可见，不等二级评论）
+                    if self.on_reply_done:
+                        try:
+                            self.on_reply_done(tweet_id, updated_tweet.get("replies") or [])
+                        except Exception as cb_err:
+                            logger.warning(f"[Pipeline] on_reply_done L1 回调异常: {cb_err}")
+
+                    # 有二级评论需求时，把一级结果推入 nested_queue（L2 完成后再次触发回调以更新完整 replies）
                     if self.reply_depth > 1:
                         self._nested_queue.put(updated_tweet)
-                    else:
-                        # 无二级需求，直接触发回调
-                        if self.on_reply_done:
-                            try:
-                                self.on_reply_done(tweet_id, updated_tweet.get("replies") or [])
-                            except Exception as cb_err:
-                                logger.warning(f"[Pipeline] on_reply_done 回调异常: {cb_err}")
 
             except (StopSignal, ChallengeSignal) as e:
                 self._set_error(e)
@@ -364,7 +377,9 @@ class CrawlPipeline:
         from crawler.crawl_signals import StopSignal, ChallengeSignal
         from crawler.utils import check_signal
 
-        effective_browser = self.reply_browser_instance or self.browser_instance
+        # L2 优先使用独立 nested_browser_instance（完全解耦于 L1），
+        # 避免与 reply_worker 共用同一个浏览器实例产生 CDP 串行化竞争。
+        effective_browser = self.nested_browser_instance or self.reply_browser_instance or self.browser_instance
 
         logger.debug("[Pipeline] nested worker 进入主循环")
 

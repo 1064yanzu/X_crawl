@@ -23,6 +23,7 @@ from api.routers import accounts as accounts_router
 from api.routers import weibo_cookies as weibo_cookies_router
 from api.routers import weibo_accounts as weibo_accounts_router
 from api.routers import comment_backfill as comment_backfill_router
+from api.routers import comment_backfill_group as comment_backfill_group_router
 from api.routers import task_queues as task_queues_router
 from api.routers import batch_import as batch_import_router
 from api.routers import concurrent_search as concurrent_search_router
@@ -120,6 +121,7 @@ app.include_router(accounts_router.router)
 app.include_router(weibo_cookies_router.router)
 app.include_router(weibo_accounts_router.router)
 app.include_router(comment_backfill_router.router)
+app.include_router(comment_backfill_group_router.router)
 app.include_router(task_queues_router.router)
 app.include_router(batch_import_router.router)
 app.include_router(concurrent_search_router.router)

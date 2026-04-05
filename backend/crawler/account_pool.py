@@ -33,9 +33,9 @@ _ENDPOINT_CONFIG = {
     "tweet_detail": {"window": 900, "limit": 150},
 }
 
-# 安全系数：单账号略保守(0.95)，多账号有天然错峰更激进(0.85)
-_SAFETY_SINGLE = 0.95
-_SAFETY_MULTI = 0.85
+# 安全系数：单账号适度激进(0.80)，多账号有天然错峰更激进(0.72)
+_SAFETY_SINGLE = 0.80
+_SAFETY_MULTI = 0.72
 
 
 @dataclass
@@ -357,13 +357,11 @@ def compute_dynamic_interval(endpoint: str) -> tuple[float, float, float]:
         safe_interval = window / limit / active_count * safety_factor
         多账号时有天然错峰效应，安全系数可适当降低。
 
+    并发模式下（多账号各任务独占），每个账号的请求频率独立计算，
+    间隔进一步缩短以提高吞吐。
+
     Returns:
         (min_sec, max_sec, safety_factor)
-
-    Examples:
-        单账号 search → (900/50/1*1.15)*0.75 ~ (900/50/1*1.15)*1.25  ≈ 15.5s ~ 25.9s
-        3账号  search → (900/50/3*1.05)*0.75 ~ (900/50/3*1.05)*1.25  ≈ 4.7s ~ 7.9s
-        单账号 tweet_detail → (900/150/1*1.15)*0.75 ~ *1.25  ≈ 5.2s ~ 8.6s
     """
     cfg = _ENDPOINT_CONFIG.get(endpoint, {"window": 900, "limit": 50})
     window = cfg["window"]
@@ -373,8 +371,10 @@ def compute_dynamic_interval(endpoint: str) -> tuple[float, float, float]:
     safety_factor = _SAFETY_MULTI if active_count > 1 else _SAFETY_SINGLE
     safe_interval = window / limit / active_count * safety_factor
 
-    min_sec = safe_interval * 0.75
-    max_sec = safe_interval * 1.15
+    # 并发模式下每个任务独占一个账号，频率由该账号单独承担，
+    # 不需要除以 active_count（已在上面除过了），但可以更激进地缩短区间
+    min_sec = safe_interval * 0.55
+    max_sec = safe_interval * 0.85
     return min_sec, max_sec, safety_factor
 
 

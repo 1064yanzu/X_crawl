@@ -169,8 +169,8 @@ def fetch_nested_replies(
         _rate_mult_nested = _get_tracker().get_sleep_multiplier("tweet_detail", task_id=task_id)
         _min_n, _max_n, _ = compute_dynamic_interval("tweet_detail")
         # 嵌套评论使用缩短的间隔，导航本身已贡献 3-5s 延迟
-        _nested_interval = _random.uniform(_min_n * 0.3, _max_n * 0.4) * _rate_mult_nested
-        _interruptible_sleep(max(0.5, _nested_interval - 4.0), task_id=task_id)
+        _nested_interval = _random.uniform(_min_n * 0.25, _max_n * 0.35) * _rate_mult_nested
+        _interruptible_sleep(max(0.3, _nested_interval - 5.0), task_id=task_id)
 
     total_sub = sum(
         len(r.get("replies", []))

@@ -17,6 +17,7 @@
 - 记录最近一次登录检查诊断信息，供任务状态与设置页展示
 """
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,6 +43,9 @@ X_BASE_URL = "https://x.com"
 
 # X 登录必需的两个 Cookie
 _REQUIRED_COOKIES = {"auth_token", "twid"}
+_COOKIE_CACHE_TTL = 180.0
+_cookie_cache_lock = threading.Lock()
+_cookie_cache: dict[int, dict[str, object]] = {}
 
 
 def _extract_twid_uid(twid_value: str) -> str:
@@ -115,6 +119,31 @@ def _current_url(tab: ChromiumTab) -> str:
         return ""
 
 
+def _is_cookie_timeout_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "timeout" in message or "network.getcookies" in message
+
+
+def _remember_cookie_cache(tab: ChromiumTab, cookies: dict[str, str]) -> None:
+    with _cookie_cache_lock:
+        _cookie_cache[id(tab)] = {
+            "cookies": dict(cookies),
+            "captured_at": time.monotonic(),
+        }
+
+
+def _load_cookie_cache(tab: ChromiumTab) -> dict[str, str]:
+    with _cookie_cache_lock:
+        entry = _cookie_cache.get(id(tab))
+        if not entry:
+            return {}
+        captured_at = float(entry.get("captured_at") or 0.0)
+        if (time.monotonic() - captured_at) > _COOKIE_CACHE_TTL:
+            _cookie_cache.pop(id(tab), None)
+            return {}
+        return dict(entry.get("cookies") or {})
+
+
 def _get_cookie_dict(tab: ChromiumTab) -> dict[str, str]:
     """
     安全地获取当前 tab 的所有 Cookie，返回 {name: value} 字典。
@@ -123,11 +152,23 @@ def _get_cookie_dict(tab: ChromiumTab) -> dict[str, str]:
     try:
         raw = tab.cookies()  # ≥ 4.x 返回 list[dict] 或 CookieJar
         if isinstance(raw, list):
-            return {c.get("name", ""): c.get("value", "") for c in raw if c.get("name")}
-        if isinstance(raw, dict):
-            return raw
-        return {c.name: c.value for c in raw}
+            cookies = {c.get("name", ""): c.get("value", "") for c in raw if c.get("name")}
+        elif isinstance(raw, dict):
+            cookies = dict(raw)
+        else:
+            cookies = {c.name: c.value for c in raw}
+        _remember_cookie_cache(tab, cookies)
+        return cookies
     except Exception as e:
+        if _is_cookie_timeout_error(e):
+            cached = _load_cookie_cache(tab)
+            if cached:
+                logger.warning(
+                    "读取 Cookie 超时，回退最近 %ss 内缓存的 %d 条 Cookie",
+                    int(_COOKIE_CACHE_TTL),
+                    len(cached),
+                )
+                return cached
         logger.error(f"读取 Cookie 失败: {e}")
         return {}
 
@@ -226,8 +267,8 @@ def check_login(tab: ChromiumTab) -> bool:
 def _refresh_x_home(tab: ChromiumTab) -> None:
     try:
         current_url = _current_url(tab)
-        if "x.com" not in current_url and "twitter.com" not in current_url:
-            tab.get(X_BASE_URL + "/", timeout=30)
+        if "x.com" in current_url or "twitter.com" in current_url:
+            tab.refresh()
         else:
             tab.get(X_BASE_URL + "/", timeout=30)
     except Exception as e:
@@ -242,7 +283,7 @@ def ensure_x_domain_context(tab: ChromiumTab) -> None:
             return
         logger.info("当前标签页尚未进入 X 域，先访问 x.com/home 再校验登录状态")
         tab.get(X_HOME_URL, timeout=30)
-        time.sleep(1.0)
+        time.sleep(0.2)
     except Exception as e:
         logger.warning(f"建立 X 域上下文失败，将继续按当前页面校验登录: {e}")
 
@@ -301,10 +342,10 @@ def ensure_login_detailed(tab: ChromiumTab) -> EnsureLoginResult:
     injected = inject_cookies_to_tab(tab)
     if injected > 0:
         logger.info(f"已注入 {injected} 条持久化 Cookie，即将刷新页面...")
-        time.sleep(1.0)
+        time.sleep(0.2)
 
     _refresh_x_home(tab)
-    time.sleep(2.0)
+    time.sleep(0.3)
 
     result = _finalize_login_result(
         tab,
@@ -400,9 +441,9 @@ def ensure_login_with_pool_detailed(tab: ChromiumTab, account: "AccountEntry") -
         injected = inject_account_cookies(tab, account)
         if injected > 0:
             logger.info(f"账号 {account.alias!r}：注入 {injected} 条 Cookie，即将刷新页面...")
-            time.sleep(1.0)
+            time.sleep(0.2)
         _refresh_x_home(tab)
-        time.sleep(2.0)
+        time.sleep(0.3)
         result = _finalize_login_result(
             tab,
             source="account_cookies" if injected > 0 else "account_profile",

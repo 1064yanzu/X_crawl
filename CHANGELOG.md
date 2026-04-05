@@ -1,5 +1,325 @@
 # Changelog
 
+## [2026-04-05] 并发爬取性能优化 — 消除浏览器资源争抢
+
+### 问题
+3 路并发模式下启动了 7 个 Chrome 进程（3×L1 + 3×L2 + 1 主浏览器），MacBook Air 资源耗尽导致：
+- 大量 30s 导航超时（`Page.stopLoading timeout`）
+- 错误页面连续出现（浏览器卡死/响应慢）
+- scroll 操作频繁超时（线程池不够用）
+- "连续超时" 提前终止推文评论抓取，覆盖率极低（4-9%）
+- 并发反而比单路更慢
+
+### 优化措施
+1. **Chrome 进程数从 7 降到 4**：3 个 Pipeline 共享 1 个 nested browser（L2二级评论），而非各自独拥
+2. **每 Pipeline 的 reply worker 从 2 降到 1**：并行模式已有 3 个 Pipeline，每个内部只需 1 个 worker（总并发 3 vs 之前的 6）
+3. **浏览器预热**：Pipeline 启动前逐个调用 `get_browser()` 触发 Chrome 初始化，避免 6 个 worker 同时触发浏览器启动风暴。每个浏览器间隔 2s 错峰启动
+4. **导航超时从 20-30s 降到 12-15s**：快速失败快速重试，比卡 30s 效率更高
+5. **scroll 线程池从 2 扩到 8**：避免多 Pipeline 并发 scroll 操作排队阻塞
+6. **resume 自动携带并发数**：`useTaskControls` 恢复时传递当前 concurrency，避免用户改了并发数但 resume 仍按 1 启动
+7. **运行中提示**：并发选择器显示"修改将在下次恢复时生效"
+
+### 资源对比（3路并发）
+| | 优化前 | 优化后 |
+|---|---|---|
+| Chrome 进程 | 7 (3×L1 + 3×L2 + 1主) | 4 (3×L1 + 1共享L2) |
+| 并发 tab 加载 | 6 | 3 |
+| scroll 线程池 | 2 | 8 |
+| 导航超时 | 20-30s | 12-15s |
+
+### 文件变更
+- `backend/crawler/parallel_backfill_coordinator.py` — worker 数默认 1；预热浏览器逻辑
+- `backend/api/services/crawl_service.py` — 并发模式共享 1 个 nested browser
+- `backend/crawler/page_health.py` — `load_timeout` 默认 15s
+- `backend/crawler/reply_fetcher.py` — 所有 `load_timeout` 降到 12-15s
+- `backend/crawler/scroll_safe.py` — 线程池 max_workers 8
+- `frontend/src/hooks/useTaskControls.ts` — resume 自动传递 concurrency
+- `frontend/src/components/features/task-detail/TaskDetailHeader.tsx` — 运行中提示
+
+---
+
+## [2026-04-05] 任务详情页并发数选择器
+
+### 背景
+评论补采任务组的并发数调整之前只能在任务列表页的恢复操作中设置，不够直观。
+用户希望在任务详情页随时可见、随时可调。
+
+### 新增功能
+- **独立并发数更新接口**：`PATCH /tasks/{id}/concurrency` — 任何状态下均可修改，不必等到恢复时才调整
+- **任务详情页并发选择器**：`comment_backfill_group` 任务的详情页头部 4 宫格最后一格，显示 1-5 并发按钮组，点击即时保存
+- **前端 API 新增 `updateConcurrency`**：调用 PATCH 接口，支持 toast 反馈
+- **resume 自动携带并发数**：`useTaskControls` 在恢复 `comment_backfill_group` 时自动将当前 `concurrency` 传递给 resume API，确保带上正确的并发配置
+- **运行中提示**：并发选择器在任务运行中时显示"修改将在下次恢复时生效"，引导用户在恢复前设置
+
+### 文件变更
+- `backend/api/routers/tasks.py` — 新增 `PATCH /{task_id}/concurrency` 端点
+- `frontend/src/services/api/index.ts` — 新增 `tasks.updateConcurrency()` 方法
+- `frontend/src/components/features/task-detail/TaskDetailHeader.tsx` — 新增 `ConcurrencySelector` 组件 + 新 props (`savingConcurrency`, `onConcurrencyChange`)
+- `frontend/src/app/tasks/[id]/page.tsx` — 新增 `handleConcurrencyChange` 回调，透传到 Header
+- `frontend/src/hooks/useTaskControls.ts` — resume 时自动传递 `comment_backfill_group` 的 concurrency
+
+---
+
+## [2026-04-05] 恢复任务组时支持动态修改并发数
+
+### 背景
+已运行的评论补采任务组（comment_backfill_group）恢复时无法修改并发数，只能沿用创建时的设置。
+老任务甚至没有 concurrency 字段，恢复后只能走单路模式。
+
+### 新增功能
+- **后端 resume 接口扩展**：`POST /tasks/{id}/resume` 接受可选 body `{ concurrency: N }`，恢复前动态更新 task dict
+- **DB 持久化**：`concurrency` 列写入 SQLite，服务重启后也能保留设置
+- **内嵌并发选择器**：在任务卡片（Comfortable 布局）和预览面板中，`comment_backfill_group` 可恢复时直接显示 1-5 并发按钮组，选好后点「继续」即带上新并发数
+- **任务标签优化**：任务列表中 `comment_backfill_group` 显示为「评论补采组(N路)」，直观反映并发配置
+- **task_manager 新增 `update_task_field`**：通用的单字段更新 + 持久化方法
+
+### 文件变更
+
+**修改文件**
+- `backend/api/schemas/task.py` — 新增 `TaskResumeRequest` schema + `TaskOut.concurrency` 字段
+- `backend/api/routers/tasks.py` — resume 接口接受可选 body + 动态更新 concurrency
+- `backend/api/services/task_manager.py` — 新增 `update_task_field()` 方法
+- `backend/api/services/task_db.py` — 新增 `concurrency` 列（ensure_column + summary_params + upsert）
+- `frontend/src/services/api/index.ts` — `resume()` 支持可选 `{ concurrency }` body + `TaskOut.concurrency`
+- `frontend/src/app/tasks/page.tsx` — `handleResume` 支持透传 concurrency
+- `frontend/src/components/features/tasks/TaskListCard.tsx` — Comfortable 布局内嵌并发按钮组
+- `frontend/src/components/features/tasks/TaskPreview.tsx` — 预览面板内嵌并发按钮组
+- `frontend/src/lib/task-ui.ts` — `getTaskKindLabel` 识别任务组并显示并发数
+
+---
+
+## [2026-04-05] 评论补采任务组支持多路并发
+
+### 背景
+评论补采任务组（comment_backfill_group）原先只使用 1 个浏览器 + 1 个账号，吞吐量受限于单进程性能。
+即使系统有多个可用账号和浏览器资源，也无法并行利用。
+
+### 新增功能
+- **多 Pipeline 并发**：用户创建任务组时可指定并发数（1-5），每路使用独立账号 + 独立 L1/L2 浏览器
+- **Round-robin 负载均衡**：推文按评论数排序后交错分配到各 Pipeline，确保负载均匀
+- **线程安全进度聚合**：所有 Pipeline 共享回调，统一更新任务进度
+- **信号自动传播**：N 个 Pipeline 共用同一 task_id，pause/resume/stop 零改动即生效
+- **向后兼容**：旧任务无 concurrency 字段时默认 1，走原有单 Pipeline 路径
+
+### 文件变更
+
+**新增文件**
+- `backend/crawler/parallel_backfill_coordinator.py` — 并行协调器，WorkerResource 数据结构，chunk 分块，N Pipeline 生命周期管理
+
+**修改文件**
+- `backend/config.py` — 新增 `comment_backfill_group_max_concurrency` 配置项（默认 3）
+- `backend/api/schemas/task.py` — `CommentBackfillGroupRequest` 新增 `concurrency` 字段
+- `backend/api/services/task_manager.py` — `create_task()` 存储 concurrency 到 task dict
+- `backend/api/routers/comment_backfill_group.py` — 透传 `concurrency` 到 create_task
+- `backend/api/services/crawl_service.py` — 多账号分配 + 多组 aux 浏览器获取/Cookie 注入/释放
+- `backend/crawler/account_dispatcher.py` — 新增 `assign_multiple_accounts` / `release_multiple_accounts` 方法
+- `backend/crawler/comment_backfill_runner.py` — 新增 `worker_resources` 参数，路由到 ParallelBackfillCoordinator
+- `frontend/.../CommentBackfillGroupDialog.tsx` — 并发数选择器 UI（1-5 按钮组）
+- `frontend/src/services/api/index.ts` — API 传参新增 concurrency
+- `docs/api.md` — POST /api/v1/comment-backfill/group 接口文档更新
+
+---
+
+## [2026-04-05] 修复任务组断点续跑报错 source_task_ids 为空
+
+### 根因
+任务组（comment_backfill_group）恢复执行时，`run_comment_backfill_group_task` 的逻辑是：
+**先校验 `source_task_ids` → 再检查已有 tweets**。
+对于断点续跑的旧任务（DB 中 `source_task_ids_json` 为默认空值 `'[]'`），校验直接失败抛错，
+尽管任务已有 46817 条 tweets 可以直接续跑，根本不需要重新合并源任务。
+
+### 修复
+
+**`comment_backfill_runner.py`** — 调换检查顺序：
+1. 先尝试从任务已有数据加载 tweets（断点续跑路径，**不需要** `source_task_ids`）
+2. 仅当无已有 tweets 时（首次执行），才校验 `source_task_ids` 并从源任务合并
+3. 增加断点续跑时的 INFO 日志，明确标识跳过了合并
+
+**`crawl_service.py`**
+- `run_search_task`: 直接透传 `source_task_ids` 给 runner（不再强制转空列表）
+- `start_crawler_thread`: 新增任务组调度诊断日志
+
+## [2026-04-05] 修复 comment_backfill_group source_task_ids 传递链路
+
+### 问题
+任务组（comment_backfill_group）在执行时报错 "任务组没有配置源任务 ID（source_task_ids 为空）"。
+虽然 DB 层已补充了 `source_task_ids_json` 列（上一轮修复），但调度链路中 `source_task_ids` 仍存在丢失风险：
+1. Python 的 `or` 运算符对空列表 `[]`（falsy）的处理导致 fallback 路径异常
+2. runner 的 fallback 逻辑没有同时尝试 task dict（DB 加载值）兜底
+3. `run_search_task` 将 `source_task_ids or []` 传给 runner，空列表直接触发报错而不尝试 DB 回源
+
+### 修复
+
+**`comment_backfill_runner.py`**
+- 改用 `if source_task_ids` 替代 `source_task_ids or`，外部传入为空/None 时回退到 `task.get("source_task_ids")`（来自 DB）
+- 增加 ERROR 级别诊断日志：同时打印外部传入值和 task dict 中的值，方便定位根因
+
+**`crawl_service.py`**
+- `run_search_task`: 不再用 `source_task_ids or []` 强制空列表，直接透传给 runner，让 runner 自己 fallback
+- `start_crawler_thread`: 新增任务组调度诊断日志，打印 task.source_task_ids 和 payload.source_task_ids
+
+## [2026-04-05] 修复 comment_backfill_group source_task_ids 丢失
+
+### 根因
+`source_task_ids`（任务组的源任务列表）从未被写入 SQLite DB（`task_db.py` 缺少对应列），也未在任务加载时反序列化。服务重启后从 DB 重载任务时，该字段缺失，`run_comment_backfill_group_task` 读到空列表就抛出 "source_task_ids 为空" 错误。
+
+### 修复
+
+**`task_db.py`（DB 层）**
+- `_ensure_column` — 补充 `source_task_ids_json TEXT DEFAULT '[]'` 列（自动迁移旧 DB）
+- `_summary_params` — 将 `source_task_ids` 序列化为 JSON 字符串持久化
+- `_upsert_task_summary` INSERT / ON CONFLICT UPDATE — 加入 `source_task_ids_json`
+- `load_all_tasks` SELECT + 反序列化 — 读取并解析 `source_task_ids_json` → `source_task_ids`
+
+**`task_manager.py`（内存加载）**
+- `_ensure_db` — 补充 `task.setdefault("source_task_ids", [])` 对历史任务兼容
+
+**`comment_backfill_runner.py`（执行层兜底）**
+- `run_comment_backfill_group_task` 新增 `source_task_ids: Optional[list[str]] = None` 参数
+- 优先使用外部直传值（来自 scheduler payload，100% 可靠），再 fallback 到任务 dict
+
+**`crawl_service.py`（调用层）**
+- `run_search_task` 的 `comment_backfill_group` 分支：显式传 `source_task_ids=source_task_ids`
+
+## [2026-04-05] 错误页账号切换修复 + 任务组 UI 优化
+
+### 修复
+
+#### 全页 "Something went wrong" 不再阻断评论补采
+- **问题**：`navigate_with_retry` 遇到全页 `TRANSIENT_ERROR`（即 X 显示"Something went wrong. Try reloading."）时，内部重试（Retry 按钮点击 + 刷新）全部失败后只是 `return False`，`fetch_replies` 收到后直接放弃本帖并记录失败，**从未尝试切换账号**。
+- **修复**（`reply_fetcher.py`）：初始导航 `navigate_with_retry` 返回 `False` 后，在放弃之前先调用 `_try_inject_pool_account_cookies` 尝试从号池轮换到下一个账号（最多切换 `_REPLY_MAX_ACCOUNT_SWITCHES` 次），切换成功后重新导航（`max_retries=2`）；仍失败才最终跳过。
+- **效果**：单账号遇到错误页时，系统自动轮换到号池中下一个账号继续采集，不因账号临时异常丢失进度。
+
+### 优化
+
+#### 评论补采任务组对话框
+- **去掉"最大评论数"配置项**：该参数用户无需控制（始终不限制），从 UI 中移除；API 调用固定传 `max_replies_per_tweet=0`。
+- **源任务进度标注**（新增"已采 / 待采"明细 + 进度条）：
+  - 有 `comment_backfill_progress` 数据的任务显示：绿色"已采 N 条"、粗体"待采 M 条"或"已全部采集"、小字"共 T 条"
+  - 每行附带细进度条（已采比例 → 紫色；全部采完 → 绿色）
+  - 已全部采集的任务：`opacity-50` 淡化 + 绿色勾图标，一眼识别"不会再补采"
+
+## [2026-04-05] 评论补采任务组：L1/L2 完全解耦 + 多任务合并高效爬取
+
+### 背景
+评论补采任务中，二级评论（L2）的爬取与一级评论（L1）争抢同一个 Chrome 进程，导致 CDP 命令串行化，L1 被 L2 严重拖慢、进度迟迟不更新。此外，多个独立的 `comment_backfill` 任务各自持有一批帖子，浏览器槽位分散，整体吞吐远低于理论值。
+
+### 新功能
+
+#### 评论补采任务组（`comment_backfill_group`）
+- **后端** `comment_backfill_group_service.py`（新文件）— 加载多个源任务的待补采帖子，全局去重（by `tweet_id`），按评论数降序排列
+- **后端** `comment_backfill_group.py`（新路由）— `POST /api/v1/comment-backfill/group`，将多个 `comment_backfill` 任务合并为一个 `comment_backfill_group` 大任务并立即启动
+- **后端** `comment_backfill_runner.py` — 新增 `run_comment_backfill_group_task()`，使用 `reply_worker_count=3` 最大化 L1 并行度
+- **后端** `crawl_service.py` — 为 `comment_backfill_group` 任务额外申请独立 `nested_browser_instance`（L2 专用 aux 进程）
+- **前端** `CommentBackfillGroupDialog.tsx`（新组件）— 展示源任务列表、剩余帖数、配置采集深度和最大评论数、生成任务组
+- **前端** `TaskBatchActions.tsx` — 新增"合并为任务组"按钮（紫色风格），仅在选中 ≥2 个 `comment_backfill` 任务时可点击
+- **前端** `tasks/page.tsx` — 接线 `CommentBackfillGroupDialog`，创建成功后自动跳转至新任务组详情页
+
+#### L1/L2 浏览器完全解耦（惠及所有深度>1的评论补采任务）
+- **`pipeline.py`** — 新增 `nested_browser_instance` 参数；`_nested_worker` 优先使用专属 L2 浏览器实例，与 L1 `reply_worker` 完全隔离
+- **`pipeline.py`** — `on_reply_done` 回调在 L1 阶段完成后**立即触发**（不再等待 L2 完成），前端进度实时可见；L2 完成后再次触发以更新完整 replies 数据
+- **`crawl_service.py`** — 对所有 X 平台深度>1 的 `comment_backfill` 任务自动申请 `nested_reply` aux 浏览器槽位
+
+### schema 变更
+- `task.py` — `TaskKind` 新增 `"comment_backfill_group"`；`TaskOut` 新增 `source_task_ids?: list[str]`
+- `task.py` — 新增 `CommentBackfillGroupRequest`、`CommentBackfillGroupResponse`、`CommentBackfillGroupSourceSummary`
+- `api/index.ts` — 对应前端类型同步更新；`commentBackfill.createGroup()` 方法
+
+### 效果
+- 任务组模式下 L1 × 3 worker + 独立 L2 专用浏览器，理论峰值吞吐是原单任务的 2-3 倍
+- 多个 `comment_backfill` 任务合并后全局去重，同一帖子不再被重复补采
+
+## [2026-04-05] 浏览器实例严格控制 + 并发爬取效率全面优化
+
+### 问题
+1. **浏览器实例数失控**：5 个并发任务却开了 10+ 个 Chrome 进程。原因：跨平台并发开启时浏览器池大小翻倍（5×2=10），且每个需要抓评论的任务还会额外创建辅助浏览器进程
+2. **恢复任务卡顿**：暂停恢复后 check_signal 轮询间隔 1s，调度器 dispatch loop 空闲等待 0.5s，恢复延迟明显
+3. **爬取效率低下**：单账号翻页间隔 15-26s，加上模拟阅读、微休息、小憩、长休息等额外等待，实际吞吐很低
+
+### 修复
+
+#### 浏览器池大小严格等于并发任务数
+- `browser_pool.py` — `compute_pool_max_size()` 不再因跨平台并发翻倍，pool 主 slot 数 = `crawler_max_concurrent_tasks`
+- **效果**：5 个并发任务 = 5 个主浏览器 slot（需抓评论时会按需创建 aux 辅助实例）
+
+#### 恢复任务立即开始
+- `utils.py` — check_signal 暂停轮询间隔从 1.0s 降到 0.3s，恢复信号最快 300ms 内响应
+- `task_scheduler.py` — dispatch loop 空闲等待从 0.5s 降到 0.2s，空转间隔从 0.1s 降到 0.05s
+- **效果**：恢复后 ~0.3s 内开始爬取，体感几乎无延迟
+
+#### 并发模式全速爬取
+- `account_pool.py` — 动态翻页间隔区间缩短（0.55x~0.85x safe_interval），单账号约 8-12s，多账号约 2-4s
+- `x_searcher.py` — 并发模式（pool_mode）下完全跳过模拟阅读和休息节律
+- `x_searcher.py` — 单任务模式下休息节律也大幅缩减：微休息 1%/1-2s、小憩 2000条/5-10s、长休息 6h/30-60s
+- **效果**：并发爬取吞吐提升约 3-5 倍
+
+#### 测试更新
+- `test_browser_pool.py` — 更新池大小计算和 pool_mode 启用判断的测试
+- `test_crawl_service_comment_backfill.py` — 验证评论补采任务正确申请 aux 辅助浏览器实例
+- `test_crawler_config_and_recovery_policy.py` — 更新 mock 函数签名
+
+## [2026-04-05] 修复浏览器实例误判"卡死/断连" + 评论补采跳过首页导航
+
+### 问题
+1. **浏览器实例被误判为卡死/断连**：Round 1 优化中将搜索和回复共用同一 Chrome 进程（删除 aux 辅助实例），导致 CDP 命令串行化——多 tab 共享一个 WebSocket 连接，并发 CDP 调用互相阻塞，引发 `tab.cookies()` 超时、`Page.reload` 超时、导航超时等连锁问题。实际浏览器进程完全正常，但 CDP 层面已无法正常通信。
+2. **评论补采任务卡在"准备中"**：`comment_backfill` 任务启动流程缺少中间阶段提示，用户只看到"正在准备 X 评论补采任务..."长时间不变。
+3. **不必要的首页导航**：回复/评论 tab 在浏览器池模式下仍走完整的登录验证流程（导航到 x.com/home），浪费 5-15 秒。
+
+### 修复
+
+#### 恢复独立 aux 辅助浏览器实例（修复 CDP 串行化）
+- `crawl_service.py` — 搜索和回复/评论恢复使用独立 Chrome 进程（`pool.acquire_aux()`），彻底消除 CDP 命令串行化
+- `browser_pool.py` — `BrowserInstance.is_alive` 改用 `psutil.pid_exists()` 优先检测进程是否存活，避免 CDP 繁忙时误判为断连
+- **效果**：搜索和回复各自独立运行，不再相互阻塞
+
+#### 评论补采中间阶段提示
+- `comment_backfill_runner.py` — pipeline 启动前添加"正在启动评论抓取引擎（共 N 条帖子待处理）..."阶段提示
+- `pipeline.py` — reply worker 进入主循环后更新"浏览器就绪，开始抓取评论..."
+
+#### 浏览器池模式跳过首页导航
+- `reply_fetcher.py` — `_ensure_reply_session_ready()` 在池模式下直接注入浏览器实例 Cookie 并标记登录缓存，跳过 `ensure_x_domain_context()` 首页导航
+- `auth.py` — 全链路 `time.sleep()` 从 ~3.5s 缩减到 ~1.2s：`ensure_x_domain_context` 0.5→0.2s，`ensure_login_detailed` 0.5→0.2s/1.0→0.3s，`_refresh_x_home` 已在 x.com 域时改用 `tab.refresh()` 代替全量导航
+
+### 验证
+- `pytest tests/test_browser_pool.py tests/test_crawl_service_comment_backfill.py tests/test_crawler_config_and_recovery_policy.py tests/test_comment_backfill_runner.py -v`
+- 结果：`21 passed`
+
+## [2026-04-05] 修复 X/微博评论抓取阶段浏览器卡死放大
+
+### 问题
+1. **评论补采浏览器复用策略过于激进**：`comment_backfill` 任务不再申请 `aux` 评论浏览器实例后，X 评论补采内部多个 worker、登录校验、页面恢复逻辑被压到同一个 Chromium 实例，导致 `Page.stopLoading` / `Page.reload` / `Network.getCookies` 连锁超时
+2. **Cookie 超时误判为登录丢失**：`tab.cookies()` 超时时旧逻辑直接返回空 Cookie，随后触发更多登录恢复、页面跳转与刷新，进一步放大浏览器阻塞
+3. **微博评论页打开超时直接失败**：微博评论详情页 `tab.get()` 超时会直接冒泡，使整条评论补采记录为 0 条
+
+### 修复
+
+#### `backend/api/services/crawl_service.py`
+- 浏览器池模式下，`comment_backfill` 任务重新申请独立 `aux` 评论浏览器实例
+- 微博评论补采优先使用 `aux` 实例执行实际抓取，降低与共享 slot 的互相影响
+
+#### `backend/crawler/comment_backfill_runner.py`
+- X 评论补采固定为单 `reply_worker` 稳定模式，避免同一 Chromium 进程内堆叠多个一级评论 worker
+
+#### `backend/crawler/auth.py`
+- 新增短期 Cookie 缓存
+- `Network.getCookies` 超时时优先回退最近缓存，避免把浏览器忙死误判成登录丢失
+
+#### `backend/crawler/weibo/comment_fetcher.py`
+- 评论详情页打开流程改为返回明确失败原因：`navigation_timeout` 或 `http_418_cooldown_exhausted`
+- `tab.get()` 超时不再直接炸穿整条微博评论补采
+
+#### 测试
+- 新增/更新：
+  - `backend/tests/test_crawl_service_comment_backfill.py`
+  - `backend/tests/test_comment_backfill_runner.py`
+  - `backend/tests/test_auth_cookie_cache.py`
+  - `backend/tests/test_weibo_comment_fetcher.py`
+
+### 验证
+- `backend/.venv/bin/python -m py_compile backend/api/services/crawl_service.py backend/crawler/comment_backfill_runner.py backend/crawler/auth.py backend/crawler/weibo/comment_fetcher.py backend/tests/test_crawl_service_comment_backfill.py backend/tests/test_comment_backfill_runner.py backend/tests/test_auth_cookie_cache.py backend/tests/test_weibo_comment_fetcher.py`
+- `PYTHONPATH=backend backend/.venv/bin/python -m pytest -q backend/tests/test_crawl_service_comment_backfill.py backend/tests/test_comment_backfill_runner.py backend/tests/test_auth_cookie_cache.py backend/tests/test_reply_session_sync.py backend/tests/test_weibo_comment_fetcher.py`
+- 结果：`15 passed`
+
 ## [2026-04-05] 修复评论补采任务卡在"准备中" + 批量导出性能和体验优化
 
 ### 问题

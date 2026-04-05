@@ -65,6 +65,7 @@ def test_comment_backfill_runner_falls_back_to_source_task(monkeypatch):
             progress={"total_posts": len(tweets), "eligible_posts": len(tweets), "processed_posts": 0, "skipped_posts": 0, "succeeded_posts": 0, "failed_posts": 0},
         )
 
+    monkeypatch.setattr("crawler.comment_backfill_runner.task_manager.get_task_tweets_ref", lambda _task_id: [])
     monkeypatch.setattr("crawler.comment_backfill_runner.task_manager.get_task_full", fake_get_task_full)
     monkeypatch.setattr("crawler.comment_backfill_runner.task_manager.set_task_seed_tweets", fake_set_task_seed_tweets)
     monkeypatch.setattr("crawler.comment_backfill_runner._run_weibo_comment_backfill", fake_run_weibo_comment_backfill)
@@ -83,6 +84,10 @@ def test_comment_backfill_runner_falls_back_to_source_task(monkeypatch):
 
 
 def test_comment_backfill_runner_still_rejects_empty_task_without_source(monkeypatch):
+    monkeypatch.setattr(
+        "crawler.comment_backfill_runner.task_manager.get_task_tweets_ref",
+        lambda _task_id: [],
+    )
     monkeypatch.setattr(
         "crawler.comment_backfill_runner.task_manager.get_task_full",
         lambda task_id: {
@@ -142,6 +147,7 @@ def test_comment_backfill_runner_infers_source_task_id_for_legacy_tasks(monkeypa
             return source_task
         return None
 
+    monkeypatch.setattr("crawler.comment_backfill_runner.task_manager.get_task_tweets_ref", lambda _task_id: [])
     monkeypatch.setattr("crawler.comment_backfill_runner.task_manager.get_task_full", fake_get_task_full)
     monkeypatch.setattr(
         "crawler.comment_backfill_runner.task_manager.list_tasks",
@@ -159,3 +165,65 @@ def test_comment_backfill_runner_infers_source_task_id_for_legacy_tasks(monkeypa
 
     assert resolved == "search-task-minimax"
     assert updated_source_ids == [("backfill-task-legacy", "search-task-minimax")]
+
+
+def test_x_comment_backfill_runner_uses_single_reply_worker(monkeypatch):
+    from crawler import comment_backfill_runner
+
+    task = {
+        "task_id": "x-backfill-001",
+        "task_kind": "comment_backfill",
+        "status": "pending",
+        "platform": "x",
+        "tweets": [
+            {
+                "id": "2001",
+                "url": "https://x.com/openai/status/2001",
+                "author": {"screen_name": "openai"},
+                "metrics": {"replies": 12},
+            }
+        ],
+    }
+    captured: dict[str, object] = {}
+
+    class _DummyPipeline:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.result_map = {}
+            self.failed_records = []
+
+        def start(self) -> None:
+            return None
+
+        def put_batch(self, tweets: list[dict]) -> None:
+            for tweet in tweets:
+                self.result_map[str(tweet.get("id") or "")] = tweet
+
+        def finish_search(self) -> None:
+            return None
+
+        def join(self) -> None:
+            return None
+
+        def check_error(self) -> None:
+            return None
+
+    monkeypatch.setattr(comment_backfill_runner.task_manager, "get_task_tweets_ref", lambda _task_id: task["tweets"])
+    monkeypatch.setattr(comment_backfill_runner.task_manager, "get_task_full", lambda _task_id: task)
+    monkeypatch.setattr(comment_backfill_runner.task_manager, "update_task_phase", lambda *args, **kwargs: None)
+    monkeypatch.setattr(comment_backfill_runner.task_manager, "update_comment_backfill_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr(comment_backfill_runner.task_manager, "update_preview_tweets", lambda *args, **kwargs: None)
+    monkeypatch.setattr(comment_backfill_runner.task_manager, "update_task_replies_progress", lambda *args, **kwargs: None)
+    monkeypatch.setattr("crawler.pipeline.CrawlPipeline", _DummyPipeline)
+
+    result = run_comment_backfill_task(
+        task_id="x-backfill-001",
+        platform="x",
+        max_replies_per_tweet=20,
+        reply_depth=2,
+        browser_instance=object(),
+        reply_browser_instance=object(),
+    )
+
+    assert result.tweets[0]["id"] == "2001"
+    assert captured["reply_worker_count"] == 2

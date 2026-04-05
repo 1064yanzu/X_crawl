@@ -15,7 +15,7 @@ from crawler.browser import ensure_browser_alive, reset_browser
 from crawler.crawl_signals import ChallengeSignal, LoginRequiredPause, StopSignal
 from crawler.account_dispatcher import get_dispatcher
 from crawler.cookie_manager import load_cookies, save_cookies
-from crawler.comment_backfill_runner import run_comment_backfill_task
+from crawler.comment_backfill_runner import run_comment_backfill_task, run_comment_backfill_group_task
 from crawler import telemetry
 from crawler.runtime_metrics import clear_metrics, get_metrics, start_task_metrics
 from crawler.x_searcher import search
@@ -63,6 +63,7 @@ def _build_worker_payload(
         task_kind=task.get("task_kind", "search"),
         source_file_name=task.get("source_file_name"),
         source_task_id=task.get("source_task_id"),
+        source_task_ids=list(task.get("source_task_ids") or []),
         is_recrawl=bool(task.get("is_recrawl", False)),
         exclude_tweet_ids=task.get("exclude_tweet_ids") or [],
     )
@@ -82,6 +83,12 @@ def start_crawler_thread(
     )
     platform = task.get("platform", "x")
     task_kind = task.get("task_kind", "search")
+    # 任务组诊断：确保 source_task_ids 在调度链中不丢失
+    if task_kind == "comment_backfill_group":
+        logger.info(
+            "任务组调度: task_id=%s, task.source_task_ids=%r, payload.source_task_ids=%r",
+            task_id[:8], task.get("source_task_ids"), payload.get("source_task_ids"),
+        )
     cbp = task.get("comment_backfill_progress") or {}
     total_expected_replies = int(cbp.get("total_expected_replies") or 0)
     enqueued = scheduler.enqueue(
@@ -120,6 +127,7 @@ def run_search_task(
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
     source_task_id: Optional[str] = None,
+    source_task_ids: Optional[list[str]] = None,
     is_recrawl: bool = False,
     account_id: Optional[str] = None,
     exclude_tweet_ids: Optional[list[str]] = None,
@@ -157,61 +165,138 @@ def run_search_task(
 
     _pool_mode = is_pool_mode_enabled()
     _browser_instance = None
-    _reply_browser_instance = None  # 回复/评论专用独立浏览器实例
+    _reply_browser_instance = None  # L1回复/评论专用独立浏览器实例
+    _nested_browser_instance = None  # L2二级评论专用独立浏览器实例（完全解耦）
     _slot_id: int | None = None
+    _multi_account_mode = False  # 任务组并发模式标记
+    _worker_resources: list | None = None  # 并发模式的资源列表
 
     try:
+        # ── 判断是否为并发任务组模式 ──
+        _group_concurrency = 1
+        if task_kind == "comment_backfill_group":
+            task_full = task_manager.get_task_full(task_id)
+            _group_concurrency = int((task_full or {}).get("concurrency") or 1)
+
         # 账号分配（可能抛出 LoginRequiredPause，必须在 try 内确保 finally 清理）
         if platform == "x" and bool(getattr(settings, "account_pool_enabled", True)):
             dispatcher = get_dispatcher()
-            reserved_account = None
-            if account_id:
-                reserved_account = dispatcher.reserve_account(task_id, account_id)
-                if reserved_account is None:
-                    logger.warning(
-                        "任务 %s 预留已绑定账号失败，尝试重新分配可用账号",
-                        task_id[:8],
-                    )
-            if reserved_account is None:
-                reserved_account = dispatcher.assign_account(task_id)
-            if reserved_account is not None:
-                reserved_account_id = reserved_account.account_id
-                task_manager.bind_account(
-                    task_id, reserved_account.account_id, reserved_account.alias
-                )
-            else:
-                from crawler.account_pool import get_pool
 
-                if get_pool().get_active_account_count() > 0:
-                    raise LoginRequiredPause(
-                        f"X 账号池已启用，但当前所有账号均被占用，任务 {task_id[:8]} 已暂停等待账号释放",
-                        reason="no_account_available",
-                        session_mode="pool",
-                        effective_user_data_path=None,
+            # ── 并发任务组：分配多个账号 ──
+            if _group_concurrency > 1:
+                from crawler.parallel_backfill_coordinator import WorkerResource
+
+                max_concurrency = min(
+                    _group_concurrency,
+                    int(getattr(settings, "comment_backfill_group_max_concurrency", 3)),
+                )
+                multi_accounts = dispatcher.assign_multiple_accounts(task_id, max_concurrency)
+                if not multi_accounts:
+                    # 回退到单账号模式
+                    logger.warning(
+                        "任务组 %s 无法分配多账号，回退单账号模式", task_id[:8],
                     )
-                reserved_account_id = None
-                logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
+                    _group_concurrency = 1
+                else:
+                    _multi_account_mode = True
+                    # 首个账号绑定到任务显示
+                    reserved_account_id = multi_accounts[0].account_id
+                    aliases = [a.alias for a in multi_accounts]
+                    task_manager.bind_account(
+                        task_id, multi_accounts[0].account_id,
+                        f"{multi_accounts[0].alias} 等 {len(multi_accounts)} 个",
+                    )
+                    logger.info(
+                        "任务组 %s 并发模式: 分配 %d 个账号 %s",
+                        task_id[:8], len(multi_accounts), aliases,
+                    )
+
+            # ── 单账号模式（默认路径 / 并发回退） ──
+            if not _multi_account_mode:
+                reserved_account = None
+                if account_id:
+                    reserved_account = dispatcher.reserve_account(task_id, account_id)
+                    if reserved_account is None:
+                        logger.warning(
+                            "任务 %s 预留已绑定账号失败，尝试重新分配可用账号",
+                            task_id[:8],
+                        )
+                if reserved_account is None:
+                    reserved_account = dispatcher.assign_account(task_id)
+                if reserved_account is not None:
+                    reserved_account_id = reserved_account.account_id
+                    task_manager.bind_account(
+                        task_id, reserved_account.account_id, reserved_account.alias
+                    )
+                else:
+                    from crawler.account_pool import get_pool
+
+                    if get_pool().get_active_account_count() > 0:
+                        raise LoginRequiredPause(
+                            f"X 账号池已启用，但当前所有账号均被占用，任务 {task_id[:8]} 已暂停等待账号释放",
+                            reason="no_account_available",
+                            session_mode="pool",
+                            effective_user_data_path=None,
+                        )
+                    reserved_account_id = None
+                    logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
 
         if _pool_mode:
             pool_obj = get_browser_pool()
             _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
-            # 如果需要抓取回复/评论，分配独立的浏览器实例（独立 Chrome 进程）
-            # 搜索和回复使用不同 Chrome 进程，确保 CDP 命令不串行化
-            # 注意：comment_backfill 不需要 aux 实例——补采时没有搜索翻页，
-            # 主实例空闲，reply_worker 可直接复用主实例，省一个 Chrome 进程
-            if fetch_replies and task_kind != "comment_backfill":
-                _reply_browser_instance = pool_obj.acquire_aux(
-                    task_id,
-                    purpose="reply" if platform == "x" else "comment",
+
+            # ── 并发任务组：为每个账号获取独立的 L1 + L2 浏览器 ──
+            if _multi_account_mode and multi_accounts:
+                from crawler.parallel_backfill_coordinator import WorkerResource
+
+                _worker_resources = []
+                # 并发模式下只分配 1 个共享 nested 浏览器（减少 Chrome 进程总数）
+                shared_nested = pool_obj.acquire_aux(task_id, purpose="nested_shared") if reply_depth > 1 else None
+                if shared_nested is not None:
+                    # 用首个账号注入 Cookie（nested browser 用于二级评论，账号影响较小）
+                    _inject_account_cookies(task_id, multi_accounts[0].account_id, browser_instance=shared_nested)
+                for i, acc in enumerate(multi_accounts):
+                    l1 = pool_obj.acquire_aux(task_id, purpose=f"reply_w{i}")
+                    # 注入该账号的 Cookie 到 L1 浏览器
+                    _inject_account_cookies(task_id, acc.account_id, browser_instance=l1)
+                    _worker_resources.append(WorkerResource(
+                        account_id=acc.account_id,
+                        account_alias=acc.alias,
+                        reply_browser=l1,
+                        nested_browser=shared_nested,  # 共享
+                    ))
+                n_browsers = len(multi_accounts) + (1 if shared_nested else 0)
+                logger.info(
+                    "任务组 %s 浏览器资源就绪: %d 个 L1 + %s 共享 L2，共 %d 个 Chrome 进程",
+                    task_id[:8], len(multi_accounts),
+                    "1 个" if shared_nested else "无",
+                    n_browsers,
                 )
+            else:
+                # ── 普通单账号浏览器获取 ──
+                needs_reply_browser = bool(fetch_replies or task_kind in ("comment_backfill", "comment_backfill_group"))
+                if needs_reply_browser:
+                    _reply_browser_instance = pool_obj.acquire_aux(
+                        task_id,
+                        purpose="reply" if platform == "x" else "comment",
+                    )
+                needs_nested_browser = bool(
+                    task_kind == "comment_backfill_group"
+                    or (needs_reply_browser and platform == "x" and int(reply_depth) > 1)
+                )
+                if needs_nested_browser:
+                    _nested_browser_instance = pool_obj.acquire_aux(
+                        task_id,
+                        purpose="nested_reply",
+                    )
 
         if not _pool_mode:
             if force_new_browser:
                 reset_browser()
             ensure_browser_alive()
 
-        # 如果指定了账号，注入其 Cookie（搜索浏览器 + 回复/评论浏览器均需注入）
-        if reserved_account_id:
+        # 单账号模式下注入 Cookie
+        if reserved_account_id and not _multi_account_mode:
             _inject_account_cookies(
                 task_id, reserved_account_id, browser_instance=_browser_instance
             )
@@ -219,15 +304,74 @@ def run_search_task(
                 _inject_account_cookies(
                     task_id, reserved_account_id, browser_instance=_reply_browser_instance
                 )
+            if _nested_browser_instance is not None:
+                _inject_account_cookies(
+                    task_id, reserved_account_id, browser_instance=_nested_browser_instance
+                )
 
-        if task_kind == "comment_backfill":
+        if task_kind == "comment_backfill_group":
+            task_manager.update_task_phase(task_id, "正在初始化评论补采任务组...")
+            result = run_comment_backfill_group_task(
+                task_id=task_id,
+                max_replies_per_tweet=max_replies_per_tweet,
+                reply_depth=reply_depth,
+                browser_instance=_browser_instance,
+                reply_browser_instance=_reply_browser_instance,
+                nested_browser_instance=_nested_browser_instance,
+                source_task_ids=source_task_ids,
+                worker_resources=_worker_resources,
+            )
+            runtime_metrics = get_metrics(task_id)
+            quality_state = "partial" if result.failed_records else "complete"
+            task_manager.update_task_phase(
+                task_id,
+                f"任务组补采完成，共处理 {result.progress.get('processed_posts', 0)} 条帖子，"
+                f"累计评论 {result.replies_fetched} 条",
+            )
+            task_manager.update_comment_backfill_progress(task_id, result.progress)
+            task_manager.update_task_result(
+                task_id=task_id,
+                tweets=result.tweets,
+                resumed=resume,
+                replies_fetched=result.replies_fetched,
+                quality_state=quality_state,
+                runtime_metrics=runtime_metrics,
+            )
+            if result.failed_records:
+                _persist_failed_records(task_id, result.failed_records)
+            telemetry.record_event(
+                task_id,
+                "comment_backfill_group_finished",
+                status="done",
+                phase="任务组补采完成",
+                delta_tweets=len(result.tweets),
+                delta_replies=result.replies_fetched,
+                meta={
+                    "failed_posts": result.progress.get("failed_posts", 0),
+                    "source_task_ids": source_task_ids or [],
+                },
+            )
+            logger.info(
+                "评论补采任务组完成: task_id=%s, 帖子=%s, 评论=%s, 失败=%s",
+                task_id,
+                len(result.tweets),
+                result.replies_fetched,
+                result.progress.get("failed_posts", 0),
+            )
+            final_status = "done"
+        elif task_kind == "comment_backfill":
             task_manager.update_task_phase(task_id, "已读取导入文件，开始补采评论...")
+            effective_backfill_browser = (
+                _reply_browser_instance
+                if platform == "weibo" and _reply_browser_instance is not None
+                else _browser_instance
+            )
             result = run_comment_backfill_task(
                 task_id=task_id,
                 platform=platform,
                 max_replies_per_tweet=max_replies_per_tweet,
                 reply_depth=reply_depth,
-                browser_instance=_browser_instance,
+                browser_instance=effective_backfill_browser,
                 reply_browser_instance=_reply_browser_instance,
             )
             runtime_metrics = get_metrics(task_id)
@@ -509,6 +653,13 @@ def run_search_task(
         final_status = "failed"
     finally:
         if platform == "x" and final_status in ("done", "failed", "stopped", "paused"):
+            if _multi_account_mode:
+                # 释放并发模式下分配的所有账号
+                try:
+                    released = get_dispatcher().release_multiple_accounts(task_id)
+                    logger.info("已释放任务组 %s 的 %d 个并发账号", task_id[:8], released)
+                except Exception as e:
+                    logger.warning("释放任务组多账号失败: %s", e)
             _release_task_account(task_id)
         # 归还浏览器实例到池中
         if _pool_mode and _browser_instance is not None:

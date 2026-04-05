@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from config import settings
-from crawler.checkpoint import save_checkpoint
+from crawler.checkpoint import save_checkpoint, save_checkpoint_sync
 
 
 @dataclass
@@ -114,7 +114,7 @@ def flush_reply_checkpoint(task_id: str) -> bool:
         if state is None:
             return False
 
-        save_checkpoint(
+        save_checkpoint_sync(
             task_id=task_id,
             keyword=state.keyword,
             product=state.product,

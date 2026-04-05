@@ -339,7 +339,6 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         get_browser_pool().resize(
             compute_pool_max_size(
                 settings.crawler_max_concurrent_tasks,
-                cross_platform=settings.crawler_cross_platform_concurrent,
             )
         )
     except Exception:

@@ -16,6 +16,7 @@ import { TaskBatchActions } from "@/components/features/tasks/TaskBatchActions";
 import { BatchExportDialog } from "@/components/features/tasks/BatchExportDialog";
 import { BatchReplyCollectionDialog } from "@/components/features/tasks/BatchReplyCollectionDialog";
 import { MergeTasksDialog } from "@/components/features/tasks/MergeTasksDialog";
+import { CommentBackfillGroupDialog } from "@/components/features/tasks/CommentBackfillGroupDialog";
 import { TaskFiltersBar } from "@/components/features/tasks/TaskFiltersBar";
 import { TaskListCard } from "@/components/features/tasks/TaskListCard";
 import { TaskPreviewDrawer, TaskPreviewPanel } from "@/components/features/tasks/TaskPreview";
@@ -41,6 +42,7 @@ export default function TasksPage() {
     const [showBatchExport, setShowBatchExport] = React.useState(false);
     const [showMergeTasks, setShowMergeTasks] = React.useState(false);
     const [showBatchReplyCollection, setShowBatchReplyCollection] = React.useState(false);
+    const [showCommentBackfillGroup, setShowCommentBackfillGroup] = React.useState(false);
 
     const {
         searchInputRef,
@@ -113,6 +115,12 @@ export default function TasksPage() {
     );
     const replyCollectionEditableCount = replyCollectionEditableSelectedTasks.length;
 
+    const groupableSelectedTasks = React.useMemo(
+        () => selectedTasks.filter((task) => task.task_kind === "comment_backfill"),
+        [selectedTasks],
+    );
+    const groupableSelectedCount = groupableSelectedTasks.length;
+
     const handleDelete = async (taskId: string) => {
         try {
             await api.tasks.delete(taskId);
@@ -127,11 +135,13 @@ export default function TasksPage() {
         }
     };
 
-    const handleResume = async (taskId: string) => {
+    const handleResume = async (taskId: string, options?: { concurrency?: number }) => {
         setResumingId(taskId);
         try {
-            await api.tasks.resume(taskId);
-            push({ type: "success", title: "任务已重新加入队列" });
+            const concurrency = options?.concurrency;
+            await api.tasks.resume(taskId, concurrency ? { concurrency } : undefined);
+            const suffix = concurrency && concurrency > 1 ? `（${concurrency} 路并发）` : "";
+            push({ type: "success", title: `任务已重新加入队列${suffix}` });
             await refetch();
         } catch (err) {
             console.error(err);
@@ -505,6 +515,7 @@ export default function TasksPage() {
                     backfillableSelectedCount={backfillableSelectedCount}
                     recrawlableSelectedCount={recrawlableSelectedCount}
                     mergeableSelectedCount={mergeableSelectedCount}
+                    groupableSelectedCount={groupableSelectedCount}
                     replyCollectionEditableCount={replyCollectionEditableCount}
                     hasActiveTasks={activeCount > 0}
                     allVisibleSelected={allVisibleSelected}
@@ -521,6 +532,7 @@ export default function TasksPage() {
                     onBatchDelete={() => setConfirmBatchDelete(true)}
                     onBatchReplyCollection={() => setShowBatchReplyCollection(true)}
                     onBatchMerge={() => setShowMergeTasks(true)}
+                    onBatchGroup={() => setShowCommentBackfillGroup(true)}
                 />
 
                 <div className={density === "mini" ? "" : "grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_380px] xl:items-start"}>
@@ -567,7 +579,7 @@ export default function TasksPage() {
                                         onHover={setActiveTaskId}
                                         onSelect={toggleSelectTask}
                                         onPreview={openPreview}
-                                        onResume={(taskId) => void handleResume(taskId)}
+                                        onResume={(taskId, opts) => void handleResume(taskId, opts)}
                                         onCommentBackfill={(taskId) => void handleCreateCommentBackfill([taskId], { openFirst: true })}
                                         onRecrawl={(taskId) => void handleRecrawl(taskId)}
                                         onDelete={setDeleteId}
@@ -585,7 +597,7 @@ export default function TasksPage() {
                                     resumingId={resumingId}
                                     backfillingId={backfillingId}
                                     recrawlingId={recrawlingId}
-                                    onResume={(taskId) => void handleResume(taskId)}
+                                    onResume={(taskId, opts) => void handleResume(taskId, opts)}
                                     onCommentBackfill={(taskId) => void handleCreateCommentBackfill([taskId], { openFirst: true })}
                                     onRecrawl={(taskId) => void handleRecrawl(taskId)}
                                     onDelete={setDeleteId}
@@ -659,13 +671,27 @@ export default function TasksPage() {
                 onError={(msg) => push({ type: "error", title: "合并任务失败", description: msg })}
             />
 
+            <CommentBackfillGroupDialog
+                open={showCommentBackfillGroup}
+                tasks={groupableSelectedTasks}
+                onClose={() => setShowCommentBackfillGroup(false)}
+                onSuccess={(groupTaskId, message) => {
+                    setShowCommentBackfillGroup(false);
+                    clearSelection();
+                    void refetch();
+                    push({ type: "success", title: "评论补采任务组已创建", description: message });
+                    router.push(`/tasks/${groupTaskId}`);
+                }}
+                onError={(message) => push({ type: "error", title: "创建任务组失败", description: message })}
+            />
+
             <TaskPreviewDrawer
                 task={previewTask}
                 resumingId={resumingId}
                 backfillingId={backfillingId}
                 recrawlingId={recrawlingId}
                 onClose={closePreview}
-                onResume={(taskId) => void handleResume(taskId)}
+                onResume={(taskId, opts) => void handleResume(taskId, opts)}
                 onCommentBackfill={(taskId) => void handleCreateCommentBackfill([taskId], { openFirst: true })}
                 onRecrawl={(taskId) => void handleRecrawl(taskId)}
                 onDelete={setDeleteId}

@@ -1,5 +1,6 @@
+import * as React from "react";
 import Link from "next/link";
-import { ExternalLink, Loader2, RefreshCcw, RotateCcw, Trash2, X } from "lucide-react";
+import { ExternalLink, Loader2, RefreshCcw, RotateCcw, Trash2, X, Zap } from "lucide-react";
 import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -33,7 +34,7 @@ function TaskPreviewBody({
     resumingId: string | null;
     backfillingId: string | null;
     recrawlingId: string | null;
-    onResume: (taskId: string) => void;
+    onResume: (taskId: string, options?: { concurrency?: number }) => void;
     onCommentBackfill: (taskId: string) => void;
     onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
@@ -46,6 +47,14 @@ function TaskPreviewBody({
     const backfillPercent = getCommentBackfillPercent(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
     const canRecrawl = canRecrawlTask(task);
+    const isGroup = task.task_kind === "comment_backfill_group";
+    const canResume = canResumeTask(task.status);
+    const [groupConcurrency, setGroupConcurrency] = React.useState(task.concurrency ?? 1);
+
+    // 当 task 变化时同步 concurrency
+    React.useEffect(() => {
+        setGroupConcurrency(task.concurrency ?? 1);
+    }, [task.task_id, task.concurrency]);
 
     return (
         <>
@@ -127,7 +136,39 @@ function TaskPreviewBody({
                         </Button>
                     </Link>
 
-                    {canResumeTask(task.status) ? (
+                    {canResume && isGroup ? (
+                        <div className="flex w-full flex-col gap-2 sm:w-auto">
+                            <div className="flex items-center gap-1.5">
+                                <Zap className="h-3 w-3 text-muted-foreground" />
+                                <span className="text-[11px] font-medium text-muted-foreground">并发</span>
+                                {[1, 2, 3, 4, 5].map((n) => (
+                                    <button
+                                        key={n}
+                                        type="button"
+                                        className={cn(
+                                            "flex h-6 w-7 items-center justify-center rounded-md border text-[11px] font-medium transition-colors",
+                                            groupConcurrency === n
+                                                ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                                                : "border-border bg-background text-muted-foreground hover:border-violet-500/50",
+                                        )}
+                                        onClick={() => setGroupConcurrency(n)}
+                                        disabled={resumingId === task.task_id}
+                                    >
+                                        {n}
+                                    </button>
+                                ))}
+                            </div>
+                            <Button
+                                variant="outline"
+                                className="w-full rounded-xl"
+                                disabled={resumingId === task.task_id}
+                                onClick={() => onResume(task.task_id, { concurrency: groupConcurrency })}
+                            >
+                                {resumingId === task.task_id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-1.5 h-4 w-4" />}
+                                {groupConcurrency > 1 ? `继续（${groupConcurrency} 路）` : "继续"}
+                            </Button>
+                        </div>
+                    ) : canResume ? (
                         <Button
                             variant="outline"
                             className="rounded-xl"
@@ -184,7 +225,7 @@ export function TaskPreviewPanel({
     resumingId: string | null;
     backfillingId: string | null;
     recrawlingId: string | null;
-    onResume: (taskId: string) => void;
+    onResume: (taskId: string, options?: { concurrency?: number }) => void;
     onCommentBackfill: (taskId: string) => void;
     onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
@@ -234,7 +275,7 @@ export function TaskPreviewDrawer({
     backfillingId: string | null;
     recrawlingId: string | null;
     onClose: () => void;
-    onResume: (taskId: string) => void;
+    onResume: (taskId: string, options?: { concurrency?: number }) => void;
     onCommentBackfill: (taskId: string) => void;
     onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;

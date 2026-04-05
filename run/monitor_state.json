@@ -1,6 +1,6 @@
 {
   "task_counts": {
-    "5ca34790-e558-4e1c-9c05-3c0096800bdd": 5407,
+    "5ca34790-e558-4e1c-9c05-3c0096800bdd": 5482,
     "42d13c42-10fb-4055-87bd-1d316c01966a": 1595,
     "9d7b18a6-9db0-4016-bb2d-8bf483da0771": 2042,
     "3bda78cc-7617-420a-80b9-455a1866e681": 1713,
@@ -74,13 +74,13 @@
     "42d13c42-10fb-4055-87bd-1d316c01966a": 15586,
     "9d7b18a6-9db0-4016-bb2d-8bf483da0771": 10363,
     "3bda78cc-7617-420a-80b9-455a1866e681": 14612,
-    "bb5bafa3-da4c-4535-bc73-d181a5f4a52f": 90362,
+    "bb5bafa3-da4c-4535-bc73-d181a5f4a52f": 90364,
     "95e596b0-176f-4b6f-9181-6cc4c7179306": 40461,
     "d6410a9d-dd02-4f51-8801-8265f836345f": 0,
-    "6834ddcf-b9fe-46aa-a9e0-60c4ccdca5b1": 6080,
+    "6834ddcf-b9fe-46aa-a9e0-60c4ccdca5b1": 6127,
     "bd58ad15-958f-4bc1-bf6d-252e24554fa2": 0,
-    "da3c1034-2b3e-402f-8a9e-a2345a707d48": 88749,
-    "a726c69a-303d-431d-8491-169eca29bc46": 37431,
+    "da3c1034-2b3e-402f-8a9e-a2345a707d48": 88754,
+    "a726c69a-303d-431d-8491-169eca29bc46": 37441,
     "1243872b-7c3a-4609-bfbf-25e95243fcf1": 0,
     "ce2d9f65-3c5c-49bc-a92a-2562fb21b8e9": 0,
     "14fe296a-def0-4dcd-b929-f4e80138f73e": 0,
@@ -93,8 +93,8 @@
     "87ac3c49-fd34-4dc0-bb3b-1aa5761178b6": 0,
     "53e6bf4f-4bc9-4204-be6a-0cb16ae3be0c": 0,
     "501562f7-2f08-493f-90fd-e088886039bd": 94,
-    "7296795d-0bc3-4230-ac1c-f4b4d2120b14": 16472,
-    "d2acb2c8-bd1f-469a-aa60-209c3803648c": 14673,
+    "7296795d-0bc3-4230-ac1c-f4b4d2120b14": 16482,
+    "d2acb2c8-bd1f-469a-aa60-209c3803648c": 14713,
     "fd6c942b-7f4b-4f50-abf8-4b93a2160b9c": 8,
     "ae580eb8-98e5-47b4-8de5-d65415076704": 18375,
     "8c1a85d3-cabb-4ca7-9a25-79fc3dea02a5": 13570,
@@ -141,7 +141,7 @@
   },
   "cooldowns": {},
   "comment_backfill_sources": [],
-  "last_run_at": "2026-04-05T06:06:22.762715+00:00",
+  "last_run_at": "2026-04-05T07:06:39.258851+00:00",
   "comment_backfill_task_state": {
     "42d13c42-10fb-4055-87bd-1d316c01966a": {
       "status": "done",
@@ -164,7 +164,7 @@
     "bb5bafa3-da4c-4535-bc73-d181a5f4a52f": {
       "status": "stopped",
       "processed_posts": 7883,
-      "replies_fetched": 90362,
+      "replies_fetched": 90364,
       "stale_runs": 0
     },
     "95e596b0-176f-4b6f-9181-6cc4c7179306": {
@@ -181,8 +181,8 @@
     },
     "6834ddcf-b9fe-46aa-a9e0-60c4ccdca5b1": {
       "status": "stopped",
-      "processed_posts": 95,
-      "replies_fetched": 6080,
+      "processed_posts": 96,
+      "replies_fetched": 6127,
       "stale_runs": 0
     },
     "bd58ad15-958f-4bc1-bf6d-252e24554fa2": {
@@ -193,129 +193,129 @@
     },
     "da3c1034-2b3e-402f-8a9e-a2345a707d48": {
       "status": "stopped",
-      "processed_posts": 5943,
-      "replies_fetched": 88749,
+      "processed_posts": 5944,
+      "replies_fetched": 88754,
       "stale_runs": 0
     },
     "a726c69a-303d-431d-8491-169eca29bc46": {
       "status": "stopped",
-      "processed_posts": 2318,
-      "replies_fetched": 37431,
+      "processed_posts": 2319,
+      "replies_fetched": 37441,
       "stale_runs": 0
     },
     "1243872b-7c3a-4609-bfbf-25e95243fcf1": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "ce2d9f65-3c5c-49bc-a92a-2562fb21b8e9": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "14fe296a-def0-4dcd-b929-f4e80138f73e": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "b300725a-1ac4-4f6f-959f-41e113d162e6": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "522b828f-4ad7-45b1-a561-532c45b8fd42": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "ef4b8fbb-27a8-40a2-bf43-44dc95fa5e24": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "75d3958a-70f5-4ded-8cda-2ac7ae4901d3": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "323f907e-421c-437a-9624-7026c1fb062c": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "6cbecd8c-390b-4354-ba6b-32db58a58ed1": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "87ac3c49-fd34-4dc0-bb3b-1aa5761178b6": {
       "status": "pending",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "53e6bf4f-4bc9-4204-be6a-0cb16ae3be0c": {
       "status": "running",
       "processed_posts": 0,
       "replies_fetched": 0,
-      "stale_runs": 0
+      "stale_runs": 2
     },
     "501562f7-2f08-493f-90fd-e088886039bd": {
       "status": "pending",
       "processed_posts": 12,
       "replies_fetched": 94,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "7296795d-0bc3-4230-ac1c-f4b4d2120b14": {
       "status": "running",
       "processed_posts": 463,
-      "replies_fetched": 16472,
-      "stale_runs": 0
+      "replies_fetched": 16482,
+      "stale_runs": 1
     },
     "d2acb2c8-bd1f-469a-aa60-209c3803648c": {
       "status": "running",
       "processed_posts": 212,
-      "replies_fetched": 14673,
+      "replies_fetched": 14713,
       "stale_runs": 1
     },
     "fd6c942b-7f4b-4f50-abf8-4b93a2160b9c": {
       "status": "pending",
       "processed_posts": 6,
       "replies_fetched": 8,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "ae580eb8-98e5-47b4-8de5-d65415076704": {
       "status": "running",
       "processed_posts": 42,
       "replies_fetched": 18375,
-      "stale_runs": 1
+      "stale_runs": 3
     },
     "8c1a85d3-cabb-4ca7-9a25-79fc3dea02a5": {
       "status": "pending",
       "processed_posts": 139,
       "replies_fetched": 13570,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "8094bea8-9bc4-4833-ad7c-9529fde96e9c": {
       "status": "pending",
       "processed_posts": 106,
       "replies_fetched": 10904,
-      "stale_runs": 21
+      "stale_runs": 23
     },
     "d90e663c-5880-44fc-914c-955cab556830": {
       "status": "pending",
       "processed_posts": 130,
       "replies_fetched": 15661,
-      "stale_runs": 21
+      "stale_runs": 23
     }
   }
 }

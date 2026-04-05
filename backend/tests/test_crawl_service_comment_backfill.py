@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 
 
 def test_comment_backfill_task_acquires_reply_browser_in_pool_mode(monkeypatch):
-    """pool 模式下，comment_backfill 任务应同时申请主浏览器实例和 aux 浏览器实例（供 pipeline nested_worker 使用）。"""
+    """pool 模式下，comment_backfill 任务应同时申请主浏览器实例和 aux 浏览器实例。"""
     from api.services import crawl_service
     from crawler.comment_backfill_runner import CommentBackfillResult
     import config
@@ -87,7 +87,9 @@ def test_comment_backfill_task_acquires_reply_browser_in_pool_mode(monkeypatch):
 
     assert captured["acquire"] == {"task_id": "task-comment-backfill", "platform": "x"}
     assert captured["browser_instance"] is browser_instance
-    # 优化后：补采任务不再申请额外 aux 浏览器（主实例在补采期间空闲，可复用）
-    assert len(dummy_pool.aux_calls) == 0
-    assert captured["reply_browser_instance"] is None
+    # 评论补采需要独立的辅助浏览器实例（避免 CDP 串行化）
+    assert dummy_pool.aux_calls == [
+        {"task_id": "task-comment-backfill", "purpose": "reply"}
+    ]
+    assert captured["reply_browser_instance"] is reply_browser_instance
     assert dummy_pool.release_calls == ["task-comment-backfill"]

@@ -108,7 +108,7 @@ def test_crawler_config_router_round_trips_cloudflare_wait_seconds(monkeypatch):
 
     monkeypatch.setattr(
         "crawler.browser_pool.compute_pool_max_size",
-        lambda max_tasks, cross_platform: max_tasks if not cross_platform else max_tasks * 2,
+        lambda max_tasks=None: max_tasks if max_tasks is not None else 1,
     )
     monkeypatch.setattr("crawler.browser_pool.get_browser_pool", lambda: _DummyPool())
 

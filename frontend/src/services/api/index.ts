@@ -3,7 +3,7 @@ export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "/xapi").replace
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "paused" | "stopped";
 export type Platform = "x" | "weibo";
 export type CrawlStrategy = "bfs" | "dfs";
-export type TaskKind = "search" | "comment_backfill";
+export type TaskKind = "search" | "comment_backfill" | "comment_backfill_group";
 export type RiskState = "none" | "challenge" | "rate_limited" | "login_required" | "search_blocked";
 export type QualityState = "complete" | "partial" | "interrupted";
 
@@ -45,6 +45,8 @@ export interface TaskOut {
     task_kind?: TaskKind;
     source_file_name?: string | null;
     source_task_id?: string | null;
+    source_task_ids?: string[] | null;
+    concurrency?: number;
     exclude_count?: number;
     queue_id?: string | null;
     queue_name?: string | null;
@@ -181,6 +183,25 @@ export interface BatchUpdateReplyCollectionResponse {
         task_id: string;
         reason: string;
     }>;
+}
+
+// 评论补采任务组
+export interface CommentBackfillGroupSourceSummary {
+    source_task_id: string;
+    source_keyword: string;
+    platform: string;
+    task_status: string;
+    post_count: number;
+    status: "included" | "skipped";
+    reason: string;
+}
+
+export interface CommentBackfillGroupResponse {
+    group_task_id: string;
+    group_task: TaskOut;
+    total_posts: number;
+    source_count: number;
+    sources: CommentBackfillGroupSourceSummary[];
 }
 
 // 导出预估
@@ -760,6 +781,23 @@ export const api = {
                     queue_name: params.queueName,
                 }),
             }),
+        createGroup: (params: {
+            sourceTaskIds: string[];
+            replyDepth?: number;
+            maxRepliesPerTweet?: number;
+            groupName?: string;
+            concurrency?: number;
+        }) =>
+            fetchApi<CommentBackfillGroupResponse>("/api/v1/comment-backfill/group", {
+                method: "POST",
+                body: JSON.stringify({
+                    source_task_ids: params.sourceTaskIds,
+                    reply_depth: params.replyDepth ?? 2,
+                    max_replies_per_tweet: params.maxRepliesPerTweet ?? 0,
+                    group_name: params.groupName,
+                    concurrency: params.concurrency ?? 1,
+                }),
+            }),
     },
     taskQueues: {
         create: (data: TaskQueueCreateRequest) =>
@@ -784,10 +822,20 @@ export const api = {
             fetchApi<{ message: string }>(`/api/v1/tasks/${taskId}`, { method: "DELETE" }),
         pause: (taskId: string) =>
             fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/pause`, { method: "POST" }),
-        resume: (taskId: string) =>
-            fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/resume`, { method: "POST" }),
+        resume: (taskId: string, options?: { concurrency?: number }) =>
+            fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/resume`, {
+                method: "POST",
+                ...(options?.concurrency != null
+                    ? { body: JSON.stringify({ concurrency: options.concurrency }) }
+                    : {}),
+            }),
         stop: (taskId: string) =>
             fetchApi<{ message: string; status: string }>(`/api/v1/tasks/${taskId}/stop`, { method: "POST" }),
+        updateConcurrency: (taskId: string, concurrency: number) =>
+            fetchApi<{ message: string; task_id: string; concurrency: number }>(`/api/v1/tasks/${taskId}/concurrency`, {
+                method: "PATCH",
+                body: JSON.stringify({ concurrency }),
+            }),
         pauseAll: () =>
             fetchApi<{
                 message: string;

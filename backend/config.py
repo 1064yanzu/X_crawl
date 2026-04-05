@@ -88,16 +88,16 @@ class Settings(BaseSettings):
 
     # 爬虫配置
     crawler_timeout: float = Field(
-        default=45.0, description="等待数据包超时时间（秒），适当加大以减少误判"
+        default=30.0, description="等待数据包超时时间（秒），适当余量减少误判"
     )
     crawler_page_interval: float = Field(
-        default=5.0, description="翻页操作间隔（秒），适当放慢避免触发反爬"
+        default=3.0, description="翻页操作间隔（秒），适当放慢避免触发反爬"
     )
     crawler_initial_wait: float = Field(
-        default=3.0, description="页面首次访问后额外等待时间（秒），确保初始内容完全加载"
+        default=2.0, description="页面首次访问后额外等待时间（秒），确保初始内容完全加载"
     )
     crawler_reply_wait: float = Field(
-        default=4.0, description="评论区每次翻页后额外等待时间（秒），确保评论内容完全加载"
+        default=3.0, description="评论区每次翻页后额外等待时间（秒），确保评论内容完全加载"
     )
     crawler_preview_count: int = Field(
         default=10, description="实时数据预览展示的最大条数，避免前端性能问题"
@@ -112,19 +112,22 @@ class Settings(BaseSettings):
         default=5, description="检测到风控挑战页时自动重试次数（含 Cloudflare 验证等待）"
     )
     crawler_challenge_cooldown: float = Field(
-        default=8.0, description="挑战页重试前冷却时间（秒）"
+        default=5.0, description="挑战页重试前冷却时间（秒）"
     )
     crawler_cloudflare_wait_seconds: float = Field(
-        default=30.0, description="检测到 Cloudflare 验证时每次等待时长（秒）"
+        default=20.0, description="检测到 Cloudflare 验证时每次等待时长（秒）"
     )
     crawler_error_freeze_threshold: int = Field(
         default=15, description="连续错误页累计次数达到此阈值后触发长时间冻结"
     )
     crawler_error_freeze_seconds: float = Field(
-        default=180.0, description="连续错误触发冻结后的休眠时长（秒），默认 3 分钟"
+        default=60.0, description="连续错误触发冻结后的休眠时长（秒），默认 1 分钟"
     )
     crawler_max_concurrent_tasks: int = Field(
         default=1, description="允许并发运行的任务数上限（1 表示串行）"
+    )
+    comment_backfill_group_max_concurrency: int = Field(
+        default=3, description="评论补采任务组内最大并发 Pipeline 数（受可用账号数约束）"
     )
     scheduler_backend: str = Field(
         default="memory", description="任务调度后端：memory/redis（当前 redis 为预留）"
@@ -133,10 +136,10 @@ class Settings(BaseSettings):
         default=True, description="是否启用自适应等待区间（对翻页间隔做上下限约束）"
     )
     crawler_page_interval_min: float = Field(
-        default=2.5, description="翻页间隔下限（秒），自适应等待启用时生效"
+        default=1.5, description="翻页间隔下限（秒），自适应等待启用时生效"
     )
     crawler_page_interval_max: float = Field(
-        default=8.0, description="翻页间隔上限（秒），自适应等待启用时生效"
+        default=6.0, description="翻页间隔上限（秒），自适应等待启用时生效"
     )
     crawler_interrupt_poll_ms: int = Field(
         default=300, description="中断可响应睡眠的轮询粒度（毫秒）"

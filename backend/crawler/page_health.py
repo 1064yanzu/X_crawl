@@ -38,10 +38,10 @@ _error_lock = threading.Lock()
 
 # 连续错误次数 → 额外冷却秒数（递增缓冲，给 X 服务端恢复时间）
 _COOLDOWN_TIERS = [
-    (3, 5.0),    # 连续 3 次错误后额外等 5 秒
-    (5, 10.0),   # 连续 5 次后等 10 秒
-    (8, 20.0),   # 连续 8 次后等 20 秒
-    (12, 40.0),  # 连续 12 次后等 40 秒
+    (3, 3.0),    # 连续 3 次错误后额外等 3 秒
+    (5, 6.0),    # 连续 5 次后等 6 秒
+    (8, 12.0),   # 连续 8 次后等 12 秒
+    (12, 25.0),  # 连续 12 次后等 25 秒
     # freeze 阈值由 settings.crawler_error_freeze_threshold 控制，在 _record_error 中处理
 ]
 
@@ -164,7 +164,7 @@ def navigate_with_retry(
     *,
     max_retries: int = 3,
     base_wait: float = 3.0,
-    load_timeout: float = 30.0,
+    load_timeout: float = 15.0,
     post_load_wait: float = 0.0,
     challenge_retry_times: int = 2,
     challenge_cooldown: float = 8.0,
@@ -205,7 +205,7 @@ def navigate_with_retry(
                 sleep_with_jitter(wait)
                 tab.refresh()
                 # 等待刷新后页面加载
-                interruptible_sleep(1.6, task_id=task_id)
+                interruptible_sleep(0.3, task_id=task_id)
 
             state, reason = detect_page_state(tab)
 
@@ -257,7 +257,7 @@ def navigate_with_retry(
                 bump_metric(task_id, "splash_hits")
                 from config import settings
                 # 每次 splash 等待时间：逐步递增，给 SPA 更多时间加载
-                splash_wait = min(5.0 * splash_hits, 20.0)
+                splash_wait = min(3.0 * splash_hits, 12.0)
                 logger.warning(
                     f"{log_prefix}检测到 X 黑屏启动画面 (hit={splash_hits})，"
                     f"等待 {splash_wait:.0f}s 后重试..."
@@ -275,7 +275,7 @@ def navigate_with_retry(
                 logger.info(f"{log_prefix}等待后页面仍为黑屏，执行刷新 (hit={splash_hits})")
                 try:
                     tab.refresh()
-                    interruptible_sleep(3.0, task_id=task_id)
+                    interruptible_sleep(1.5, task_id=task_id)
                 except Exception:
                     pass
                 # 刷新后重检
@@ -376,7 +376,7 @@ def navigate_with_retry(
                     # 刷新页面重新尝试
                     try:
                         tab.refresh()
-                        interruptible_sleep(2.0, task_id=task_id)
+                        interruptible_sleep(1.2, task_id=task_id)
                     except Exception:
                         pass
                     continue

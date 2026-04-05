@@ -286,6 +286,27 @@ def _get_task_result_snapshot(task_id: str, *, load: bool = False) -> list[dict]
         return copy.deepcopy(_task_results.get(task_id, []))
 
 
+def _get_task_result_ref(task_id: str, *, load: bool = False) -> list[dict]:
+    """获取推文列表的零拷贝引用（用于评论补采等内部写入场景）。
+
+    调用方直接操作返回的列表和对象，避免对 8000+ 条含嵌套回复树的推文
+    做 copy.deepcopy（该操作可能耗时数分钟）。
+    """
+    with _tasks_lock:
+        if task_id in _loaded_task_results:
+            return _task_results.get(task_id, [])
+
+    if not load:
+        return []
+
+    tweets = _get_db().load_task_result(task_id)
+    with _tasks_lock:
+        if task_id not in _loaded_task_results:
+            _task_results[task_id] = tweets
+            _loaded_task_results.add(task_id)
+        return _task_results.get(task_id, [])
+
+
 def _get_task_summary_snapshot(task_id: str) -> Optional[dict]:
     with _tasks_lock:
         task = _tasks.get(task_id)
@@ -347,6 +368,7 @@ def _ensure_db() -> None:
                 task.setdefault("task_kind", "search")
                 task.setdefault("source_file_name", None)
                 task.setdefault("source_task_id", None)
+                task.setdefault("source_task_ids", [])
                 task.setdefault("is_recrawl", False)
                 task.setdefault("exclude_count", 0)
                 task.setdefault("exclude_tweet_ids", [])
@@ -571,6 +593,8 @@ def create_task(
     queue_total: Optional[int] = None,
     comment_backfill_progress: Optional[dict] = None,
     exclude_tweet_ids: Optional[list[str]] = None,
+    source_task_ids: Optional[list[str]] = None,
+    concurrency: int = 1,
 ) -> str:
     _ensure_db()
     from crawler import telemetry
@@ -606,6 +630,7 @@ def create_task(
             "task_kind": task_kind,
             "source_file_name": source_file_name,
             "source_task_id": source_task_id,
+            "source_task_ids": source_task_ids or [],
             "is_recrawl": is_recrawl,
             "queue_id": queue_id,
             "queue_name": queue_name,
@@ -621,6 +646,7 @@ def create_task(
             "crawl_phase": "已加入调度队列，等待执行...",
             "exclude_tweet_ids": exclude_tweet_ids or [],
             "exclude_count": len(exclude_tweet_ids) if exclude_tweet_ids else 0,
+            "concurrency": concurrency,
         }
     send_signal(tid, "run")
     telemetry.init_task(tid, status="pending", phase="已加入调度队列，等待执行...")
@@ -864,12 +890,34 @@ def get_export_estimate(task_ids: list[str]) -> dict:
     }
 
 
+def update_task_field(task_id: str, field: str, value) -> bool:
+    """更新内存中 task dict 的单个字段，并持久化到 DB。"""
+    _ensure_db()
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return False
+        task[field] = value
+    _persist_force(task_id, full=False)
+    return True
+
+
 def get_task_full(task_id: str) -> Optional[dict]:
     _ensure_db()
     from api.services.task_watchdog import maybe_heal_stale_active_tasks
 
     maybe_heal_stale_active_tasks()
     return _build_task_view(task_id, include_tweets=True)
+
+
+def get_task_tweets_ref(task_id: str) -> list[dict]:
+    """获取推文列表的零拷贝引用（评论补采专用）。
+
+    直接返回内存中的原始列表引用，跳过 deepcopy 和 watchdog 检查。
+    对于 8000+ 条含嵌套回复树的推文，比 get_task_full 快几个数量级。
+    """
+    _ensure_db()
+    return _get_task_result_ref(task_id, load=True)
 
 
 def list_tasks(*, include_payload: bool = False) -> list[dict]:

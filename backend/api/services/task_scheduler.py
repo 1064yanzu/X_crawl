@@ -213,14 +213,14 @@ class TaskScheduler:
                 # ── 批量取出所有待调度任务，一次性分发，避免串行阻塞 ──
                 batch: list[ScheduledTask] = []
                 while True:
-                    item = self._backend.get(timeout=0.5 if not batch else 0.01)
+                    item = self._backend.get(timeout=0.2 if not batch else 0.01)
                     if item is None:
                         break
                     batch.append(item)
 
                 if not batch:
                     if not dispatched_from_pending:
-                        time.sleep(0.1)
+                        time.sleep(0.05)
                     continue
 
                 for item in batch:

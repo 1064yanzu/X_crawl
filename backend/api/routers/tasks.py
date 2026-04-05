@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from api.schemas.task import (
     TaskOut,
+    TaskResumeRequest,
     MergePreviewRequest,
     MergePreviewResponse,
     MergeRequest,
@@ -457,13 +458,20 @@ async def pause_task(task_id: str) -> dict:
         "若爬虫线程已死（浏览器被关闭等），会自动重启爬虫线程。"
     ),
 )
-async def resume_task(task_id: str) -> dict:
+async def resume_task(task_id: str, body: TaskResumeRequest | None = None) -> dict:
     """继续指定任务（支持已暂停和已结束的任务）。
     并发模式下，如果该任务属于队列，会自动恢复同队列其他暂停/停止的任务。
+    可通过 body.concurrency 动态修改并发数（仅 comment_backfill_group 任务生效）。
     """
     task = task_manager.get_task_summary(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+
+    # 动态修改并发数
+    if body and body.concurrency is not None:
+        task_kind = task.get("task_kind", "search")
+        if task_kind == "comment_backfill_group":
+            task_manager.update_task_field(task_id, "concurrency", body.concurrency)
 
     status = task["status"]
     can_resume, reason, needs_queue = task_queue_manager.can_resume_task(task_id)
@@ -769,6 +777,33 @@ async def batch_resume_tasks(req: BatchResumeRequest) -> dict:
         "already_running": already_running_ids,
         "skipped": skipped_ids,
         "failed": failed_ids,
+    }
+
+
+@router.patch(
+    "/{task_id}/concurrency",
+    summary="修改任务并发数",
+    description=(
+        "动态修改评论补采任务组的并发 Pipeline 数。\n\n"
+        "- 仅对 `task_kind=comment_backfill_group` 的任务生效\n"
+        "- 任何状态下均可修改，下次启动/恢复时按新值分配资源\n"
+        "- 取值范围 1~10，受系统可用账号数限制"
+    ),
+)
+async def update_task_concurrency(task_id: str, body: TaskResumeRequest) -> dict:
+    """修改评论补采任务组的并发数"""
+    task = task_manager.get_task_summary(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
+    if task.get("task_kind") != "comment_backfill_group":
+        raise HTTPException(status_code=400, detail="仅评论补采任务组支持修改并发数")
+    if body.concurrency is None:
+        raise HTTPException(status_code=400, detail="请提供 concurrency 参数")
+    task_manager.update_task_field(task_id, "concurrency", body.concurrency)
+    return {
+        "message": f"并发数已更新为 {body.concurrency}",
+        "task_id": task_id,
+        "concurrency": body.concurrency,
     }
 
 

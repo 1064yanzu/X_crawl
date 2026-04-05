@@ -141,7 +141,6 @@ async def resize_pool(req: ResizeRequest) -> ResizeResponse:
     settings.crawler_max_concurrent_tasks = req.max_size
     effective_pool_size = compute_pool_max_size(
         req.max_size,
-        cross_platform=settings.crawler_cross_platform_concurrent,
     )
 
     # 2. 更新池大小

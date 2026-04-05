@@ -186,7 +186,7 @@ def _open_post_page_with_retry(
     page_url: str,
     task_id: Optional[str],
     phase_callback=None,
-) -> bool:
+) -> tuple[bool, str | None]:
     """打开微博帖子详情页，命中浏览器 HTTP 418 错误页时执行长冷却后重试。"""
     from config import settings
     from crawler.utils import interruptible_sleep
@@ -194,12 +194,25 @@ def _open_post_page_with_retry(
 
     max_attempts = 3
     for attempt in range(max_attempts):
-        tab.get(page_url, timeout=20)
+        try:
+            tab.get(page_url, timeout=20)
+        except Exception as e:
+            logger.warning(
+                "评论页打开异常（attempt=%s/%s, mid_task=%s）: %s",
+                attempt + 1,
+                max_attempts,
+                (task_id or "-")[:8],
+                e,
+            )
+            if attempt >= max_attempts - 1:
+                return False, "navigation_timeout"
+            interruptible_sleep(min(2.0 * (attempt + 1), 6.0), task_id=task_id)
+            continue
         interruptible_sleep(random.uniform(2.0, 3.5), task_id=task_id)
         if not detect_weibo_http_418(tab):
-            return True
+            return True, None
         if attempt >= max_attempts - 1:
-            return False
+            return False, "http_418_cooldown_exhausted"
         wait_weibo_http_418_cooldown(
             task_id=task_id,
             cooldown_seconds=float(
@@ -208,7 +221,7 @@ def _open_post_page_with_retry(
             context="评论页",
             phase_callback=phase_callback,
         )
-    return False
+    return False, "navigation_timeout"
 
 
 def _parse_packet_body(packet) -> Optional[dict]:
@@ -363,15 +376,20 @@ def fetch_comments(
     try:
         # ─── 阶段 1：访问帖子页面 + 网络拦截首批评论 ────────────────
         tab.listen.start(COMMENT_API_PATTERN)
-        opened = _open_post_page_with_retry(
+        opened, open_reason = _open_post_page_with_retry(
             tab,
             page_url=page_url,
             task_id=task_id,
             phase_callback=_update_phase,
         )
         if not opened:
-            logger.warning(f"评论抓取：帖子页面连续命中 HTTP 418，mid={mid}")
-            return WeiboCommentFetchResult(truncated_reason="http_418_cooldown_exhausted")
+            if open_reason == "http_418_cooldown_exhausted":
+                logger.warning(f"评论抓取：帖子页面连续命中 HTTP 418，mid={mid}")
+            else:
+                logger.warning(f"评论抓取：帖子页面连续打开失败，mid={mid}, reason={open_reason}")
+            return WeiboCommentFetchResult(
+                truncated_reason=open_reason or "navigation_timeout"
+            )
 
         # 检查重定向
         current_url = tab.url or ""

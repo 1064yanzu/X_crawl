@@ -246,6 +246,73 @@ class AccountDispatcher:
 
             return status
 
+    def assign_multiple_accounts(self, task_id: str, count: int) -> list[AccountEntry]:
+        """
+        为一个逻辑任务分配最多 count 个账号。
+
+        使用合成 sub-task ID（{task_id}__w0, {task_id}__w1, ...）注册到
+        _account_tasks 映射中，保持 account_id → task_key 的 1:1 不变量。
+
+        返回：
+            list[AccountEntry]: 成功分配的账号列表（可能少于 count）
+        """
+        results: list[AccountEntry] = []
+        with self._lock:
+            pool = get_pool()
+            accounts = self._list_accounts(pool)
+            if not accounts:
+                return results
+
+            available = [
+                acc for acc in accounts
+                if acc.enabled
+                and not acc.is_rate_limited
+                and acc.account_id not in self._account_tasks
+            ]
+
+            for i in range(min(count, len(available))):
+                selected = available[i]
+                sub_key = f"{task_id}__w{i}"
+                self._account_tasks[selected.account_id] = sub_key
+                self._assignments[sub_key] = AccountAssignment(
+                    account_id=selected.account_id,
+                    account_alias=selected.alias,
+                    task_id=sub_key,
+                    assigned_at=time.time(),
+                )
+                results.append(selected)
+                logger.info(
+                    "为任务组 %s 分配账号 [worker %d] %s (%s)",
+                    task_id[:8], i, selected.alias, selected.account_id[:8],
+                )
+        return results
+
+    def release_multiple_accounts(self, task_id: str) -> int:
+        """
+        释放任务组的所有合成分配（匹配 {task_id}__w* 前缀）。
+
+        返回：
+            int: 成功释放的账号数
+        """
+        released = 0
+        prefix = f"{task_id}__w"
+        with self._lock:
+            sub_keys = [k for k in self._assignments if k.startswith(prefix)]
+            for sub_key in sub_keys:
+                assignment = self._assignments[sub_key]
+                if not assignment.is_active:
+                    continue
+                account_id = assignment.account_id
+                assignment.released_at = time.time()
+                if account_id in self._account_tasks:
+                    del self._account_tasks[account_id]
+                released += 1
+                logger.info(
+                    "释放任务组账号 %s (%s)，使用时长 %.1fs",
+                    assignment.account_alias, account_id[:8], assignment.duration_sec,
+                )
+        return released
+
     def set_strategy(self, strategy: str) -> None:
         """设置分配策略"""
         if strategy not in ("round_robin", "least_used"):

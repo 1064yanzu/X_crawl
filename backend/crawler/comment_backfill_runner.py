@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -28,11 +27,16 @@ def run_comment_backfill_task(
     browser_instance=None,
     reply_browser_instance=None,
 ) -> CommentBackfillResult:
-    task = task_manager.get_task_full(task_id)
-    if not task:
-        raise RuntimeError(f"任务不存在: {task_id}")
-
-    tweets = _resolve_comment_backfill_tweets(task_id=task_id, task=task)
+    # 零拷贝加载推文列表，避免对 8000+ 条含嵌套回复树的推文做 deepcopy（耗时数分钟）
+    tweets = task_manager.get_task_tweets_ref(task_id)
+    if not tweets:
+        # 尝试从源任务回源
+        task = task_manager.get_task_full(task_id)
+        if not task:
+            raise RuntimeError(f"任务不存在: {task_id}")
+        tweets = _resolve_comment_backfill_tweets(task_id=task_id, task=task)
+    if not tweets:
+        raise RuntimeError("评论补采任务没有可处理的帖子")
     if not tweets:
         raise RuntimeError("评论补采任务没有可处理的帖子")
 
@@ -52,8 +56,123 @@ def run_comment_backfill_task(
     )
 
 
+def run_comment_backfill_group_task(
+    *,
+    task_id: str,
+    max_replies_per_tweet: int,
+    reply_depth: int,
+    browser_instance=None,
+    reply_browser_instance=None,
+    nested_browser_instance=None,
+    source_task_ids: Optional[list[str]] = None,
+    worker_resources: Optional[list] = None,
+) -> CommentBackfillResult:
+    """
+    评论补采任务组执行入口。
+
+    从任务记录中读取 source_task_ids，加载并合并所有源任务的待补采帖子，
+    然后用完全解耦的双浏览器（L1 = reply_browser_instance，L2 = nested_browser_instance）
+    运行 CrawlPipeline，实现最高的爬取效率。
+
+    当 worker_resources 包含多个元素时，启动并行协调器（多 Pipeline 并发）。
+
+    Args:
+        task_id:                  任务组 ID（comment_backfill_group 类型）
+        max_replies_per_tweet:    每条推文最多抓取回复数
+        reply_depth:              评论深度（1=仅一级，2=含二级）
+        browser_instance:         主浏览器实例（仅用于 fallback）
+        reply_browser_instance:   L1 专用浏览器（一级评论 worker 使用）
+        nested_browser_instance:  L2 专用浏览器（二级评论 worker 使用，完全独立 Chrome 进程）
+        source_task_ids:          外部直传的源任务 ID 列表
+        worker_resources:         并发模式的资源列表（每个元素包含独立浏览器+账号）
+    """
+    from api.services.comment_backfill_group_service import load_and_merge_group_posts
+
+    task = task_manager.get_task_full(task_id)
+    if not task:
+        raise RuntimeError(f"任务组不存在: {task_id}")
+
+    # ── 断点续跑：先尝试从任务已有数据中加载（无需 source_task_ids） ──
+    tweets = task_manager.get_task_tweets_ref(task_id)
+    if tweets:
+        logger.info(
+            "任务组断点续跑: task_id=%s, 已有帖子=%d，跳过源任务合并",
+            task_id, len(tweets),
+        )
+    else:
+        # ── 首次执行：需要从源任务合并帖子 ──
+        resolved_source_ids = list(source_task_ids) if source_task_ids else list(task.get("source_task_ids") or [])
+        if not resolved_source_ids:
+            logger.error(
+                "任务组 source_task_ids 为空: task_id=%s, 外部传入=%r, task.source_task_ids=%r",
+                task_id, source_task_ids, task.get("source_task_ids"),
+            )
+            raise RuntimeError("任务组没有配置源任务 ID（source_task_ids 为空）")
+
+        task_manager.update_task_phase(task_id, "正在合并所有源任务的帖子...")
+        merge_result = load_and_merge_group_posts(resolved_source_ids)
+        if not merge_result.tweets:
+            raise RuntimeError("任务组合并后没有待补采的帖子（所有源任务帖子均已完成或评论数为 0）")
+        task_manager.set_task_seed_tweets(task_id, merge_result.tweets, current_page=0)
+        task_manager.update_comment_backfill_progress(
+            task_id,
+            {
+                "total_posts": merge_result.total_posts,
+                "eligible_posts": merge_result.total_posts,
+                "processed_posts": 0,
+                "skipped_posts": 0,
+                "succeeded_posts": 0,
+                "failed_posts": 0,
+            },
+        )
+        tweets = task_manager.get_task_tweets_ref(task_id)
+        logger.info(
+            "任务组帖子合并完成: task_id=%s, 源任务=%d, 合并帖子=%d, 预期评论=%d",
+            task_id,
+            len(resolved_source_ids),
+            merge_result.total_posts,
+            merge_result.total_expected_replies,
+        )
+
+    # ── 并发模式：多 Pipeline 并行处理 ──
+    if worker_resources and len(worker_resources) > 1:
+        from crawler.parallel_backfill_coordinator import ParallelBackfillCoordinator
+
+        logger.info(
+            "任务组启用并行模式: task_id=%s, pipelines=%d",
+            task_id[:8], len(worker_resources),
+        )
+        coordinator = ParallelBackfillCoordinator(
+            task_id=task_id,
+            tweets=tweets,
+            worker_resources=worker_resources,
+            max_replies_per_tweet=max_replies_per_tweet,
+            reply_depth=reply_depth,
+        )
+        par_result = coordinator.run()
+        return CommentBackfillResult(
+            tweets=par_result.tweets,
+            replies_fetched=par_result.replies_fetched,
+            failed_records=par_result.failed_records,
+            progress=par_result.progress,
+        )
+
+    # ── 单 Pipeline 模式（concurrency=1 或旧任务 resume） ──
+    return _run_x_comment_backfill(
+        task_id=task_id,
+        tweets=tweets,
+        max_replies_per_tweet=max_replies_per_tweet,
+        reply_depth=reply_depth,
+        browser_instance=browser_instance,
+        reply_browser_instance=reply_browser_instance,
+        nested_browser_instance=nested_browser_instance,
+        # 任务组使用更多并行 Worker 提升吞吐
+        reply_worker_count=3,
+    )
+
+
 def _resolve_comment_backfill_tweets(*, task_id: str, task: dict) -> list[dict]:
-    tweets = copy.deepcopy(task.get("tweets") or [])
+    tweets = task.get("tweets") or []
     if tweets:
         return tweets
 
@@ -74,7 +193,7 @@ def _resolve_comment_backfill_tweets(*, task_id: str, task: dict) -> list[dict]:
     except HTTPException as exc:
         raise RuntimeError(f"评论补采源任务不可用于回源补采: {exc.detail}") from exc
 
-    source_tweets = copy.deepcopy(analysis.tweets)
+    source_tweets = analysis.tweets
     if source_tweets:
         logger.info(
             "评论补采任务回源原始任务成功: task_id=%s, source_task_id=%s, posts=%s",
@@ -156,6 +275,8 @@ def _run_x_comment_backfill(
     reply_depth: int,
     browser_instance=None,
     reply_browser_instance=None,
+    nested_browser_instance=None,
+    reply_worker_count: int = 2,
 ) -> CommentBackfillResult:
     from config import settings
     from crawler.pipeline import CrawlPipeline
@@ -167,13 +288,8 @@ def _run_x_comment_backfill(
     tweet_index: dict[str, dict] = {}
     counted_ids = _processed_ids(tweets)
     processed_count = baseline["processed_posts"]
-    working_tweets = _sort_tweets_by_reply_count(copy.deepcopy(tweets))
+    working_tweets = _sort_tweets_by_reply_count(tweets)
     logger.info("评论补采推文已按评论数降序排列: task_id=%s, 总计 %d 条", task_id, len(working_tweets))
-    previous_reply_totals = {
-        str(tweet.get("id") or ""): _count_reply_tree(tweet.get("replies") or [])
-        for tweet in tweets
-        if tweet.get("id")
-    }
 
     tweets_for_fetch = []
     for tweet in working_tweets:
@@ -193,8 +309,7 @@ def _run_x_comment_backfill(
         if tweet_id not in counted_ids:
             counted_ids.add(tweet_id)
             processed_count += 1
-        delta_replies = max(0, _count_reply_tree(replies) - previous_reply_totals.get(tweet_id, 0))
-        previous_reply_totals[tweet_id] = _count_reply_tree(replies)
+        delta_replies = len(replies)
         task_manager.update_task_phase(
             task_id,
             f"正在补采 X 评论（已处理 {processed_count}/{len(working_tweets)} 条）...",
@@ -210,10 +325,14 @@ def _run_x_comment_backfill(
         )
         task_manager.update_preview_tweets(task_id, processed_count, working_tweets)
 
-    # ── Pipeline 解耦模式：reply_worker（一级）和 nested_worker（二级）并行 ──
-    # 补采模式下可使用多个 reply_worker 并行抓取（没有搜索翻页，主实例可用）
-    # reply_worker_count: 并行 reply worker 数（每个各自持有独立 tab）
-    reply_worker_count = 2  # 补采默认 2 个并行 worker
+    # ── Pipeline 解耦模式：reply_worker（一级）和 nested_worker（二级）完全并行 ──
+    # - reply_browser_instance: L1 workers 专用（独立 Chrome 进程）
+    # - nested_browser_instance: L2 worker 专用（与 L1 完全隔离，消除 CDP 竞争）
+    # - reply_worker_count: 任务组模式传入 3，普通补采传入 2
+    task_manager.update_task_phase(
+        task_id,
+        f"正在启动评论抓取引擎（共 {len(tweets_for_fetch)} 条帖子待处理）...",
+    )
     pipeline = CrawlPipeline(
         task_id=task_id,
         timeout=settings.crawler_timeout,
@@ -221,6 +340,7 @@ def _run_x_comment_backfill(
         reply_depth=reply_depth,
         browser_instance=browser_instance,
         reply_browser_instance=reply_browser_instance,
+        nested_browser_instance=nested_browser_instance,
         on_reply_done=_on_reply_done,
         reply_worker_count=reply_worker_count,
     )
@@ -268,7 +388,7 @@ def _run_weibo_comment_backfill(
     total = len(tweets)
     failed_records: list[dict] = []
     counted_ids = _processed_ids(tweets)
-    working_tweets = _sort_tweets_by_reply_count(copy.deepcopy(tweets))
+    working_tweets = _sort_tweets_by_reply_count(tweets)
     logger.info("微博评论补采推文已按评论数降序排列: task_id=%s, 总计 %d 条", task_id, len(working_tweets))
     task_manager.update_task_phase(task_id, "正在准备微博评论补采任务...")
     task_manager.update_comment_backfill_progress(task_id, _compute_backfill_progress(working_tweets))

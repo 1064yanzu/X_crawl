@@ -1,6 +1,6 @@
 import * as React from "react";
 import Link from "next/link";
-import { Eye, ExternalLink, Loader2, MessageCircleMore, RefreshCcw, RotateCcw, Trash2 } from "lucide-react";
+import { Eye, ExternalLink, Loader2, MessageCircleMore, RefreshCcw, RotateCcw, Trash2, Zap } from "lucide-react";
 import type { TaskOut } from "@/services/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -39,7 +39,7 @@ export function TaskListCard({
     onHover: (taskId: string) => void;
     onSelect: (taskId: string, checked: boolean) => void;
     onPreview: (taskId: string) => void;
-    onResume: (taskId: string) => void;
+    onResume: (taskId: string, options?: { concurrency?: number }) => void;
     onCommentBackfill: (taskId: string) => void;
     onRecrawl: (taskId: string) => void;
     onDelete: (taskId: string) => void;
@@ -138,6 +138,9 @@ function TaskListCardComfortable({
     const queueLabel = getTaskQueueLabel(task);
     const canBackfill = canCreateCommentBackfillFromTask(task);
     const showRecrawl = canRecrawlTask(task);
+    const isGroup = task.task_kind === "comment_backfill_group";
+    const canResume = canResumeTask(task.status);
+    const [groupConcurrency, setGroupConcurrency] = React.useState(task.concurrency ?? 1);
 
     return (
         <Card
@@ -243,7 +246,42 @@ function TaskListCardComfortable({
                                 </Button>
                             ) : null}
 
-                            {canResumeTask(task.status) ? (
+                            {canResume && isGroup ? (
+                                <div className="col-span-full space-y-2">
+                                    <div className="flex items-center gap-1.5">
+                                        <Zap className="h-3 w-3 text-muted-foreground" />
+                                        <span className="text-[11px] font-medium text-muted-foreground">并发数</span>
+                                        <div className="flex items-center gap-1">
+                                            {[1, 2, 3, 4, 5].map((n) => (
+                                                <button
+                                                    key={n}
+                                                    type="button"
+                                                    className={cn(
+                                                        "flex h-6 w-7 items-center justify-center rounded-md border text-[11px] font-medium transition-colors",
+                                                        groupConcurrency === n
+                                                            ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+                                                            : "border-border bg-background text-muted-foreground hover:border-violet-500/50",
+                                                    )}
+                                                    onClick={() => setGroupConcurrency(n)}
+                                                    disabled={resumingId === task.task_id || busyAction !== null}
+                                                >
+                                                    {n}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="w-full justify-start rounded-xl"
+                                        disabled={resumingId === task.task_id || busyAction !== null}
+                                        onClick={() => onResume(task.task_id, { concurrency: groupConcurrency })}
+                                    >
+                                        {resumingId === task.task_id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />}
+                                        {groupConcurrency > 1 ? `继续（${groupConcurrency} 路并发）` : "继续"}
+                                    </Button>
+                                </div>
+                            ) : canResume ? (
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -412,8 +450,8 @@ function TaskListCardCompact({
                             size="icon"
                             className="h-7 w-7 rounded-lg"
                             disabled={resumingId === task.task_id || busyAction !== null}
-                            onClick={() => onResume(task.task_id)}
-                            title="继续"
+                            onClick={() => onResume(task.task_id, task.task_kind === "comment_backfill_group" ? { concurrency: task.concurrency ?? 1 } : undefined)}
+                            title={task.task_kind === "comment_backfill_group" ? `继续（${task.concurrency ?? 1} 路并发）` : "继续"}
                         >
                             {resumingId === task.task_id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
                         </Button>
@@ -529,7 +567,7 @@ function TaskListCardMini({
                     <Eye className="h-3 w-3" />
                 </Button>
                 {canResumeTask(task.status) ? (
-                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" disabled={resumingId === task.task_id || busyAction !== null} onClick={() => onResume(task.task_id)} title="继续">
+                    <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" disabled={resumingId === task.task_id || busyAction !== null} onClick={() => onResume(task.task_id, task.task_kind === "comment_backfill_group" ? { concurrency: task.concurrency ?? 1 } : undefined)} title="继续">
                         {resumingId === task.task_id ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCcw className="h-3 w-3" />}
                     </Button>
                 ) : null}

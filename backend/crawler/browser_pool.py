@@ -64,20 +64,16 @@ def compute_pool_max_size(
     """
     计算浏览器池应有的实际槽位上限。
 
-    `crawler_max_concurrent_tasks` 表示单个平台可同时运行的任务数。
-    开启跨平台并发后，X 和微博会各自占满该额度，因此浏览器池需要为
-    总任务数预留容量，避免不同平台被迫共享同一个浏览器实例。
+    浏览器池大小严格等于 `crawler_max_concurrent_tasks`，不因跨平台并发
+    而翻倍。不同平台的任务通过 slot 共享机制复用同一个浏览器实例，
+    避免进程数膨胀导致资源浪费。
     """
-    if max_per_platform is None or cross_platform is None:
+    if max_per_platform is None:
         from config import settings
 
-        if max_per_platform is None:
-            max_per_platform = settings.crawler_max_concurrent_tasks
-        if cross_platform is None:
-            cross_platform = bool(getattr(settings, "crawler_cross_platform_concurrent", True))
+        max_per_platform = settings.crawler_max_concurrent_tasks
 
-    configured = max(1, int(max_per_platform))
-    return configured * 2 if cross_platform else configured
+    return max(1, int(max_per_platform))
 
 
 def _extract_flag_value(cmdline: list[str], flag: str) -> Optional[str]:
@@ -225,9 +221,22 @@ class BrowserInstance:
 
     @property
     def is_alive(self) -> bool:
+        """检测浏览器进程是否存活。
+
+        通过 psutil 检查进程是否存在（快速且不依赖 CDP），
+        避免在 CDP 繁忙时误判为断连。仅当进程确实不存在时才返回 False。
+        """
         if self._browser is None:
             return False
         try:
+            # 优先通过进程 ID 检查（不走 CDP，不受 tab 繁忙影响）
+            pid = getattr(self._browser, "process_id", None)
+            if pid and psutil:
+                try:
+                    return psutil.pid_exists(pid)
+                except Exception:
+                    pass
+            # fallback: CDP 探测
             _ = self._browser.latest_tab
             return True
         except Exception:

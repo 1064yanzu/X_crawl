@@ -162,11 +162,13 @@ def test_browser_instance_resets_profile_dir_before_launch(tmp_path, monkeypatch
     assert not (profile / "Preferences").exists()
 
 
-def test_compute_pool_max_size_doubles_for_cross_platform_concurrency():
+def test_compute_pool_max_size_equals_max_concurrent_tasks():
     from crawler.browser_pool import compute_pool_max_size
 
-    assert compute_pool_max_size(3, cross_platform=True) == 6
-    assert compute_pool_max_size(3, cross_platform=False) == 3
+    # 浏览器池大小始终等于 max_concurrent_tasks，不因跨平台翻倍
+    assert compute_pool_max_size(3) == 3
+    assert compute_pool_max_size(5) == 5
+    assert compute_pool_max_size(1) == 1
 
 
 def test_browser_instance_profile_dir_is_process_scoped():
@@ -178,13 +180,13 @@ def test_browser_instance_profile_dir_is_process_scoped():
     assert inst.profile_dir.endswith("instance-3")
 
 
-def test_is_pool_mode_enabled_when_cross_platform_single_task_enabled(monkeypatch):
+def test_is_pool_mode_enabled_based_on_max_concurrent_tasks(monkeypatch):
     import config
     from crawler import browser_pool
 
+    # pool_mode 仅由 max_concurrent_tasks 决定，cross_platform 不影响
     monkeypatch.setattr(config.settings, "crawler_max_concurrent_tasks", 1, raising=False)
-    monkeypatch.setattr(config.settings, "crawler_cross_platform_concurrent", True, raising=False)
-    assert browser_pool.is_pool_mode_enabled() is True
-
-    monkeypatch.setattr(config.settings, "crawler_cross_platform_concurrent", False, raising=False)
     assert browser_pool.is_pool_mode_enabled() is False
+
+    monkeypatch.setattr(config.settings, "crawler_max_concurrent_tasks", 2, raising=False)
+    assert browser_pool.is_pool_mode_enabled() is True

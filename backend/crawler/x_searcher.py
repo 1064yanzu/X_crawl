@@ -23,7 +23,7 @@ from crawler.auth import (
 )
 from crawler.cookie_manager import load_cookies
 from crawler.parser import parse_search_response
-from crawler.checkpoint import save_checkpoint, load_checkpoint, delete_checkpoint
+from crawler.checkpoint import save_checkpoint, save_checkpoint_sync, load_checkpoint, delete_checkpoint
 from crawler.checkpoint_buffer import (
     stage_reply_checkpoint,
     flush_reply_checkpoint,
@@ -850,9 +850,12 @@ def search(
         tweets_so_far: list[dict],
         next_cursor: Optional[str],
         page_fetched_to_save: int,
+        *,
+        sync: bool = False,
     ) -> None:
         extra = _build_checkpoint_extra(tweets_so_far)
-        save_checkpoint(
+        _save = save_checkpoint_sync if sync else save_checkpoint
+        _save(
             task_id=task_id,
             keyword=_search_keyword,
             product=_search_product,
@@ -1320,7 +1323,9 @@ def search(
                 # ── 模拟人类阅读：慢慢浏览本页推文 ────────────────────
                 # 当 DFS 回复抓取启用时跳过模拟阅读，回复抓取本身已提供足够的自然延迟
                 # 复爬模式也跳过模拟阅读，全速推进
-                if new_tweets and not fetch_replies and not _recrawl_mode:
+                # 并发模式（pool_mode）也跳过：动态间隔已充分控制速率
+                _pool_mode_active = browser_instance is not None
+                if new_tweets and not fetch_replies and not _recrawl_mode and not _pool_mode_active:
                     simulate_reading(tab, task_id=task_id, tweet_count=len(new_tweets))
 
                 # ── 每批新推文立即抓取回复（统一 DFS / Pipeline 策略） ──────
@@ -1461,27 +1466,31 @@ def search(
                     break
                 # ── 休息节律（大幅缩减，仅保留必要的反风控节奏） ──────────
                 # 复爬模式全速推进：跳过所有休息节律
+                # 并发模式（pool_mode）下也跳过：多任务并行时每个任务各自独占账号，
+                # 动态间隔已充分控制速率，额外休息只会拖慢整体吞吐
+                _pool_mode_active = browser_instance is not None
                 if (
                     getattr(settings, "crawler_enable_break_rhythm", True)
                     and new_tweets
                     and not _recrawl_mode
+                    and not _pool_mode_active
                 ):
                     _total_fetched_now = len(all_tweets)
-                    # 微休息（2% 概率，3-6 秒）
-                    if random.random() < 0.02:
-                        _micro_wait = random.uniform(3, 6)
+                    # 微休息（1% 概率，1-2 秒）
+                    if random.random() < 0.01:
+                        _micro_wait = random.uniform(1, 2)
                         logger.info(f"微休息 {_micro_wait:.0f}s...")
                         if task_id:
                             _update_phase(f"微休息中 ({_micro_wait:.0f}s)，稍后继续...")
                         interruptible_sleep(_micro_wait, task_id=task_id)
-                    # 小憩（每 1000 条推文，15-30 秒）
+                    # 小憩（每 2000 条推文，5-10 秒）
                     _short_n = max(
-                        1000, getattr(settings, "crawler_short_break_every_n", 500) * 2
+                        2000, getattr(settings, "crawler_short_break_every_n", 500) * 4
                     )
                     if _short_n > 0 and _total_fetched_now > 0:
                         prev_count = _total_fetched_now - len(new_tweets)
                         if prev_count // _short_n < _total_fetched_now // _short_n:
-                            _short_wait = random.uniform(15, 30)
+                            _short_wait = random.uniform(5, 10)
                             logger.info(
                                 f"小憩 {_short_wait:.0f}s（累计 {_total_fetched_now} 条）..."
                             )
@@ -1490,22 +1499,22 @@ def search(
                                     f"小憩中 ({_short_wait:.0f}s)，稍后继续..."
                                 )
                             interruptible_sleep(_short_wait, task_id=task_id)
-                    # 长休息（每 4 小时，2-4 分钟）
+                    # 长休息（每 6 小时，30-60 秒）
                     _rest_h = max(
-                        4.0,
-                        getattr(settings, "crawler_long_rest_interval_hours", 2.0) * 2,
+                        6.0,
+                        getattr(settings, "crawler_long_rest_interval_hours", 4.0) * 1.5,
                     )
                     _rest_interval = _rest_h * 3600 * random.uniform(0.90, 1.10)
                     _now_mono = time.monotonic()
                     _last_rest = max(_crawl_start_time, _long_rest_done_at)
                     if _now_mono - _last_rest >= _rest_interval:
-                        _long_wait = random.uniform(120, 240)
+                        _long_wait = random.uniform(30, 60)
                         logger.info(
-                            f"长休息 {_long_wait / 60:.0f}min（运行 {(_now_mono - _crawl_start_time) / 3600:.1f}h）..."
+                            f"长休息 {_long_wait:.0f}s（运行 {(_now_mono - _crawl_start_time) / 3600:.1f}h）..."
                         )
                         if task_id:
                             _update_phase(
-                                f"长休息中 ({_long_wait / 60:.0f}min)，稍后继续..."
+                                f"长休息中 ({_long_wait:.0f}s)，稍后继续..."
                             )
                         interruptible_sleep(_long_wait, task_id=task_id)
                         _long_rest_done_at = time.monotonic()
@@ -1626,7 +1635,7 @@ def search(
         # ── 安全兜底：无论何种原因退出，都尝试保存已采集数据 ──
         if task_id and all_tweets:
             try:
-                _save_search_checkpoint(all_tweets, _last_bottom_cursor, page_num)
+                _save_search_checkpoint(all_tweets, _last_bottom_cursor, page_num, sync=True)
                 _update_progress(page_num, list(all_tweets))
                 logger.info(
                     f"安全兜底保存: {len(all_tweets)} 条推文已持久化"
@@ -1764,9 +1773,9 @@ def _navigate_direct(
         )
         try:
             tab.get("https://x.com/home", timeout=25)
-            sleep_with_jitter(1.0, jitter_ratio=0.15, minimum=0.5)
+            sleep_with_jitter(0.5, jitter_ratio=0.15, minimum=0.3)
             tab.get("https://x.com/explore", timeout=25)
-            sleep_with_jitter(1.0, jitter_ratio=0.15, minimum=0.5)
+            sleep_with_jitter(0.5, jitter_ratio=0.15, minimum=0.3)
         except Exception as warmup_err:
             logger.warning(f"搜索预热路径失败（忽略，继续最终重试）: {warmup_err}")
 

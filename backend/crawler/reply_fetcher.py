@@ -417,7 +417,16 @@ def _try_inject_pool_account_cookies(tab, task_id: Optional[str], browser_instan
 
 
 def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance=None) -> None:
-    """抓评论前确保当前 tab 已处于可用登录态。支持 TTL 缓存避免重复检查。"""
+    """抓评论前确保当前 tab 已处于可用登录态。
+
+    浏览器池模式下，cookie 已通过 browser_instance.set_cookies() 预注入，
+    new_tab() 创建时自动继承。直接跳过一切登录检测和 cookie 注入，零延迟。
+    """
+    # 浏览器池模式：cookie 已通过 new_tab() 自动继承，完全跳过
+    if browser_instance is not None:
+        _mark_login_cached(tab)
+        return
+
     # TTL 内跳过重复检查
     if _is_login_cached(tab):
         return
@@ -536,14 +545,38 @@ def fetch_replies(
             tab,
             tweet_url,
             max_retries=policy.refresh_max_retries,
-            base_wait=3.0,
-            load_timeout=30.0,
+            base_wait=1.0,
+            load_timeout=12.0,
             post_load_wait=0.0,
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
             task_id=task_id,
         )
+        # 初始导航失败（全页 "Something went wrong"）→ 先换账号重试，而非直接放弃
+        if not ok and _reply_account_switches < _REPLY_MAX_ACCOUNT_SWITCHES:
+            switched = _try_inject_pool_account_cookies(tab, task_id, browser_instance=browser_instance)
+            if switched:
+                _reply_account_switches += 1
+                _invalidate_login_cache(tab)
+                bump_metric(task_id, "navigate_error_account_switches")
+                logger.info(
+                    f"推文详情页初始导航失败，已切换账号（第 {_reply_account_switches} 次），"
+                    f"重新尝试 tweet_id={tweet_id}"
+                )
+                _safe_stop_listener(tab)
+                tab.listen.start(TWEET_DETAIL_PATTERN)
+                ok = navigate_with_retry(
+                    tab,
+                    tweet_url,
+                    max_retries=2,
+                    base_wait=2.0,
+                    load_timeout=15.0,
+                    challenge_retry_times=policy.challenge_retry_times,
+                    challenge_cooldown=policy.challenge_cooldown,
+                    raise_on_risk=True,
+                    task_id=task_id,
+                )
         if not ok:
             logger.error(f"推文详情页反复出现错误，跳过 tweet_id={tweet_id}")
             failure = {
@@ -551,7 +584,7 @@ def fetch_replies(
                 "screen_name": screen_name,
                 "expected_count": expected_count,
                 "fetched_count": 0,
-                "error_reason": "推文详情页反复加载失败",
+                "error_reason": "推文详情页反复加载失败（已尝试切换账号）",
             }
             return [], failure
 
@@ -599,7 +632,7 @@ def fetch_replies(
                         navigate_with_retry(
                             tab, tweet_url,
                             max_retries=policy.refresh_max_retries,
-                            base_wait=3.0, load_timeout=30.0,
+                            base_wait=3.0, load_timeout=15.0,
                             challenge_retry_times=policy.challenge_retry_times,
                             challenge_cooldown=policy.challenge_cooldown,
                             task_id=task_id,
@@ -1043,13 +1076,13 @@ def fetch_replies_batch(
                 pass
 
         # 礼貌性间隔：基于 tweet_detail 动态间隔，多账号时自动缩短
-        # 页面导航+加载本身已占 3-4s，仅需补足最小安全间隔差值
+        # 页面导航+加载本身已占 3-5s，仅需补足最小安全间隔差值
         from crawler.account_pool import compute_dynamic_interval
         _rate_mult_reply = get_tracker().get_sleep_multiplier("tweet_detail", task_id=task_id)
         _min_r, _max_r, _ = compute_dynamic_interval("tweet_detail")
-        _nav_latency_compensation = 5.0  # 导航+页面加载+首次包等待实际消耗
+        _nav_latency_compensation = 10.0  # 导航+页面加载+包等待实际消耗
         _target_interval = random.uniform(_min_r, _max_r) * _rate_mult_reply
-        _actual_sleep = max(0.3, _target_interval - _nav_latency_compensation)
+        _actual_sleep = max(0.2, _target_interval - _nav_latency_compensation)
         interruptible_sleep(_actual_sleep, task_id=task_id)
 
     # ── 清理 batch 级共享 tab ──────────────────────────────────────

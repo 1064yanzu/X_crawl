@@ -1,4 +1,4 @@
-import { Copy, Download, Loader2, MessageCircleMore, PauseCircle, PlayCircle, RefreshCcw, RotateCcw, Settings2, Trash2 } from "lucide-react";
+import { Copy, Download, Layers, Loader2, MessageCircleMore, PauseCircle, PlayCircle, RefreshCcw, RotateCcw, Settings2, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function TaskBatchActions({
@@ -10,6 +10,7 @@ export function TaskBatchActions({
     backfillableSelectedCount,
     recrawlableSelectedCount,
     mergeableSelectedCount,
+    groupableSelectedCount,
     replyCollectionEditableCount,
     hasActiveTasks,
     allVisibleSelected,
@@ -25,6 +26,7 @@ export function TaskBatchActions({
     onBatchExport,
     onBatchDelete,
     onBatchMerge,
+    onBatchGroup,
     onBatchReplyCollection,
 }: {
     searchedCount: number;
@@ -35,6 +37,7 @@ export function TaskBatchActions({
     backfillableSelectedCount: number;
     recrawlableSelectedCount: number;
     mergeableSelectedCount: number;
+    groupableSelectedCount: number;
     replyCollectionEditableCount: number;
     hasActiveTasks: boolean;
     allVisibleSelected: boolean;
@@ -50,6 +53,7 @@ export function TaskBatchActions({
     onBatchExport: () => void;
     onBatchDelete: () => void;
     onBatchMerge: () => void;
+    onBatchGroup: () => void;
     onBatchReplyCollection: () => void;
 }) {
     if (searchedCount === 0) return null;
@@ -60,7 +64,7 @@ export function TaskBatchActions({
                 <div>
                     <h2 className="text-lg font-semibold text-foreground">批量操作</h2>
                     <p className="text-sm text-muted-foreground">
-                        当前筛出 {searchedCount} 个任务，已选择 {selectedCount} 个；其中可导出 {exportableSelectedCount} 个，可暂停 {pausableSelectedCount} 个，可继续 {resumableSelectedCount} 个，可补采评论 {backfillableSelectedCount} 个，可复爬 {recrawlableSelectedCount} 个，可切换采评模式 {replyCollectionEditableCount} 个，可合并 {mergeableSelectedCount} 个。
+                        当前筛出 {searchedCount} 个任务，已选择 {selectedCount} 个；其中可导出 {exportableSelectedCount} 个，可暂停 {pausableSelectedCount} 个，可继续 {resumableSelectedCount} 个，可补采评论 {backfillableSelectedCount} 个，可复爬 {recrawlableSelectedCount} 个，可切换采评模式 {replyCollectionEditableCount} 个，可合并 {mergeableSelectedCount} 个，可组建任务组 {groupableSelectedCount} 个。
                     </p>
                 </div>
 
@@ -158,6 +162,15 @@ export function TaskBatchActions({
                     >
                         {busyAction === "merge" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
                         批量合并
+                    </Button>
+                    <Button
+                        variant="outline"
+                        className="rounded-xl border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-500/30 dark:text-violet-300 dark:hover:bg-violet-500/10"
+                        onClick={onBatchGroup}
+                        disabled={groupableSelectedCount < 2 || busyAction !== null}
+                    >
+                        <Layers className="mr-1.5 h-3.5 w-3.5" />
+                        合并为任务组（{groupableSelectedCount}）
                     </Button>
                     <Button
                         variant="outline"

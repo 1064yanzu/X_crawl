@@ -27,12 +27,12 @@ def human_like_scroll(
     tab,
     *,
     task_id: Optional[str] = None,
-    min_step_px: int = 200,
-    max_step_px: int = 500,
-    min_pause: float = 0.15,
-    max_pause: float = 0.45,
+    min_step_px: int = 300,
+    max_step_px: int = 600,
+    min_pause: float = 0.08,
+    max_pause: float = 0.25,
     steps: int = 0,
-    scroll_back_chance: float = 0.05,
+    scroll_back_chance: float = 0.03,
     scroll_back_px_range: tuple[int, int] = (50, 120),
     finish_at_bottom: bool = True,
 ) -> None:
@@ -44,25 +44,25 @@ def human_like_scroll(
     Args:
         tab:                DrissionPage 标签页
         task_id:            任务 ID（用于中断响应）
-        min_step_px:        每步最小滚动像素（优化后 200）
-        max_step_px:        每步最大滚动像素（优化后 500）
-        min_pause:          步间最小停顿（秒，优化后 0.15）
-        max_pause:          步间最大停顿（秒，优化后 0.45）
-        steps:              滚动步数（0 = 自动 2~3 步）
-        scroll_back_chance: 随机回滚概率（优化后 5%）
+        min_step_px:        每步最小滚动像素（优化后 300）
+        max_step_px:        每步最大滚动像素（优化后 600）
+        min_pause:          步间最小停顿（秒，优化后 0.08）
+        max_pause:          步间最大停顿（秒，优化后 0.25）
+        steps:              滚动步数（0 = 自动 1~2 步）
+        scroll_back_chance: 随机回滚概率（优化后 3%）
         scroll_back_px_range: 回滚像素范围
         finish_at_bottom:   最后是否滚到底部确保触发懒加载（默认开启）
     """
     if steps <= 0:
-        steps = random.randint(2, 3)
+        steps = random.randint(1, 2)
 
     for i in range(steps):
         px = random.randint(min_step_px, max_step_px)
         safe_scroll_down(tab, px, task_id=task_id)
 
         # 短停顿为主，极少长停顿
-        if random.random() < 0.04:
-            pause = random.uniform(0.4, 0.8)  # 4% 概率稍长停顿
+        if random.random() < 0.03:
+            pause = random.uniform(0.2, 0.5)  # 3% 概率稍长停顿
         else:
             pause = random.uniform(min_pause, max_pause)
         interruptible_sleep(pause, task_id=task_id)

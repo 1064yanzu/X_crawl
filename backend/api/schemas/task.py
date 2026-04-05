@@ -8,7 +8,7 @@ TaskStatus = Literal["pending", "running", "done", "failed", "paused", "stopped"
 CrawlStrategy = Literal["bfs", "dfs"]
 RiskState = Literal["none", "challenge", "rate_limited", "login_required", "search_blocked"]
 QualityState = Literal["complete", "partial", "interrupted"]
-TaskKind = Literal["search", "comment_backfill"]
+TaskKind = Literal["search", "comment_backfill", "comment_backfill_group"]
 
 
 class SearchRequest(BaseModel):
@@ -93,9 +93,11 @@ class TaskOut(BaseModel):
     max_replies_per_tweet: int = Field(default=20)
     reply_depth: int = Field(default=2, description="评论抓取深度")
     replies_fetched: int = Field(default=0, description="已抓取的总回复数")
-    task_kind: TaskKind = Field(default="search", description="任务类型：search/comment_backfill")
+    task_kind: TaskKind = Field(default="search", description="任务类型：search/comment_backfill/comment_backfill_group")
     source_file_name: Optional[str] = Field(default=None, description="评论补采任务的来源文件名")
     source_task_id: Optional[str] = Field(default=None, description="评论补采任务的源帖子任务 ID（从历史任务创建时有值）")
+    source_task_ids: Optional[list[str]] = Field(default=None, description="评论补采任务组的源任务 ID 列表")
+    concurrency: int = Field(default=1, description="并发 Pipeline 数（仅 comment_backfill_group 有效）")
     exclude_count: int = Field(default=0, description="复爬任务排除的原始推文数（即原始任务的推文总量）")
     queue_id: Optional[str] = Field(default=None, description="所属任务队列 ID")
     queue_name: Optional[str] = Field(default=None, description="所属任务队列名称")
@@ -190,3 +192,43 @@ class BatchUpdateReplyCollectionResponse(BaseModel):
     mode: ReplyCollectionMode
     updated_task_ids: list[str]
     skipped: list[BatchUpdateReplyCollectionSkippedItem]
+
+
+# ── 评论补采任务组 ──
+
+
+class CommentBackfillGroupRequest(BaseModel):
+    """将多个评论补采任务合并为一个大任务组的请求"""
+    source_task_ids: list[str] = Field(
+        description="要合并的评论补采任务 ID 列表（comment_backfill 类型）",
+        min_length=1,
+    )
+    max_replies_per_tweet: int = Field(default=0, description="每条推文最多抓取回复数（0=无限制）")
+    reply_depth: int = Field(default=2, ge=1, le=5, description="评论抓取深度（1=一级，2=含二级）")
+    group_name: Optional[str] = Field(default=None, description="任务组名称（留空则自动生成）")
+    concurrency: int = Field(default=1, ge=1, le=10, description="并发 Pipeline 数（每个使用独立浏览器和账号）")
+
+
+class TaskResumeRequest(BaseModel):
+    """恢复任务时的可选参数"""
+    concurrency: Optional[int] = Field(default=None, ge=1, le=10, description="修改并发 Pipeline 数（仅对 comment_backfill_group 生效）")
+
+
+class CommentBackfillGroupSourceSummary(BaseModel):
+    """单个源任务在任务组创建中的处理结果"""
+    source_task_id: str
+    source_keyword: str = ""
+    platform: str = "x"
+    task_status: str = ""
+    post_count: int = 0
+    status: str  # "included" | "skipped"
+    reason: str = ""
+
+
+class CommentBackfillGroupResponse(BaseModel):
+    """任务组创建结果"""
+    group_task_id: str
+    group_task: "TaskOut"
+    total_posts: int = Field(description="合并后去重帖子总数")
+    source_count: int = Field(description="来源任务数")
+    sources: list[CommentBackfillGroupSourceSummary]

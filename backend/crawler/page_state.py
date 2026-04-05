@@ -110,6 +110,23 @@ def _normalize_url(tab) -> str:
         return ""
 
 
+def _is_tweet_detail_with_content(tab, url: str, text: str) -> bool:
+    """判断当前是否为已加载主体内容的推文/搜索详情页。
+
+    推文详情页和搜索页上的评论区或局部组件可能显示"出错了/Something went wrong"，
+    但页面主体（推文正文、用户名、搜索结果）已正常加载。
+    此函数通过 URL 模式 + 页面内容长度来识别这种场景，防止误判为全页错误。
+    """
+    # 推文详情页: /user/status/xxx
+    # 搜索结果页: /search?q=xxx
+    is_detail_url = "/status/" in url or "/search" in url
+    if not is_detail_url:
+        return False
+    # 全页错误通常文本极短（<500字符），只有错误提示和几个按钮
+    # 正常的推文详情页/搜索页有推文内容、用户名、时间戳等，文本远超 500 字符
+    return len(text) > 500
+
+
 # JS 未执行空壳页检测的可见文本长度阈值
 # X.com 是纯 SPA，正常渲染后可见文本至少几百字符；
 # 若去掉 noscript/script/style 后文本极短，说明 JS 根本没执行
@@ -184,6 +201,11 @@ def detect_page_state(tab) -> tuple[PageState, str]:
         return PageState.RATE_LIMITED, "命中限流特征"
 
     if any(marker in text for marker in _TRANSIENT_ERROR_MARKERS):
+        # 推文详情页上评论区的局部错误（"出错了/Something went wrong"）不应判为全页错误。
+        # 区分方法：推文详情页 URL 含 /status/ 且页面含有实质内容（推文正文/用户名等），
+        # 说明主体内容已加载，只有评论区组件出错。
+        if _is_tweet_detail_with_content(tab, url, text):
+            return PageState.OK, "推文详情页主体正常，评论区局部错误已忽略"
         return PageState.TRANSIENT_ERROR, "命中临时错误页特征"
 
     if any(marker in text for marker in _LOGIN_MARKERS_STRONG):
@@ -347,7 +369,7 @@ def click_reply_retry_button(tab) -> bool:
                 if btn:
                     _retry_logger.info(f"评论区 Retry 按钮 selector={selector!r}，点击")
                     btn.click()
-                    _time.sleep(0.8)
+                    _time.sleep(0.5)
                     return True
             except Exception:
                 continue
@@ -360,7 +382,7 @@ def click_reply_retry_button(tab) -> bool:
                     if btn_text in {"retry", "try again", "重试", "再试一次", "重新加载"}:
                         _retry_logger.info(f"评论区 Retry 按钮 text={btn_text!r}，点击")
                         btn.click()
-                        _time.sleep(0.8)
+                        _time.sleep(0.5)
                         return True
                 except Exception:
                     continue
@@ -421,7 +443,7 @@ def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, 
                 return False, False
 
             # 点击后等待页面响应
-            _time.sleep(1.2)
+            _time.sleep(0.8)
 
             # 检测页面是否已恢复
             new_state, _ = detect_page_state(tab)
@@ -433,7 +455,7 @@ def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, 
 
             # 未恢复，等待后再试
             if attempt < max_attempts - 1:
-                _time.sleep(1.2)
+                _time.sleep(0.8)
                 text = _normalize_visible_text(tab)
                 if not any(marker in text for marker in _RETRY_PAGE_MARKERS):
                     new_state, _ = detect_page_state(tab)

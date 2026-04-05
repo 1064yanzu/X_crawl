@@ -38,6 +38,7 @@ export default function TaskResultPage() {
     const { push } = useToast();
     const [liveControlState, setLiveControlState] = React.useState<"pause" | "resume" | "stop" | null>(null);
     const [backfilling, setBackfilling] = React.useState(false);
+    const [savingConcurrency, setSavingConcurrency] = React.useState(false);
     const { stream, task, isLoading, refetch, latestActionEvent } = useTaskLiveData(id, liveControlState);
     const { exporting, controlling, confirmStop, setConfirmStop, handleExport, handleControl } = useTaskControls(
         task,
@@ -68,6 +69,20 @@ export default function TaskResultPage() {
         if (!element) return;
         element.scrollIntoView({ behavior: "smooth", block: "start" });
     }, []);
+
+    const handleConcurrencyChange = React.useCallback(async (n: number) => {
+        if (!task) return;
+        setSavingConcurrency(true);
+        try {
+            await api.tasks.updateConcurrency(task.task_id, n);
+            await refetch();
+            push({ type: "success", title: `并发数已更新为 ${n}` });
+        } catch (err) {
+            push({ type: "error", title: "修改并发数失败", description: err instanceof Error ? err.message : String(err) });
+        } finally {
+            setSavingConcurrency(false);
+        }
+    }, [push, refetch, task]);
 
     const handleCreateCommentBackfill = React.useCallback(async () => {
         if (!task) return;
@@ -153,6 +168,8 @@ export default function TaskResultPage() {
                 onResume={() => void handleControl("resume")}
                 onStop={() => setConfirmStop(true)}
                 onExport={(format) => void handleExport(format)}
+                savingConcurrency={savingConcurrency}
+                onConcurrencyChange={handleConcurrencyChange}
             />
 
             <TaskDetailOverview

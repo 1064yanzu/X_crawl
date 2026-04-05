@@ -86,13 +86,13 @@ def soft_recover_for_packet(tab, attempt: int) -> None:
         from crawler.page_state import click_retry_button_if_present
         clicked = click_retry_button_if_present(tab)
         if clicked:
-            time.sleep(1.5)
+            time.sleep(0.8)
             return
     except Exception:
         pass
 
-    wait = backoff_seconds(attempt, base=0.5, cap=2.5)
-    sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.3)
+    wait = backoff_seconds(attempt, base=0.3, cap=2.0)
+    sleep_with_jitter(wait, jitter_ratio=0.2, minimum=0.2)
     try:
         tab.scroll.down(280)
     except Exception:

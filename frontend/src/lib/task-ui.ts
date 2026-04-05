@@ -79,8 +79,13 @@ export function getTaskLastUpdated(task: Pick<TaskOut, "last_event_at" | "finish
     return task.last_event_at ?? task.finished_at ?? task.created_at;
 }
 
-export function getTaskKindLabel(task: Pick<TaskOut, "task_kind">) {
-    return task.task_kind === "comment_backfill" ? "评论补采" : "帖子采集";
+export function getTaskKindLabel(task: Pick<TaskOut, "task_kind" | "concurrency">) {
+    if (task.task_kind === "comment_backfill_group") {
+        const c = task.concurrency ?? 1;
+        return c > 1 ? `评论补采组(${c}路)` : "评论补采组";
+    }
+    if (task.task_kind === "comment_backfill") return "评论补采";
+    return "帖子采集";
 }
 
 export function canCreateCommentBackfillFromTask(
