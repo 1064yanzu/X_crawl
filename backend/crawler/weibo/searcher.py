@@ -640,8 +640,12 @@ def search(
                     )
 
                     if is_tab_dead and retry < MAX_PAGE_RETRIES:
-                        # Tab 崩溃 / 连接断开：重建 tab
+                        # Tab 崩溃 / 连接断开：先关闭旧 tab 再重建，防止 tab 泄漏
                         logger.info("检测到 Tab 崩溃/断开连接，正在重建...")
+                        try:
+                            tab.close()
+                        except Exception:
+                            pass
                         try:
                             tab = _rebuild_weibo_tab(browser_instance=browser_instance)
                         except Exception as e:
@@ -656,6 +660,10 @@ def search(
                             context="搜索页",
                             phase_callback=(lambda msg: update_task_phase(task_id, msg)) if task_id else None,
                         )
+                        try:
+                            tab.close()
+                        except Exception:
+                            pass
                         try:
                             tab = _rebuild_weibo_tab(browser_instance=browser_instance)
                         except Exception as e:
@@ -677,6 +685,10 @@ def search(
                         "连接已断开", "disconnected", "connection lost", "target closed",
                     )):
                         logger.info("页面最终失败且连接已断开，尝试重建 Tab...")
+                        try:
+                            tab.close()
+                        except Exception:
+                            pass
                         try:
                             tab = _rebuild_weibo_tab(browser_instance=browser_instance)
                             logger.info("Tab 重建成功，继续搜索")

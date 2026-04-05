@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from crawler.crawl_signals import ChallengeSignal, RiskState
+from crawler.crawl_signals import ChallengeSignal, RiskState, SplashTimeoutSignal
 from crawler.browser import promote_browser_for_manual_interaction
 from crawler.page_state import PageState, detect_page_state, is_error_like_state
 from crawler.recovery_policy import (
@@ -38,10 +38,10 @@ _error_lock = threading.Lock()
 
 # 连续错误次数 → 额外冷却秒数（递增缓冲，给 X 服务端恢复时间）
 _COOLDOWN_TIERS = [
-    (3, 8.0),    # 连续 3 次错误后额外等 8 秒
-    (5, 15.0),   # 连续 5 次后等 15 秒
-    (8, 30.0),   # 连续 8 次后等 30 秒
-    (12, 60.0),  # 连续 12 次后等 60 秒
+    (3, 5.0),    # 连续 3 次错误后额外等 5 秒
+    (5, 10.0),   # 连续 5 次后等 10 秒
+    (8, 20.0),   # 连续 8 次后等 20 秒
+    (12, 40.0),  # 连续 12 次后等 40 秒
     # freeze 阈值由 settings.crawler_error_freeze_threshold 控制，在 _record_error 中处理
 ]
 
@@ -190,6 +190,8 @@ def navigate_with_retry(
     log_prefix = f"[task={task_id}] " if task_id else ""
 
     challenge_hits = 0
+    # 追踪 splash 状态的连续次数，触发换账号
+    splash_hits = 0
 
     for attempt in range(max_retries + 1):
         try:
@@ -248,6 +250,53 @@ def navigate_with_retry(
                 if attempt > 0:
                     logger.info(f"{log_prefix}第 {attempt} 次刷新后页面恢复正常")
                 return True
+
+            # ── Splash 黑屏处理：X SPA 还在加载，先等后刷，多次无效则换账号 ──
+            if state == PageState.SPLASH:
+                splash_hits += 1
+                bump_metric(task_id, "splash_hits")
+                from config import settings
+                # 每次 splash 等待时间：逐步递增，给 SPA 更多时间加载
+                splash_wait = min(5.0 * splash_hits, 20.0)
+                logger.warning(
+                    f"{log_prefix}检测到 X 黑屏启动画面 (hit={splash_hits})，"
+                    f"等待 {splash_wait:.0f}s 后重试..."
+                )
+                interruptible_sleep(splash_wait, task_id=task_id)
+                # 等待后重检（不计入重试次数，给页面加载机会）
+                recheck_state, recheck_reason = detect_page_state(tab)
+                if recheck_state == PageState.OK:
+                    _record_success(task_id)
+                    if post_load_wait > 0:
+                        interruptible_sleep(post_load_wait, task_id=task_id)
+                    logger.info(f"{log_prefix}等待后 SPA 渲染完成，页面恢复正常")
+                    return True
+                # 等待后仍是 splash，执行刷新
+                logger.info(f"{log_prefix}等待后页面仍为黑屏，执行刷新 (hit={splash_hits})")
+                try:
+                    tab.refresh()
+                    interruptible_sleep(3.0, task_id=task_id)
+                except Exception:
+                    pass
+                # 刷新后重检
+                recheck_state, recheck_reason = detect_page_state(tab)
+                if recheck_state == PageState.OK:
+                    _record_success(task_id)
+                    if post_load_wait > 0:
+                        interruptible_sleep(post_load_wait, task_id=task_id)
+                    logger.info(f"{log_prefix}刷新后 SPA 渲染完成，页面恢复正常")
+                    return True
+                # 刷新超过阈值，触发换账号信号
+                splash_threshold = int(getattr(settings, "crawler_splash_switch_threshold", 3))
+                if splash_hits >= splash_threshold:
+                    logger.warning(
+                        f"{log_prefix}黑屏持续 {splash_hits} 次，超过阈值 {splash_threshold}，"
+                        f"发出换账号信号"
+                    )
+                    raise SplashTimeoutSignal(
+                        f"X 页面持续黑屏 {splash_hits} 次，尝试切换账号",
+                    )
+                continue  # 继续下一次重试
 
             if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
                 challenge_hits += 1

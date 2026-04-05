@@ -183,6 +183,24 @@ export interface BatchUpdateReplyCollectionResponse {
     }>;
 }
 
+// 导出预估
+export interface ExportEstimateTask {
+    task_id: string;
+    keyword: string;
+    tweet_count: number;
+    reply_count: number;
+}
+
+export interface ExportEstimateResponse {
+    task_count: number;
+    total_tweets: number;
+    total_replies: number;
+    total_rows: number;
+    estimated_csv_bytes: number;
+    estimated_excel_bytes: number;
+    tasks: ExportEstimateTask[];
+}
+
 // 批量导入
 export interface BatchImportTask {
     keyword: string;
@@ -230,6 +248,9 @@ export interface CrawlerConfig {
     crawler_checkpoint_flush_interval_sec?: number;
     crawler_checkpoint_reply_batch?: number;
     crawler_live_push_interval_ms?: number;
+    crawler_active_task_watchdog_enabled?: boolean;
+    crawler_active_task_stale_timeout_sec?: number;
+    crawler_active_task_watchdog_interval_sec?: number;
     crawler_auto_throttle_enabled?: boolean;
     crawler_dynamic_concurrency_enabled?: boolean;
     crawler_resource_sample_interval_sec?: number;
@@ -599,14 +620,24 @@ async function downloadBlob(url: string, fallbackFilename: string): Promise<void
 
 /**
  * POST 下载文件（用于需要传 body 的批量导出场景）
+ * 支持进度回调和取消信号
  */
-async function downloadPostBlob(endpoint: string, body: unknown, fallbackFilename: string): Promise<void> {
+async function downloadPostBlob(
+    endpoint: string,
+    body: unknown,
+    fallbackFilename: string,
+    options?: {
+        signal?: AbortSignal;
+        onProgress?: (loaded: number, total: number | null) => void;
+    },
+): Promise<void> {
     try {
         const url = `${API_BASE_URL}${endpoint}`;
         const resp = await fetch(url, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
+            signal: options?.signal,
         });
         if (!resp.ok) {
             let detail = resp.statusText;
@@ -627,16 +658,47 @@ async function downloadPostBlob(endpoint: string, body: unknown, fallbackFilenam
             if (plainMatch) filename = plainMatch[1].trim();
         }
 
-        const blob = await resp.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(blobUrl);
+        // 使用 ReadableStream 读取以支持进度回调
+        const contentLength = resp.headers.get("Content-Length");
+        const total = contentLength ? parseInt(contentLength, 10) : null;
+
+        if (options?.onProgress && resp.body) {
+            const reader = resp.body.getReader();
+            const chunks: BlobPart[] = [];
+            let loaded = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                loaded += value.length;
+                options.onProgress(loaded, total);
+            }
+
+            const blob = new Blob(chunks);
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        } else {
+            const blob = await resp.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        }
     } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+            throw new Error("导出已取消");
+        }
         console.error("批量导出下载失败:", err);
         throw new Error(`批量导出下载失败: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -847,18 +909,35 @@ export const api = {
             const url = `${API_BASE_URL}/api/v1/export/${taskId}/excel${params.size > 0 ? `?${params.toString()}` : ""}`;
             await downloadBlob(url, `xcrawl_${taskId.substring(0, 8)}.xlsx`);
         },
-        batchDownloadCsv: async (taskIds: string[], deduplicate = false) => {
+        batchEstimate: async (taskIds: string[]): Promise<ExportEstimateResponse> => {
+            return fetchApi<ExportEstimateResponse>("/api/v1/export/batch/estimate", {
+                method: "POST",
+                body: JSON.stringify({ task_ids: taskIds }),
+            });
+        },
+        batchDownloadCsv: async (
+            taskIds: string[],
+            deduplicate = false,
+            options?: { signal?: AbortSignal; onProgress?: (loaded: number, total: number | null) => void },
+        ) => {
             await downloadPostBlob(
                 "/api/v1/export/batch/csv",
                 { task_ids: taskIds, merge_mode: "single", deduplicate },
                 `batch_${taskIds.length}tasks.csv`,
+                options,
             );
         },
-        batchDownloadExcel: async (taskIds: string[], mergeMode: "single" | "per_task" = "per_task", deduplicate = false) => {
+        batchDownloadExcel: async (
+            taskIds: string[],
+            mergeMode: "single" | "per_task" = "per_task",
+            deduplicate = false,
+            options?: { signal?: AbortSignal; onProgress?: (loaded: number, total: number | null) => void },
+        ) => {
             await downloadPostBlob(
                 "/api/v1/export/batch/excel",
                 { task_ids: taskIds, merge_mode: mergeMode, deduplicate },
                 `batch_${taskIds.length}tasks.xlsx`,
+                options,
             );
         },
     },

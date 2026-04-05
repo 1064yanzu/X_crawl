@@ -82,7 +82,15 @@ def start_crawler_thread(
     )
     platform = task.get("platform", "x")
     task_kind = task.get("task_kind", "search")
-    enqueued = scheduler.enqueue(task_id, payload, platform=platform, task_kind=task_kind)
+    cbp = task.get("comment_backfill_progress") or {}
+    total_expected_replies = int(cbp.get("total_expected_replies") or 0)
+    enqueued = scheduler.enqueue(
+        task_id, payload,
+        platform=platform,
+        task_kind=task_kind,
+        result_count=int(task.get("result_count") or 0),
+        total_expected_replies=total_expected_replies,
+    )
     if enqueued:
         task_manager.update_task_status(task_id, "pending")
         task_manager.update_task_phase(task_id, "任务已进入调度队列，等待执行...")
@@ -140,35 +148,6 @@ def run_search_task(
         )
 
     reserved_account_id = account_id
-    if platform == "x" and bool(getattr(settings, "account_pool_enabled", True)):
-        dispatcher = get_dispatcher()
-        reserved_account = None
-        if account_id:
-            reserved_account = dispatcher.reserve_account(task_id, account_id)
-            if reserved_account is None:
-                logger.warning(
-                    "任务 %s 预留已绑定账号失败，尝试重新分配可用账号",
-                    task_id[:8],
-                )
-        if reserved_account is None:
-            reserved_account = dispatcher.assign_account(task_id)
-        if reserved_account is not None:
-            reserved_account_id = reserved_account.account_id
-            task_manager.bind_account(
-                task_id, reserved_account.account_id, reserved_account.alias
-            )
-        else:
-            from crawler.account_pool import get_pool
-
-            if get_pool().get_active_account_count() > 0:
-                raise LoginRequiredPause(
-                    f"X 账号池已启用，但当前所有账号均被占用，任务 {task_id[:8]} 已暂停等待账号释放",
-                    reason="no_account_available",
-                    session_mode="pool",
-                    effective_user_data_path=None,
-                )
-            reserved_account_id = None
-            logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
 
     # ── 浏览器池模式：并发数>1 时按 slot 分配浏览器实例 ──────────────────
     # 每个任务获得独立的搜索浏览器实例
@@ -181,32 +160,66 @@ def run_search_task(
     _reply_browser_instance = None  # 回复/评论专用独立浏览器实例
     _slot_id: int | None = None
 
-    if _pool_mode:
-        pool_obj = get_browser_pool()
-        _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
-        # 如果需要抓取回复/评论，分配独立的浏览器实例（独立 Chrome 进程）
-        if fetch_replies and task_kind != "comment_backfill":
-            _reply_browser_instance = pool_obj.acquire_aux(
-                task_id,
-                purpose="reply" if platform == "x" else "comment",
-            )
-
-    if not _pool_mode:
-        if force_new_browser:
-            reset_browser()
-        ensure_browser_alive()
-
-    # 如果指定了账号，注入其 Cookie（搜索浏览器 + 回复/评论浏览器均需注入）
-    if reserved_account_id:
-        _inject_account_cookies(
-            task_id, reserved_account_id, browser_instance=_browser_instance
-        )
-        if _reply_browser_instance is not None:
-            _inject_account_cookies(
-                task_id, reserved_account_id, browser_instance=_reply_browser_instance
-            )
-
     try:
+        # 账号分配（可能抛出 LoginRequiredPause，必须在 try 内确保 finally 清理）
+        if platform == "x" and bool(getattr(settings, "account_pool_enabled", True)):
+            dispatcher = get_dispatcher()
+            reserved_account = None
+            if account_id:
+                reserved_account = dispatcher.reserve_account(task_id, account_id)
+                if reserved_account is None:
+                    logger.warning(
+                        "任务 %s 预留已绑定账号失败，尝试重新分配可用账号",
+                        task_id[:8],
+                    )
+            if reserved_account is None:
+                reserved_account = dispatcher.assign_account(task_id)
+            if reserved_account is not None:
+                reserved_account_id = reserved_account.account_id
+                task_manager.bind_account(
+                    task_id, reserved_account.account_id, reserved_account.alias
+                )
+            else:
+                from crawler.account_pool import get_pool
+
+                if get_pool().get_active_account_count() > 0:
+                    raise LoginRequiredPause(
+                        f"X 账号池已启用，但当前所有账号均被占用，任务 {task_id[:8]} 已暂停等待账号释放",
+                        reason="no_account_available",
+                        session_mode="pool",
+                        effective_user_data_path=None,
+                    )
+                reserved_account_id = None
+                logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
+
+        if _pool_mode:
+            pool_obj = get_browser_pool()
+            _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
+            # 如果需要抓取回复/评论，分配独立的浏览器实例（独立 Chrome 进程）
+            # 搜索和回复使用不同 Chrome 进程，确保 CDP 命令不串行化
+            # 注意：comment_backfill 不需要 aux 实例——补采时没有搜索翻页，
+            # 主实例空闲，reply_worker 可直接复用主实例，省一个 Chrome 进程
+            if fetch_replies and task_kind != "comment_backfill":
+                _reply_browser_instance = pool_obj.acquire_aux(
+                    task_id,
+                    purpose="reply" if platform == "x" else "comment",
+                )
+
+        if not _pool_mode:
+            if force_new_browser:
+                reset_browser()
+            ensure_browser_alive()
+
+        # 如果指定了账号，注入其 Cookie（搜索浏览器 + 回复/评论浏览器均需注入）
+        if reserved_account_id:
+            _inject_account_cookies(
+                task_id, reserved_account_id, browser_instance=_browser_instance
+            )
+            if _reply_browser_instance is not None:
+                _inject_account_cookies(
+                    task_id, reserved_account_id, browser_instance=_reply_browser_instance
+                )
+
         if task_kind == "comment_backfill":
             task_manager.update_task_phase(task_id, "已读取导入文件，开始补采评论...")
             result = run_comment_backfill_task(
@@ -215,6 +228,7 @@ def run_search_task(
                 max_replies_per_tweet=max_replies_per_tweet,
                 reply_depth=reply_depth,
                 browser_instance=_browser_instance,
+                reply_browser_instance=_reply_browser_instance,
             )
             runtime_metrics = get_metrics(task_id)
             quality_state = "partial" if result.failed_records else "complete"

@@ -36,3 +36,10 @@ class LoginRequiredPause(Exception):
         self.reason = reason
         self.session_mode = session_mode
         self.effective_user_data_path = effective_user_data_path
+
+
+class SplashTimeoutSignal(Exception):
+    """X 页面持续黑屏（splash 状态），超过阈值后抛出，触发账号切换逻辑。"""
+
+    def __init__(self, message: str = "X 页面持续黑屏，尝试切换账号"):
+        super().__init__(message)

@@ -1,5 +1,349 @@
 # Changelog
 
+## [2026-04-05] 修复评论补采任务卡在"准备中" + 批量导出性能和体验优化
+
+### 问题
+1. **评论补采任务永远显示"准备中"**：Watchdog 将 `pending` 状态（排队等待调度）的评论补采任务误判为"僵死"任务，15分钟后自动 stop 再重新入队，形成无限的停止-重启循环
+2. **评论补采任务被搜索任务无条件压低优先级**：调度器排序逻辑让搜索任务永远排在评论补采前面，即使没有搜索任务在运行，评论补采仍被饿死
+3. **批量导出慢**：后端 async 处理函数内做大量同步阻塞操作（SQLite 读取、JSON 反序列化、deepcopy、CSV/Excel 构建），阻塞 FastAPI 事件循环；批量任务串行加载
+4. **批量导出用户体验差**：无进度指示、无数据量预估、导出中无法取消
+
+### 修复
+
+#### `backend/api/services/task_watchdog.py`
+- `_is_stale_comment_backfill()` 不再将 `pending` 状态纳入 stale 检测，仅检查 `running` 状态——排队中的任务没有运行线程，不应被判为僵死
+
+#### `backend/api/services/task_scheduler.py`
+- `_try_dispatch_pending()` 改为条件优先级排序：只有队列中同时存在搜索任务时，搜索才优先；纯评论补采队列中任务平等调度
+
+#### `backend/api/services/task_manager.py`
+- 新增 `get_task_export_payload_readonly()` 方法：导出专用只读接口，不做 `copy.deepcopy()`，大幅降低内存开销
+- 新增 `get_export_estimate()` 方法：返回导出预估信息（行数、推文数、评论数、预估文件大小）
+
+#### `backend/api/routers/export.py`
+- CSV/Excel 导出路由使用 `asyncio.run_in_executor()` 将同步阻塞操作移入线程池，不再阻塞事件循环
+- 使用只读加载接口减少内存拷贝
+
+#### `backend/api/routers/batch_export.py`
+- 批量导出使用 `ThreadPoolExecutor` 并行加载多个任务数据（最多 4 并发），替代串行循环
+- CSV/Excel 构建使用独立线程池 `_export_pool`，通过 `run_in_executor` 异步执行
+- 新增 `POST /api/v1/export/batch/estimate` 预估接口
+- 使用只读加载接口
+
+#### `frontend/src/services/api/index.ts`
+- 新增 `ExportEstimateResponse` 类型和 `batchEstimate()` API 方法
+- `downloadPostBlob()` 支持 `AbortSignal` 取消和 `onProgress` 进度回调（基于 ReadableStream）
+- `batchDownloadCsv()` / `batchDownloadExcel()` 增加可选的 `options` 参数传递取消和进度
+
+#### `frontend/src/components/features/tasks/BatchExportDialog.tsx`
+- 对话框打开时自动调用预估 API，展示数据量（推文数、评论数、总行数、预估文件大小）
+- 导出中显示进度条（有 Content-Length 时显示百分比，否则显示已下载字节数）
+- 支持取消导出（基于 AbortController）
+- 导出中禁用格式选择，防止误操作
+
+#### `docs/api.md`
+- 补充 `POST /api/v1/export/batch/estimate` 接口文档
+
+## [2026-04-04] 修复 X/微博评论卡住、翻页空转、watchdog 反复重排等问题
+
+### 问题
+1. **X 评论翻页空转**：当评论区数据达到 API 返回上限后，继续翻页拿到的全是重复数据（新增 0 条），但爬虫要等连续 3-12 页空数据才放弃，浪费大量时间
+2. **X 翻页硬恢复丢失 cursor**：`_wait_reply_packet_with_recovery` 在第 2 页及之后的翻页数据包超时时，执行硬恢复（重新导航到推文 URL），导致丢失翻页 cursor，回到第 1 页数据（全重复），进一步延长空转
+3. **watchdog 反复重排不恢复**：评论补采任务 pending + 线程死亡后，watchdog 每 15 分钟检测到 stale → stop → resume_queue，但新调度的任务 `last_event_at` 仍是很久以前的创建时间，导致下一轮又被判定为 stale，形成无限循环
+4. **任务线程崩溃不释放调度槽**：浏览器池获取、账号分配等初始化异常在 `try` 块之外抛出，导致 `scheduler.mark_done()` 和 `task_queue_manager.notify_task_terminal()` 永远不会被调用，调度槽永久占用
+
+### 修复
+
+#### `backend/crawler/reply_fetcher.py`
+- 已有数据时将连续空页退出阈值从 `max_empty_pages`(3-12) 降低为 2：如果已经抓到至少 1 条评论，连续 2 页无新数据就立即停止翻页
+- 翻页场景（`page_num > 1`）跳过硬恢复：避免重新导航丢失 cursor 带来的全重复数据空转
+
+#### `backend/api/services/task_watchdog.py`
+- 新增 `_touch_queue_pending_tasks()`：watchdog 重排任务时，同步刷新队列内所有 pending/running 任务的 `last_event_at`，防止下一个检查周期误判
+
+#### `backend/api/services/crawl_service.py`
+- 将浏览器池获取 (`pool.acquire`) 和账号分配 (`LoginRequiredPause`) 代码移入 `try` 块内，确保任何异常都能触发 `finally` 中的 `scheduler.mark_done()` 和资源清理
+
+#### `backend/api/services/task_scheduler.py`
+- `_cleanup_dead_threads()` 添加调试日志，便于追踪线程异常死亡
+
+## [2026-04-04] 导出已有任务检索词并按平台分类
+
+### 改动
+
+#### `docs/task_keywords_export_2026-04-04.md`
+- 新增导出说明文档，记录数据来源、统计口径、平台分类结果和输出文件路径
+
+#### `docs/exports/task_keywords_by_platform_all_tasks.csv`
+- 导出当前任务库中全部任务的检索词
+- 按 `platform` 分类，并按 `(platform, keyword)` 去重
+- 保留每个检索词对应的任务数、首次创建时间和最后创建时间
+
+#### `docs/exports/task_keywords_by_platform_search_tasks.csv`
+- 导出仅 `task_kind='search'` 的主搜索任务检索词
+- 便于与评论补采类关键词分离复用
+
+### 结果
+- 使用的有效任务库：`backend/tasks.db`
+- 全部任务数：67
+- 平台分布：`weibo=27`，`x=40`
+- 全部任务去重后关键词数：`weibo=22`，`x=40`
+- 仅主搜索任务去重后关键词数：`weibo=17`，`x=21`
+
+## [2026-04-04] 修复评论补采任务假运行占槽导致队列卡死
+
+### 问题
+X 评论补采队列中存在一种“假运行”状态：任务仍显示为 `running`，但 `last_event_at` 长时间不再更新，界面停在“正在准备 X 评论补采任务...”，同时继续占用调度并发槽，导致同队列后续补采任务一直不动。
+
+### 改动
+
+#### `backend/api/services/task_watchdog.py`
+- 新增活跃任务 watchdog，专门巡检 `comment_backfill` 任务
+- 当任务处于 `running/pending` 且长时间无事件时，自动执行：
+  - 发送 `stop` 信号
+  - 释放线程登记与调度器运行槽
+  - 将任务标记为 `stopped`
+  - 自动重新加入调度队列
+
+#### `backend/api/services/task_manager.py`
+- 在任务列表、任务摘要、任务详情读取前触发轻量 watchdog 巡检
+- 避免用户已在刷新页面，但卡死任务始终无人处理
+
+#### `backend/config.py`
+- 新增配置：
+  - `crawler_active_task_watchdog_enabled`
+  - `crawler_active_task_stale_timeout_sec`
+  - `crawler_active_task_watchdog_interval_sec`
+
+#### `backend/api/routers/crawler_config.py`
+- 将上述配置纳入 `/api/v1/crawler-config` 的读写与持久化
+
+#### `frontend/src/components/features/settings/CrawlerConfigCard.tsx`
+- 设置页新增“任务卡死巡检”开关
+- 新增“卡死判定阈值”“卡死巡检间隔”两个可调参数
+
+#### `docs/api.md`
+- 补充评论补采卡死自愈相关配置字段说明
+
+## [2026-04-04] 修复评论区卡住不切换 + 提升爬取效率
+
+### 问题
+1. **评论区卡住不切换**：当推文评论区已加载完毕（无更多数据）或遇到"显示可能的垃圾信息"边界时，爬虫卡在当前推文上无法切换，长达 60-90 秒。根本原因：
+   - `bottom_cursor=None` 时会继续触发额外滚动并等待数据包，但 X 不再发包，每次等包超时需 27s+
+   - 硬重试会重新导航到推文页，再加 30s+
+   - `ShowMoreThreads` cursor 通过 entryId 兜底检测有漏网情况
+2. **整体效率低**：每次等包的 compensation_probe_timeout 设置过长（最大 12s），软重试次数过多
+
+### 改动
+
+#### `backend/crawler/wait_policy.py`
+- `quick_probe_timeout`：上限从 3s 降至 2s，系数从 0.2 降至 0.12
+- `compensation_probe_timeout`：上限从 12s 降至 8s，系数从 0.65 降至 0.4
+- 单次等包总超时从约 27s 降至约 18s（-33%）
+
+#### `backend/crawler/reply_fetcher.py`
+- `_wait_reply_packet_with_recovery`：
+  - 硬重试次数从 `min(2, policy)` 降至 `min(1, policy)`，避免不必要重新导航
+  - 软重试循环中：当页面状态正常（PageState.OK）且连续 2 次无包时，立即退出软重试（不再继续等待），显著减少评论区到底时的等待时间
+- `fetch_replies`：
+  - `bottom_cursor=None` 时**立即 break**，不再尝试额外滚动（之前会多等 1-2 个 compensation timeout）
+  - `packet=None` 时简化为直接 break，去掉冗余的"额外滚动后再等包"逻辑
+
+#### `backend/crawler/reply_parser.py`
+- `parse_tweet_detail_response`：新增通过 `entryId` 检测 `ShowMoreThreads`（兜底），防止 X API 结构变化导致垃圾信息边界漏检
+
+---
+
+## [2026-04-04] 评论区"出错了。请尝试重新加载。"自动重试并换账号
+
+### 问题
+X 评论区偶发局部加载错误（显示"出错了。请尝试重新加载。"和"重试"按钮），此时整页框架正常，`detect_page_state` 返回 OK，爬虫无法感知该错误，导致在等待数据包超时后才进入重试流程，效率低且无法换账号。
+
+### 改动
+
+#### `backend/crawler/page_state.py`
+- `_RETRY_PAGE_MARKERS` 新增"请尝试重新加载"中文标记
+- 新增 `detect_reply_area_error(tab)` 函数：检测评论区局部加载错误（区别于整页错误）
+- 新增 `click_reply_retry_button(tab)` 函数：专门点击评论区"重试"按钮（含 CSS 选择器 + 文字匹配兜底）
+
+#### `backend/crawler/reply_fetcher.py`
+- 导入 `detect_reply_area_error`、`click_reply_retry_button`、`SplashTimeoutSignal`
+- `_wait_reply_packet_with_recovery` 新增参数 `on_reply_area_error_switch_account`（可选换账号回调）
+- 软恢复阶段（每次数据包超时后）新增流程：
+  1. 调用 `detect_reply_area_error` 检测评论区局部错误
+  2. 若检测到，调用 `click_reply_retry_button` 点击"重试"后等待数据包
+  3. 连续点击达到阈值（3 次）时抛出 `SplashTimeoutSignal`
+- `fetch_replies` 新增换账号计数器（上限 2 次）
+- 主循环捕获 `SplashTimeoutSignal`：调用 `_try_inject_pool_account_cookies` 注入下一个账号 Cookie，成功后重新导航并继续采集；无可用备用账号时放弃本推文评论
+
+---
+
+## [2026-04-04] 爬虫遭遇 X 黑屏启动画面时自动刷新并切换账号
+
+### 问题
+X/Twitter 页面有时会出现黑屏+X logo 的启动画面（splash screen），即 SPA 框架已加载但内容尚未渲染。原有逻辑无法识别此状态，导致爬虫卡在黑屏页面上无法继续，也不会尝试切换账号。
+
+### 改动
+
+#### `backend/crawler/crawl_signals.py`
+- 新增 `SplashTimeoutSignal`：X 黑屏状态持续超过阈值时抛出，向上传递换账号信号
+
+#### `backend/crawler/page_state.py`
+- `PageState` 枚举新增 `SPLASH = "splash"` 状态
+- 新增 `_is_splash_loading()` 函数：检测页面是否为黑屏启动状态（JS 已执行但 SPA 未渲染）
+  - 特征：可见文本极少（≤200字符）、不是 noscript 空壳页、URL 是 x.com、HTML 含 `react-root` 挂载点
+- `detect_page_state()` 在现有检测链末尾追加 splash 检测
+
+#### `backend/crawler/page_health.py`
+- 引入 `SplashTimeoutSignal`
+- `navigate_with_retry()` 新增 `splash_hits` 计数器
+- 检测到 `PageState.SPLASH` 时的处理流程：
+  1. 先等待（5s→10s→15s 递增），给 SPA 更多时间加载
+  2. 等待后重检，若恢复正常则继续
+  3. 等待无效则执行刷新再检测
+  4. 若 `splash_hits` 达到阈值（默认 3 次，由配置 `crawler_splash_switch_threshold` 控制）则抛出 `SplashTimeoutSignal`
+
+#### `backend/crawler/x_searcher.py`
+- 导入 `SplashTimeoutSignal`
+- 初始导航时（第4步）：捕获 `SplashTimeoutSignal`，调用 `_try_rotate_account()` 切换账号，切换成功后重新导航
+- 主采集循环（while True）：捕获 `SplashTimeoutSignal`，切换账号后重启监听并重新导航搜索页继续采集；无可用备用账号时记录警告并继续等待
+
+---
+
+## [2026-04-03] 修复 BrowserPool 实例启动时恢复历史标签页的问题
+
+### 问题
+微博（及 X）爬虫并发运行时，浏览器实例（BrowserPool）启动后会显示大量历史标签页。根本原因：
+1. `_reset_profile_dir` 在 profile 目录无法完全清除时（有锁定文件），Chrome 会读到旧的 Session 文件，自动恢复上次崩溃/异常退出时的所有标签页
+2. `~/.xcrawl-browser-instances/` 下积累了 80+ 个历次服务启动遗留的 worker profile 目录，每次新服务启动时旧 profile 仍然存在
+
+### 改动
+
+#### `backend/crawler/browser_pool.py`
+- `_create_browser` 新增启动参数 `--no-restore-last-session`、`--disable-session-crashed-bubble`，彻底阻止 Chrome 恢复历史会话
+- 新增 `_clear_session_files()` 方法：在 profile 无法完全清除时，主动删除 `Default/Last Session`、`Last Tabs`、`Current Session`、`Current Tabs`、`Session Storage` 等会话文件
+- `_reset_profile_dir` profile 部分清理后调用 `_clear_session_files`；`os.makedirs` 之后也再次调用，确保新建目录不残留旧会话
+- 新增 `_cleanup_stale_worker_dirs()`：BrowserPool 初始化时清理 `~/.xcrawl-browser-instances/` 下非当前进程的所有旧 worker 目录
+- `get_browser_pool()` 初始化时调用 `_cleanup_stale_worker_dirs()`
+
+---
+
+## [2026-04-03] 评论补采任务调度按推文数量降序排列
+
+### 需求
+多个评论补采任务同时存在（或恢复）时，应优先执行推文数量多的任务，这样能更早采集到大量评论，整体效率更高。
+
+### 改动
+
+#### `backend/api/services/task_scheduler.py`
+- `ScheduledTask` 新增 `result_count: int = 0` 字段
+- `enqueue()` 方法新增 `result_count` 参数，存入 `ScheduledTask`
+- `_try_dispatch_pending()` 排序 key 从单维（task_kind）改为双维：主键 task_kind（search 优先），次键 `-result_count`（同为 comment_backfill 时推文多的先调度）
+
+#### `backend/api/services/task_queue_manager.py`
+- `_sort_task_ids_by_priority()` 同样升级为双维排序：task_kind 主键 + result_count 降序次键
+- `resume_queue()` 内联排序代码改为复用 `_sort_task_ids_by_priority()`，消除重复逻辑
+
+#### `backend/api/services/crawl_service.py`
+- `start_crawler_thread()` 调用 `scheduler.enqueue()` 时传入 `result_count=task.get("result_count")`
+
+---
+
+## [2026-04-03] 修复评论区到底时继续等待的问题
+
+### 问题
+当评论区加载到底部、没有更多评论时（图片中空白情况），API 返回的包里 `bottom_cursor` 为空、`new_replies` 也为空。之前的代码会继续执行滚动，进入下一轮 `_wait_reply_packet_with_recovery`，等待直到超时（最长约 15 秒），才能放弃。如果评论区只有少量评论且覆盖率不足 50%，这个无效等待还可能重复多次。
+
+### 改动
+
+**`backend/crawler/reply_fetcher.py`**：  
+修改 `not bottom_cursor` 分支的判断条件：
+- **之前**：覆盖率不足 50% 时一律继续滚动重试
+- **之后**：仅当本页实际有新数据（`new_replies > 0`）但没有 cursor 时才继续滚动；本页没有新数据且无 cursor，说明评论区真的到底了，**立即停止**，不再触发下一轮超时等待
+
+---
+
+## [2026-04-03] 修复一级评论第一页无效等待问题
+
+### 问题
+`fetch_replies` 导航到推文详情页后，直接进入 while 循环调用 `_wait_reply_packet_with_recovery` 等待数据包，**没有先主动滚动**。X 评论区的 TweetDetail API 完全由滚动触发——不滚动就不会发出网络请求，导致 `quick_probe_timeout`（最长3秒）白白空等，然后才触发补偿滚动。
+
+### 改动
+
+**`backend/crawler/reply_fetcher.py`**：
+- `navigate_with_retry` 的 `post_load_wait` 从 `0.3` 改为 `0.0`（滚动本身就能触发加载，无需额外等待）
+- 导航成功后、进入 while 循环之前，立即调用一次 `_scroll_incremental()`，主动触发第一批评论数据包
+- 这样第1页与后续翻页行为一致：先滚动→再等包，消除无效等待
+
+---
+
+## [2026-04-03] 评论补采任务改用 CrawlPipeline，一/二级评论并行抓取
+
+### 问题
+X 评论补采任务（`comment_backfill`）调用 `fetch_replies_batch`，每条推文按串行顺序处理：一级评论抓完后立即在同一线程内等待二级评论全部抓完，才进入下一条推文的一级评论。即：
+```
+tweet1一级 → tweet1二级 → tweet2一级 → tweet2二级 → ...（完全串行）
+```
+而主搜索流程已通过 `CrawlPipeline` 实现了一级/二级解耦并行，补采任务却未使用这个已有机制。
+
+### 改动
+
+#### 1. `backend/api/services/crawl_service.py`
+- 调整 aux 浏览器分配条件：`comment_backfill` 任务在 pool 模式下也分配独立的 `_reply_browser_instance`（供 pipeline nested_worker 使用）
+- 调用 `run_comment_backfill_task` 时新增传入 `reply_browser_instance=_reply_browser_instance`
+
+#### 2. `backend/crawler/comment_backfill_runner.py`
+- `run_comment_backfill_task` 和 `_run_x_comment_backfill` 新增 `reply_browser_instance=None` 参数
+- `_run_x_comment_backfill` 核心逻辑从 `fetch_replies_batch` 改为 `CrawlPipeline`：
+  - `reply_worker` 独立线程只抓一级评论，完成即推入 `nested_queue`
+  - `nested_worker` 独立线程消费二级评论，与 `reply_worker` 真正并行
+  - `on_reply_done` 回调语义与原 `_on_progress` 完全一致（二级全部完成后触发）
+  - 通过 `pipeline.check_error()` 正确透传 `StopSignal` / `ChallengeSignal`
+
+#### 3. `backend/tests/test_crawl_service_comment_backfill.py`
+- 重命名并更新测试：补采任务现在**应该**申请 aux 浏览器，断言调整为验证 `reply_browser_instance` 被正确传入
+
+---
+
+## [2026-04-03] 评论爬虫识别"显示可能的垃圾信息"边界，提前停止翻页
+
+### 问题
+X 评论区一级评论列表末尾会出现 `ShowMoreThreads` 类型的 cursor，对应 UI 上的 **"Show probable spam"（显示可能的垃圾信息）** 按钮。出现该按钮说明所有正常评论已加载完毕，后面仅剩垃圾/疑似垃圾内容。之前爬虫无法识别这个信号，会继续滚动触发翻页、等待下一批数据包，造成不必要的等待和网络请求。
+
+### 改动
+
+#### 1. `backend/crawler/reply_parser.py`
+- `parse_tweet_detail_response` 返回值新增第五项 `has_spam_boundary: bool`
+- 解析 entries 时检测 `cursorType == "ShowMoreThreads"` 的 cursor，标记 `has_spam_boundary = True`
+- 日志中会记录检测到垃圾信息边界的 debug 信息
+
+#### 2. `backend/crawler/reply_fetcher.py`
+- `fetch_replies` 解包 `parse_tweet_detail_response` 返回的新字段 `has_spam_boundary`
+- 每页解析后，若 `has_spam_boundary` 为 True，立即停止翻页并记录 telemetry 事件 `reply_spam_boundary`
+- 检测时机在空页计数更新之后、快速退出逻辑之前，确保当前页有效评论已被收集
+
+---
+
+## [2026-04-03] 修复微博 tab 泄漏 + X 评论翻页等待过慢
+
+### 问题
+
+1. **微博爬虫持续新开 tab 页，浏览器中 tab 越来越多**：`searcher.py` 在 Tab 崩溃/超时后调用 `_rebuild_weibo_tab()` 重建 tab，但原来的旧 tab 没有关闭，导致每次崩溃后都泄漏一个 tab，时间一长浏览器里积累大量残留 tab 页。
+2. **X 一级评论翻页后等待很久才收到下一页数据包**：`_wait_reply_packet_with_recovery` 在快速探测超时后，软重试循环中调用的 `soft_recover_for_packet` 只做了小步 `scroll.down(280)`，不足以触发 X 评论区懒加载。真正触发下一批评论加载需要完整的渐进式滚动（多步 + scroll_to_bottom），因此软重试阶段白白等待 `compensation_probe_timeout` × N 次（累积可达 30+ 秒）才进入硬刷新，而硬刷新后反而正常拿到数据。
+
+### 改动
+
+#### 1. 修复微博 tab 泄漏
+- **`backend/crawler/weibo/searcher.py`**：重建 tab 前先调用 `tab.close()` 关闭旧 tab，覆盖三处泄漏点：
+  - Tab 崩溃/断开连接重试时
+  - HTTP 418 冷却后重建时
+  - 最终失败后连接断开时的兜底重建
+
+#### 2. 加速 X 评论翻页等待
+- **`backend/crawler/reply_fetcher.py`**：重写 `_wait_reply_packet_with_recovery` 软重试逻辑：移除 `soft_recover_for_packet` 小步滚动，改为每次快探超时后立即调用 `_scroll_incremental()`（完整渐进式滚动 + scroll_to_bottom），再等 `compensation_probe_timeout`。这样滚动能有效触发 X 评论懒加载，绝大多数情况下第一次补滚动即可拿到包，避免多轮无效等待。同时移除对 `soft_recover_for_packet` 的导入（已不再使用）。
+
+---
+
 ## [2026-04-02] 爬虫性能优化：调度优先级修复 + 回复抓取效率提升
 
 ### 问题

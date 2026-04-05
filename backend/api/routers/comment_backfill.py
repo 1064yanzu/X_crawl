@@ -162,6 +162,11 @@ async def create_comment_backfill_from_tasks(
 
         platform = summary["platform"]
         platform_label = "X" if platform == "x" else "微博"
+        # 计算预期评论总数，用于补采任务优先级排序（高评论量优先）
+        total_expected_replies = sum(
+            int((t.get("metrics") or {}).get("replies") or 0)
+            for t in analysis.tweets
+        )
         queue_payloads.append(
             {
                 "keyword": f"{platform_label} 评论补采 · {summary['source_keyword'] or summary['source_task_id'][:8]}",
@@ -181,6 +186,7 @@ async def create_comment_backfill_from_tasks(
                     "skipped_posts": max(0, summary["unique_post_count"] - summary["eligible_posts"]),
                     "succeeded_posts": 0,
                     "failed_posts": 0,
+                    "total_expected_replies": total_expected_replies,
                 },
                 "seed_tweets": analysis.tweets,
                 "source_task_id": summary["source_task_id"],

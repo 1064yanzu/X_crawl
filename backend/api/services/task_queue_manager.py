@@ -150,14 +150,23 @@ def _build_queue_view(queue: dict) -> dict:
 
 
 def _sort_task_ids_by_priority(task_ids: list[str], task_manager) -> list[str]:
-    """对任务按优先级排序：普通搜索任务优先于评论补采任务。"""
-    task_id_with_kind: list[tuple[str, str]] = []
+    """对任务按优先级排序：
+    1. 普通搜索任务优先于评论补采任务
+    2. 同为评论补采任务时，按预期总评论数降序——高评论量任务优先，保证广泛性
+    """
+    task_id_with_meta: list[tuple[str, str, int]] = []
     for tid in task_ids:
-        t = task_manager.get_task_summary(tid)
+        t = task_manager._get_task_summary_snapshot(tid)
         kind = t.get("task_kind", "search") if t else "search"
-        task_id_with_kind.append((tid, kind))
-    task_id_with_kind.sort(key=lambda x: 1 if x[1] == "comment_backfill" else 0)
-    return [tid for tid, _ in task_id_with_kind]
+        # 优先使用预存的 total_expected_replies，回退到 result_count
+        cbp = t.get("comment_backfill_progress", {}) if t else {}
+        priority_score = int(cbp.get("total_expected_replies") or 0)
+        if priority_score <= 0:
+            priority_score = int(t.get("result_count") or 0) if t else 0
+        task_id_with_meta.append((tid, kind, priority_score))
+    # 主键：comment_backfill 排后面（0 < 1）；次键：评论数降序（取负）
+    task_id_with_meta.sort(key=lambda x: (1 if x[1] == "comment_backfill" else 0, -x[2]))
+    return [tid for tid, _, _ in task_id_with_meta]
 
 
 def create_queue(*, name: Optional[str], task_payloads: list[dict]) -> dict:
@@ -385,14 +394,9 @@ def resume_queue(queue_id: str) -> dict:
             raise ValueError(f"任务队列不存在: {queue_id}")
         task_ids = list(queue.get("task_ids", []))
 
-    # 对任务按优先级排序：普通搜索任务优先于评论补采任务入队
-    task_id_with_kind: list[tuple[str, str]] = []
-    for tid in task_ids:
-        t = task_manager.get_task_summary(tid)
-        kind = t.get("task_kind", "search") if t else "search"
-        task_id_with_kind.append((tid, kind))
-    task_id_with_kind.sort(key=lambda x: 1 if x[1] == "comment_backfill" else 0)
-    task_ids = [tid for tid, _ in task_id_with_kind]
+    # 对任务按优先级排序：普通搜索任务优先于评论补采任务入队，
+    # 同为评论补采时按推文数量降序（推文多的先采）
+    task_ids = _sort_task_ids_by_priority(task_ids, task_manager)
 
     resumed_ids: list[str] = []
     skipped_ids: list[str] = []

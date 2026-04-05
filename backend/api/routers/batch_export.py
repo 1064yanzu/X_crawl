@@ -2,10 +2,13 @@
 批量导出路由
 POST /api/v1/export/batch/csv   - 批量导出为 CSV（UTF-8 BOM）
 POST /api/v1/export/batch/excel - 批量导出为 Excel（xlsx，每任务一个 Sheet）
+POST /api/v1/export/batch/estimate - 导出前预估行数和文件大小
 """
+import asyncio
 import io
 import re
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Literal
 from urllib.parse import quote
@@ -27,6 +30,9 @@ from api.routers.export import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/export/batch", tags=["批量数据导出"])
 
+# 导出专用线程池，避免阻塞主事件循环
+_export_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="batch-export")
+
 
 class BatchExportRequest(BaseModel):
     task_ids: list[str] = Field(..., min_length=1, description="要导出的任务 ID 列表")
@@ -40,20 +46,33 @@ class BatchExportRequest(BaseModel):
     )
 
 
+class BatchEstimateRequest(BaseModel):
+    task_ids: list[str] = Field(..., min_length=1, description="要预估的任务 ID 列表")
+
+
+def _load_single_task(task_id: str) -> tuple[dict, list[dict]] | None:
+    """加载单个任务的导出数据（只读模式，无 deepcopy 开销）"""
+    task = task_manager.get_task_export_payload_readonly(task_id)
+    if not task:
+        logger.warning(f"批量导出: 任务 {task_id} 不存在，跳过")
+        return None
+    tweets = task.get("tweets", [])
+    if not tweets:
+        logger.warning(f"批量导出: 任务 {task_id} 无数据，跳过")
+        return None
+    all_rows = _collect_all_rows(tweets, task.get("platform", "x"))
+    return task, all_rows
+
+
 def _get_tasks_data(task_ids: list[str]) -> list[tuple[dict, list[dict]]]:
-    """批量获取任务元信息和推文列表，跳过不存在或无数据的任务"""
-    results = []
-    for task_id in task_ids:
-        task = task_manager.get_task_export_payload(task_id)
-        if not task:
-            logger.warning(f"批量导出: 任务 {task_id} 不存在，跳过")
-            continue
-        tweets = task.get("tweets", [])
-        if not tweets:
-            logger.warning(f"批量导出: 任务 {task_id} 无数据，跳过")
-            continue
-        all_rows = _collect_all_rows(tweets, task.get("platform", "x"))
-        results.append((task, all_rows))
+    """批量获取任务元信息和推文列表——使用线程池并行加载多个任务"""
+    with ThreadPoolExecutor(max_workers=min(len(task_ids), 4), thread_name_prefix="export-load") as pool:
+        futures = {pool.submit(_load_single_task, tid): tid for tid in task_ids}
+        results = []
+        for future in futures:
+            result = future.result()
+            if result is not None:
+                results.append(result)
 
     if not results:
         raise HTTPException(status_code=204, detail="所有选中任务均无可导出数据")
@@ -220,18 +239,30 @@ def _build_batch_excel(
     return buf.read()
 
 
+@router.post("/estimate", summary="预估批量导出的数据量和文件大小")
+async def batch_export_estimate(req: BatchEstimateRequest):
+    """返回导出预估信息，帮助前端展示数据量和预估等待时间。"""
+    return task_manager.get_export_estimate(req.task_ids)
+
+
 @router.post("/csv", summary="批量导出为 CSV（合并到一个文件）")
 async def batch_export_csv(req: BatchExportRequest):
-    tasks_data = _get_tasks_data(req.task_ids)
-    if req.deduplicate:
-        tasks_data, removed = _deduplicate_tasks_data(tasks_data, merge_mode="single")
-        if removed > 0:
-            logger.info("批量导出 CSV 去重: 共移除 %d 条重复数据", removed)
-    data = _build_merged_csv(tasks_data)
-    tasks = [t for t, _ in tasks_data]
-    filename = _make_batch_filename(tasks, "csv")
-    total_rows = sum(len(rows) for _, rows in tasks_data)
-    logger.info(f"批量导出 CSV: {len(tasks)} 个任务, {total_rows} 行")
+    def _do():
+        tasks_data = _get_tasks_data(req.task_ids)
+        if req.deduplicate:
+            td, removed = _deduplicate_tasks_data(tasks_data, merge_mode="single")
+            if removed > 0:
+                logger.info("批量导出 CSV 去重: 共移除 %d 条重复数据", removed)
+            tasks_data = td
+        data = _build_merged_csv(tasks_data)
+        tasks = [t for t, _ in tasks_data]
+        filename = _make_batch_filename(tasks, "csv")
+        total_rows = sum(len(rows) for _, rows in tasks_data)
+        logger.info(f"批量导出 CSV: {len(tasks)} 个任务, {total_rows} 行")
+        return data, filename
+
+    loop = asyncio.get_running_loop()
+    data, filename = await loop.run_in_executor(_export_pool, _do)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv; charset=utf-8",
@@ -241,16 +272,22 @@ async def batch_export_csv(req: BatchExportRequest):
 
 @router.post("/excel", summary="批量导出为 Excel（支持合并或分Sheet）")
 async def batch_export_excel(req: BatchExportRequest):
-    tasks_data = _get_tasks_data(req.task_ids)
-    if req.deduplicate:
-        tasks_data, removed = _deduplicate_tasks_data(tasks_data, merge_mode=req.merge_mode)
-        if removed > 0:
-            logger.info("批量导出 Excel 去重: 共移除 %d 条重复数据, mode=%s", removed, req.merge_mode)
-    data = _build_batch_excel(tasks_data, req.merge_mode)
-    tasks = [t for t, _ in tasks_data]
-    filename = _make_batch_filename(tasks, "xlsx")
-    total_rows = sum(len(rows) for _, rows in tasks_data)
-    logger.info(f"批量导出 Excel: {len(tasks)} 个任务, {total_rows} 行, mode={req.merge_mode}")
+    def _do():
+        tasks_data = _get_tasks_data(req.task_ids)
+        if req.deduplicate:
+            td, removed = _deduplicate_tasks_data(tasks_data, merge_mode=req.merge_mode)
+            if removed > 0:
+                logger.info("批量导出 Excel 去重: 共移除 %d 条重复数据, mode=%s", removed, req.merge_mode)
+            tasks_data = td
+        data = _build_batch_excel(tasks_data, req.merge_mode)
+        tasks = [t for t, _ in tasks_data]
+        filename = _make_batch_filename(tasks, "xlsx")
+        total_rows = sum(len(rows) for _, rows in tasks_data)
+        logger.info(f"批量导出 Excel: {len(tasks)} 个任务, {total_rows} 行, mode={req.merge_mode}")
+        return data, filename
+
+    loop = asyncio.get_running_loop()
+    data, filename = await loop.run_in_executor(_export_pool, _do)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

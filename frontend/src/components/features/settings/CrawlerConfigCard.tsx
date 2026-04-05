@@ -59,6 +59,8 @@ export function CrawlerConfigCard() {
                             <ConfigRow label="中断轮询粒度" description="长等待期间检查 pause / stop 的频率。" value={config.crawler_interrupt_poll_ms ?? 300} onChange={set("crawler_interrupt_poll_ms")} min={50} max={3000} step={50} unit="ms" />
                             <ConfigRow label="检查点刷新间隔" description="DFS 回复阶段检查点的最长刷新间隔。" value={config.crawler_checkpoint_flush_interval_sec ?? 4} onChange={set("crawler_checkpoint_flush_interval_sec")} min={0.2} max={60} />
                             <ConfigRow label="检查点批次阈值" description="累计多少条回复后强制刷新一次检查点。" value={config.crawler_checkpoint_reply_batch ?? 3} onChange={set("crawler_checkpoint_reply_batch")} min={1} max={200} step={1} unit="条" />
+                            <ConfigRow label="卡死判定阈值" description="评论补采活跃任务超过该时长无事件时，自动释放调度槽并重新排队。" value={config.crawler_active_task_stale_timeout_sec ?? 900} onChange={set("crawler_active_task_stale_timeout_sec")} min={60} max={7200} step={60} />
+                            <ConfigRow label="卡死巡检间隔" description="任务列表/详情轮询时，至少每隔多久执行一次卡死巡检。" value={config.crawler_active_task_watchdog_interval_sec ?? 30} onChange={set("crawler_active_task_watchdog_interval_sec")} min={5} max={600} step={5} />
                             <ConfigRow label="X 时间分割触发阈值" description="时间跨度达到该天数后自动拆分搜索窗口。" value={config.x_time_split_trigger_days ?? 30} onChange={set("x_time_split_trigger_days")} min={1} max={3650} step={1} unit="天" />
                             <ConfigRow label="微博固定周窗口" description="微博带时间范围任务统一按固定 7 天窗口切分。" value={config.weibo_time_split_window_days ?? 7} onChange={set("weibo_time_split_window_days")} min={1} max={30} step={1} unit="天" />
                             <ConfigRow label="微博最大分段数" description="微博时间分段安全上限；超出时会显式失败，不会静默截断。" value={config.weibo_time_split_max_segments ?? 600} onChange={set("weibo_time_split_max_segments")} min={1} max={2000} step={1} unit="段" />
@@ -75,6 +77,12 @@ export function CrawlerConfigCard() {
                                 description="根据页面加载情况动态调整实际翻页间隔。"
                                 checked={Boolean(config.crawler_adaptive_wait_enabled)}
                                 onChange={(checked) => setConfig((prev) => ({ ...prev, crawler_adaptive_wait_enabled: checked }))}
+                            />
+                            <ToggleField
+                                label="任务卡死巡检"
+                                description="自动检测长时间无进展的评论补采任务，并释放被卡住的调度槽。"
+                                checked={Boolean(config.crawler_active_task_watchdog_enabled ?? true)}
+                                onChange={(checked) => setConfig((prev) => ({ ...prev, crawler_active_task_watchdog_enabled: checked }))}
                             />
                             <ToggleField
                                 label="跨任务去重"

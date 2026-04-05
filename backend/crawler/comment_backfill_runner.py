@@ -26,6 +26,7 @@ def run_comment_backfill_task(
     max_replies_per_tweet: int,
     reply_depth: int,
     browser_instance=None,
+    reply_browser_instance=None,
 ) -> CommentBackfillResult:
     task = task_manager.get_task_full(task_id)
     if not task:
@@ -47,6 +48,7 @@ def run_comment_backfill_task(
         max_replies_per_tweet=max_replies_per_tweet,
         reply_depth=reply_depth,
         browser_instance=browser_instance,
+        reply_browser_instance=reply_browser_instance,
     )
 
 
@@ -153,14 +155,15 @@ def _run_x_comment_backfill(
     max_replies_per_tweet: int,
     reply_depth: int,
     browser_instance=None,
+    reply_browser_instance=None,
 ) -> CommentBackfillResult:
-    from crawler.reply_fetcher import fetch_replies_batch
+    from config import settings
+    from crawler.pipeline import CrawlPipeline
 
     task_manager.update_task_phase(task_id, "正在准备 X 评论补采任务...")
     baseline = _compute_backfill_progress(tweets)
     task_manager.update_comment_backfill_progress(task_id, baseline)
 
-    tweets_for_fetch = []
     tweet_index: dict[str, dict] = {}
     counted_ids = _processed_ids(tweets)
     processed_count = baseline["processed_posts"]
@@ -172,6 +175,7 @@ def _run_x_comment_backfill(
         if tweet.get("id")
     }
 
+    tweets_for_fetch = []
     for tweet in working_tweets:
         if tweet.get("comment_backfill_failed"):
             tweet.pop("replies", None)
@@ -180,7 +184,7 @@ def _run_x_comment_backfill(
             tweet_index[tweet_id] = tweet
         tweets_for_fetch.append(tweet)
 
-    def _on_progress(tweet_id: str, replies: list[dict]) -> None:
+    def _on_reply_done(tweet_id: str, replies: list[dict]) -> None:
         nonlocal processed_count
         target = tweet_index.get(tweet_id)
         if target is not None:
@@ -206,16 +210,33 @@ def _run_x_comment_backfill(
         )
         task_manager.update_preview_tweets(task_id, processed_count, working_tweets)
 
-    updated_tweets, failed_records = fetch_replies_batch(
-        tweets=tweets_for_fetch,
-        max_replies_per_tweet=max_replies_per_tweet,
+    # ── Pipeline 解耦模式：reply_worker（一级）和 nested_worker（二级）并行 ──
+    # 补采模式下可使用多个 reply_worker 并行抓取（没有搜索翻页，主实例可用）
+    # reply_worker_count: 并行 reply worker 数（每个各自持有独立 tab）
+    reply_worker_count = 2  # 补采默认 2 个并行 worker
+    pipeline = CrawlPipeline(
         task_id=task_id,
-        progress_callback=_on_progress,
-        strategy="bfs",
+        timeout=settings.crawler_timeout,
+        max_replies_per_tweet=max_replies_per_tweet,
         reply_depth=reply_depth,
         browser_instance=browser_instance,
+        reply_browser_instance=reply_browser_instance,
+        on_reply_done=_on_reply_done,
+        reply_worker_count=reply_worker_count,
     )
+    pipeline.start()
+    pipeline.put_batch(tweets_for_fetch)
+    pipeline.finish_search()
+    pipeline.join()
+    pipeline.check_error()  # StopSignal / ChallengeSignal 重新抛出
 
+    # 从 result_map 收集最终结果（已含二级评论）
+    updated_tweets = []
+    for tweet in working_tweets:
+        tid = str(tweet.get("id") or "")
+        updated_tweets.append(pipeline.result_map.get(tid, tweet))
+
+    failed_records = list(pipeline.failed_records)
     failed_ids = {str(item.get("tweet_id") or "") for item in failed_records if item.get("tweet_id")}
     for tweet in updated_tweets:
         tweet["comment_backfill_failed"] = str(tweet.get("id") or "") in failed_ids

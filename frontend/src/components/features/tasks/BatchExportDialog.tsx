@@ -1,11 +1,22 @@
 "use client";
 
 import * as React from "react";
-import { Copy, Download, FileSpreadsheet, FileText, Loader2, X } from "lucide-react";
+import { Copy, Download, FileSpreadsheet, FileText, Loader2, X, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { api } from "@/services/api";
+import { api, ExportEstimateResponse } from "@/services/api";
 
 type ExportFormat = "csv" | "excel_single" | "excel_per_task";
+
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+function formatNumber(n: number): string {
+    return n.toLocaleString("zh-CN");
+}
 
 export function BatchExportDialog({
     open,
@@ -23,31 +34,88 @@ export function BatchExportDialog({
     const [format, setFormat] = React.useState<ExportFormat>("excel_per_task");
     const [deduplicate, setDeduplicate] = React.useState(false);
     const [exporting, setExporting] = React.useState(false);
+    const [estimate, setEstimate] = React.useState<ExportEstimateResponse | null>(null);
+    const [estimateLoading, setEstimateLoading] = React.useState(false);
+    const [progress, setProgress] = React.useState<{ loaded: number; total: number | null } | null>(null);
+    const abortRef = React.useRef<AbortController | null>(null);
+
     const deduplicateHint = format === "excel_per_task"
         ? "会在每个任务各自的 Sheet 内去重，避免单个任务内的重复帖子和评论。"
         : "会在最终合并导出的结果中去重，跨任务重复的数据也只保留一条。";
 
+    // 对话框打开时获取预估信息
+    React.useEffect(() => {
+        if (!open || taskIds.length === 0) {
+            setEstimate(null);
+            return;
+        }
+        let cancelled = false;
+        setEstimateLoading(true);
+        api.export.batchEstimate(taskIds)
+            .then((data) => {
+                if (!cancelled) setEstimate(data);
+            })
+            .catch(() => {
+                // 预估失败不影响导出功能
+                if (!cancelled) setEstimate(null);
+            })
+            .finally(() => {
+                if (!cancelled) setEstimateLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [open, taskIds]);
+
     const handleExport = async () => {
         if (taskIds.length === 0) return;
         setExporting(true);
+        setProgress(null);
+        const controller = new AbortController();
+        abortRef.current = controller;
+        const opts = {
+            signal: controller.signal,
+            onProgress: (loaded: number, total: number | null) => {
+                setProgress({ loaded, total });
+            },
+        };
         try {
             if (format === "csv") {
-                await api.export.batchDownloadCsv(taskIds, deduplicate);
+                await api.export.batchDownloadCsv(taskIds, deduplicate, opts);
             } else if (format === "excel_single") {
-                await api.export.batchDownloadExcel(taskIds, "single", deduplicate);
+                await api.export.batchDownloadExcel(taskIds, "single", deduplicate, opts);
             } else {
-                await api.export.batchDownloadExcel(taskIds, "per_task", deduplicate);
+                await api.export.batchDownloadExcel(taskIds, "per_task", deduplicate, opts);
             }
             onSuccess(`已导出 ${taskIds.length} 个任务的数据`);
             onClose();
         } catch (err) {
-            onError(err instanceof Error ? err.message : String(err));
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg !== "导出已取消") {
+                onError(msg);
+            }
         } finally {
             setExporting(false);
+            setProgress(null);
+            abortRef.current = null;
+        }
+    };
+
+    const handleCancel = () => {
+        if (abortRef.current) {
+            abortRef.current.abort();
         }
     };
 
     if (!open) return null;
+
+    const estimatedSize = estimate
+        ? format === "csv"
+            ? estimate.estimated_csv_bytes
+            : estimate.estimated_excel_bytes
+        : null;
+
+    const progressPercent = progress?.total
+        ? Math.min(99, Math.round((progress.loaded / progress.total) * 100))
+        : null;
 
     const FORMAT_OPTIONS: { value: ExportFormat; label: string; desc: string; icon: React.ReactNode }[] = [
         {
@@ -90,7 +158,52 @@ export function BatchExportDialog({
                     </Button>
                 </div>
 
-                <div className="mt-5 space-y-2.5">
+                {/* 数据量预估信息 */}
+                {(estimateLoading || estimate) && (
+                    <div className="mt-4 rounded-xl border border-border/60 bg-muted/30 px-4 py-3">
+                        {estimateLoading ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                正在估算数据量...
+                            </div>
+                        ) : estimate && (
+                            <div className="space-y-1.5">
+                                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                                    <BarChart3 className="h-3.5 w-3.5 text-primary" />
+                                    数据量预估
+                                </div>
+                                <div className="grid grid-cols-3 gap-3 text-xs text-muted-foreground">
+                                    <div>
+                                        <span className="text-foreground font-medium">
+                                            {formatNumber(estimate.total_tweets)}
+                                        </span>{" "}
+                                        条推文
+                                    </div>
+                                    <div>
+                                        <span className="text-foreground font-medium">
+                                            {formatNumber(estimate.total_replies)}
+                                        </span>{" "}
+                                        条评论
+                                    </div>
+                                    <div>
+                                        共{" "}
+                                        <span className="text-foreground font-medium">
+                                            {formatNumber(estimate.total_rows)}
+                                        </span>{" "}
+                                        行
+                                    </div>
+                                </div>
+                                {estimatedSize != null && estimatedSize > 0 && (
+                                    <p className="text-xs text-muted-foreground">
+                                        预估文件大小约 {formatBytes(estimatedSize)}
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                <div className="mt-4 space-y-2.5">
                     {FORMAT_OPTIONS.map((opt) => (
                         <label
                             key={opt.value}
@@ -98,7 +211,7 @@ export function BatchExportDialog({
                                 format === opt.value
                                     ? "border-primary bg-primary/5"
                                     : "border-border/60 bg-background/60 hover:border-border"
-                            }`}
+                            } ${exporting ? "pointer-events-none opacity-60" : ""}`}
                         >
                             <input
                                 type="radio"
@@ -107,6 +220,7 @@ export function BatchExportDialog({
                                 checked={format === opt.value}
                                 onChange={() => setFormat(opt.value)}
                                 className="mt-0.5 accent-primary"
+                                disabled={exporting}
                             />
                             <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 text-sm font-medium">
@@ -124,13 +238,14 @@ export function BatchExportDialog({
                         deduplicate
                             ? "border-primary bg-primary/5"
                             : "border-border/60 bg-background/60 hover:border-border"
-                    }`}
+                    } ${exporting ? "pointer-events-none opacity-60" : ""}`}
                 >
                     <input
                         type="checkbox"
                         checked={deduplicate}
                         onChange={(e) => setDeduplicate(e.target.checked)}
                         className="h-4 w-4 rounded border-input accent-primary"
+                        disabled={exporting}
                     />
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-sm font-medium">
@@ -143,11 +258,57 @@ export function BatchExportDialog({
                     </div>
                 </label>
 
+                {/* 导出进度条 */}
+                {exporting && (
+                    <div className="mt-4 space-y-2">
+                        <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span className="flex items-center gap-1.5">
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                                {progress
+                                    ? progressPercent != null
+                                        ? `正在下载... ${progressPercent}%`
+                                        : `正在下载... ${formatBytes(progress.loaded)}`
+                                    : "正在生成导出文件..."
+                                }
+                            </span>
+                            {progress && (
+                                <span>{formatBytes(progress.loaded)}</span>
+                            )}
+                        </div>
+                        <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                            {progressPercent != null ? (
+                                <div
+                                    className="h-full rounded-full bg-primary transition-all duration-300"
+                                    style={{ width: `${progressPercent}%` }}
+                                />
+                            ) : (
+                                <div className="h-full w-1/3 animate-pulse rounded-full bg-primary/60" />
+                            )}
+                        </div>
+                    </div>
+                )}
+
                 <div className="mt-5 flex items-center justify-end gap-2">
-                    <Button variant="outline" size="sm" className="rounded-xl" onClick={onClose} disabled={exporting}>
-                        取消
-                    </Button>
-                    <Button size="sm" className="rounded-xl" onClick={() => void handleExport()} disabled={exporting}>
+                    {exporting ? (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-xl"
+                            onClick={handleCancel}
+                        >
+                            取消导出
+                        </Button>
+                    ) : (
+                        <Button variant="outline" size="sm" className="rounded-xl" onClick={onClose}>
+                            取消
+                        </Button>
+                    )}
+                    <Button
+                        size="sm"
+                        className="rounded-xl"
+                        onClick={() => void handleExport()}
+                        disabled={exporting}
+                    >
                         {exporting ? (
                             <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                         ) : (

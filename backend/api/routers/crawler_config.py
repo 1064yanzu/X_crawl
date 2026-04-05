@@ -43,6 +43,19 @@ class CrawlerConfig(BaseModel):
     crawler_live_push_interval_ms: int = Field(
         default=800, ge=200, le=5000, description="SSE 实时推送间隔（毫秒）"
     )
+    crawler_active_task_watchdog_enabled: bool = Field(default=True, description="是否启用活跃任务卡死巡检与自动重排")
+    crawler_active_task_stale_timeout_sec: float = Field(
+        default=900.0,
+        ge=60.0,
+        le=7200.0,
+        description="活跃任务超过多久无事件视为卡死（秒）",
+    )
+    crawler_active_task_watchdog_interval_sec: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=600.0,
+        description="活跃任务巡检执行间隔（秒）",
+    )
     crawler_auto_throttle_enabled: bool = Field(default=True, description="是否启用资源压力自动节流")
     crawler_dynamic_concurrency_enabled: bool = Field(default=True, description="是否启用动态并发收敛")
     crawler_resource_sample_interval_sec: float = Field(
@@ -128,6 +141,9 @@ async def get_crawler_config() -> CrawlerConfig:
         crawler_checkpoint_flush_interval_sec=settings.crawler_checkpoint_flush_interval_sec,
         crawler_checkpoint_reply_batch=settings.crawler_checkpoint_reply_batch,
         crawler_live_push_interval_ms=settings.crawler_live_push_interval_ms,
+        crawler_active_task_watchdog_enabled=settings.crawler_active_task_watchdog_enabled,
+        crawler_active_task_stale_timeout_sec=settings.crawler_active_task_stale_timeout_sec,
+        crawler_active_task_watchdog_interval_sec=settings.crawler_active_task_watchdog_interval_sec,
         crawler_auto_throttle_enabled=settings.crawler_auto_throttle_enabled,
         crawler_dynamic_concurrency_enabled=settings.crawler_dynamic_concurrency_enabled,
         crawler_resource_sample_interval_sec=settings.crawler_resource_sample_interval_sec,
@@ -196,6 +212,9 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
     settings.crawler_checkpoint_flush_interval_sec = config.crawler_checkpoint_flush_interval_sec
     settings.crawler_checkpoint_reply_batch = config.crawler_checkpoint_reply_batch
     settings.crawler_live_push_interval_ms = config.crawler_live_push_interval_ms
+    settings.crawler_active_task_watchdog_enabled = config.crawler_active_task_watchdog_enabled
+    settings.crawler_active_task_stale_timeout_sec = config.crawler_active_task_stale_timeout_sec
+    settings.crawler_active_task_watchdog_interval_sec = config.crawler_active_task_watchdog_interval_sec
     settings.crawler_auto_throttle_enabled = config.crawler_auto_throttle_enabled
     settings.crawler_dynamic_concurrency_enabled = config.crawler_dynamic_concurrency_enabled
     settings.crawler_resource_sample_interval_sec = config.crawler_resource_sample_interval_sec
@@ -245,6 +264,9 @@ async def update_crawler_config(config: CrawlerConfig) -> CrawlerConfig:
         "crawler_checkpoint_flush_interval_sec": settings.crawler_checkpoint_flush_interval_sec,
         "crawler_checkpoint_reply_batch": settings.crawler_checkpoint_reply_batch,
         "crawler_live_push_interval_ms": settings.crawler_live_push_interval_ms,
+        "crawler_active_task_watchdog_enabled": settings.crawler_active_task_watchdog_enabled,
+        "crawler_active_task_stale_timeout_sec": settings.crawler_active_task_stale_timeout_sec,
+        "crawler_active_task_watchdog_interval_sec": settings.crawler_active_task_watchdog_interval_sec,
         "crawler_auto_throttle_enabled": settings.crawler_auto_throttle_enabled,
         "crawler_dynamic_concurrency_enabled": settings.crawler_dynamic_concurrency_enabled,
         "crawler_resource_sample_interval_sec": settings.crawler_resource_sample_interval_sec,

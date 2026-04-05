@@ -8,17 +8,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def test_comment_backfill_task_reuses_primary_pool_browser_without_aux(monkeypatch):
+def test_comment_backfill_task_acquires_reply_browser_in_pool_mode(monkeypatch):
+    """pool 模式下，comment_backfill 任务应同时申请主浏览器实例和 aux 浏览器实例（供 pipeline nested_worker 使用）。"""
     from api.services import crawl_service
     from crawler.comment_backfill_runner import CommentBackfillResult
     import config
 
     browser_instance = object()
+    reply_browser_instance = object()
     captured: dict[str, object] = {}
 
     class _DummyPool:
         def __init__(self) -> None:
-            self.aux_calls = 0
+            self.aux_calls: list[dict] = []
             self.release_calls: list[str] = []
 
         def acquire(self, task_id: str, *, platform: str):
@@ -26,8 +28,8 @@ def test_comment_backfill_task_reuses_primary_pool_browser_without_aux(monkeypat
             return browser_instance, 0
 
         def acquire_aux(self, task_id: str, *, purpose: str):
-            self.aux_calls += 1
-            raise AssertionError("comment_backfill 不应再申请 aux 浏览器实例")
+            self.aux_calls.append({"task_id": task_id, "purpose": purpose})
+            return reply_browser_instance
 
         def release(self, task_id: str) -> None:
             self.release_calls.append(task_id)
@@ -52,6 +54,7 @@ def test_comment_backfill_task_reuses_primary_pool_browser_without_aux(monkeypat
 
     def fake_run_comment_backfill_task(**kwargs):
         captured["browser_instance"] = kwargs.get("browser_instance")
+        captured["reply_browser_instance"] = kwargs.get("reply_browser_instance")
         return CommentBackfillResult(
             tweets=[],
             replies_fetched=0,
@@ -84,5 +87,7 @@ def test_comment_backfill_task_reuses_primary_pool_browser_without_aux(monkeypat
 
     assert captured["acquire"] == {"task_id": "task-comment-backfill", "platform": "x"}
     assert captured["browser_instance"] is browser_instance
-    assert dummy_pool.aux_calls == 0
+    # 优化后：补采任务不再申请额外 aux 浏览器（主实例在补采期间空闲，可复用）
+    assert len(dummy_pool.aux_calls) == 0
+    assert captured["reply_browser_instance"] is None
     assert dummy_pool.release_calls == ["task-comment-backfill"]

@@ -11,6 +11,7 @@ class PageState(str, Enum):
     CHALLENGE = "challenge"
     LOGIN_REQUIRED = "login_required"
     RATE_LIMITED = "rate_limited"
+    SPLASH = "splash"   # X 黑屏启动画面（JS 执行中但 SPA 尚未渲染内容）
 
 
 _TRANSIENT_ERROR_MARKERS = [
@@ -114,6 +115,10 @@ def _normalize_url(tab) -> str:
 # 若去掉 noscript/script/style 后文本极短，说明 JS 根本没执行
 _JS_NOT_EXECUTED_TEXT_THRESHOLD = 80
 
+# Splash 状态阈值：可见文本略多一点但仍然极少，JS 已执行但 SPA 还在加载
+# 典型表现：黑屏+X logo，HTML 里有少量框架代码但没有渲染内容
+_SPLASH_TEXT_THRESHOLD = 200
+
 
 def _is_js_not_executed(tab, visible_text: str) -> bool:
     """检测页面是否为 JS 未执行的空壳页。
@@ -128,6 +133,38 @@ def _is_js_not_executed(tab, visible_text: str) -> bool:
     try:
         raw_html = (tab.html or "").lower()
         return "javascript is not available" in raw_html
+    except Exception:
+        return False
+
+
+def _is_splash_loading(tab, visible_text: str) -> bool:
+    """检测页面是否处于 X 启动黑屏状态（SPA 正在加载但尚未渲染内容）。
+
+    X.com 打开时会先显示黑屏+X logo 的启动画面（splash screen），
+    此时 JS 已经执行，noscript 降级文本不存在，
+    但 SPA 还没渲染出任何可见内容。
+    这种状态需要等待 JS 完成渲染，而不是立即报告错误。
+
+    特征：
+    1. 可见文本极少（<= _SPLASH_TEXT_THRESHOLD）
+    2. 不是 noscript 空壳页（JS 已执行）
+    3. 当前 URL 是 x.com 域名
+    4. HTML 中存在 React/SPA 挂载点（#react-root 或 #layers）
+    """
+    if len(visible_text) > _SPLASH_TEXT_THRESHOLD:
+        return False
+    # noscript 空壳页单独处理，不算 splash
+    if _is_js_not_executed(tab, visible_text):
+        return False
+    try:
+        url = _normalize_url(tab)
+        if "x.com" not in url and "twitter.com" not in url:
+            return False
+        raw_html = (tab.html or "").lower()
+        # X SPA 挂载点：正常页面都有这个 div
+        has_react_root = "id=\"react-root\"" in raw_html or "id='react-root'" in raw_html
+        # 黑屏状态下，<div id="react-root"> 存在但内部为空/极少内容
+        return has_react_root
     except Exception:
         return False
 
@@ -155,6 +192,10 @@ def detect_page_state(tab) -> tuple[PageState, str]:
     # JS 未执行空壳页检测：HTML 包含 noscript 降级文本但 SPA 未渲染
     if _is_js_not_executed(tab, text):
         return PageState.TRANSIENT_ERROR, "JS 未执行，页面为 noscript 空壳页"
+
+    # Splash 黑屏检测：JS 已执行但 SPA 还在加载（黑屏+X logo 状态）
+    if _is_splash_loading(tab, text):
+        return PageState.SPLASH, "X 启动黑屏状态，SPA 尚未渲染内容"
 
     return PageState.OK, "页面状态正常"
 
@@ -265,26 +306,72 @@ _RETRY_BUTTON_SELECTORS = [
 ]
 
 # Retry 按钮存在的页面文本特征（避免在正常页面上误触）
+# 包含中文"出错了。请尝试重新加载。"的局部组件错误（评论区加载失败等）
 _RETRY_PAGE_MARKERS = [
     "something went wrong",
     "try again",
     "发生错误",
     "出错了",
+    "请尝试重新加载",
 ]
 
 import logging as _logging
 _retry_logger = _logging.getLogger(__name__)
 
 
-def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, bool]:
-    """
-    检测 X 页面是否出现错误页的 Retry 按钮，若有则点击，支持多次尝试并检测恢复状态。
+def detect_reply_area_error(tab) -> bool:
+    """检测评论区是否出现局部加载错误（"出错了。请尝试重新加载。"弹出组件）。
 
-    Returns:
-        (clicked, recovered):
-            clicked   = 是否点击了 Retry 按钮
-            recovered = 点击后页面是否恢复正常（仅当 clicked=True 时有意义）
+    与 detect_page_state 不同，这里只检测评论区的局部错误组件，
+    整页 detect_page_state 此时仍会返回 OK（因为主框架是正常的）。
     """
+    try:
+        text = _normalize_visible_text(tab)
+        return any(marker in text for marker in ("出错了", "请尝试重新加载", "something went wrong", "try reloading"))
+    except Exception:
+        return False
+
+
+def click_reply_retry_button(tab) -> bool:
+    """点击评论区的"重试"按钮。
+
+    适用于评论区局部加载错误时的恢复（截图中的"出错了。请尝试重新加载。"）。
+    返回 True 表示找到并点击了按钮，False 表示未找到。
+    """
+    import time as _time
+    try:
+        # 优先精准选择器
+        for selector in _RETRY_BUTTON_SELECTORS:
+            try:
+                btn = tab.ele(f"css:{selector}", timeout=0.8)
+                if btn:
+                    _retry_logger.info(f"评论区 Retry 按钮 selector={selector!r}，点击")
+                    btn.click()
+                    _time.sleep(0.8)
+                    return True
+            except Exception:
+                continue
+        # 兜底：遍历所有按钮找"重试"文字
+        try:
+            buttons = tab.eles("tag:button")
+            for btn in buttons:
+                try:
+                    btn_text = (btn.text or "").strip().lower()
+                    if btn_text in {"retry", "try again", "重试", "再试一次", "重新加载"}:
+                        _retry_logger.info(f"评论区 Retry 按钮 text={btn_text!r}，点击")
+                        btn.click()
+                        _time.sleep(0.8)
+                        return True
+                except Exception:
+                    continue
+        except Exception:
+            pass
+    except Exception as e:
+        _retry_logger.debug(f"评论区 Retry 按钮点击异常（忽略）: {e}")
+    return False
+
+
+def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, bool]:
     import time as _time
     try:
         text = _normalize_visible_text(tab)
@@ -334,7 +421,7 @@ def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, 
                 return False, False
 
             # 点击后等待页面响应
-            _time.sleep(2.0)
+            _time.sleep(1.2)
 
             # 检测页面是否已恢复
             new_state, _ = detect_page_state(tab)
@@ -346,7 +433,7 @@ def click_retry_button_if_present(tab, *, max_attempts: int = 1) -> tuple[bool, 
 
             # 未恢复，等待后再试
             if attempt < max_attempts - 1:
-                _time.sleep(2.0)
+                _time.sleep(1.2)
                 text = _normalize_visible_text(tab)
                 if not any(marker in text for marker in _RETRY_PAGE_MARKERS):
                     new_state, _ = detect_page_state(tab)

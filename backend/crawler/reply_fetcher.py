@@ -18,17 +18,16 @@ from crawler.cookie_manager import _build_cookie_dict
 from crawler.reply_parser import parse_tweet_detail_response, TWEET_DETAIL_PATTERN
 from crawler.response_saver import save_reply_response
 from crawler.page_health import navigate_with_retry
-from crawler.page_state import detect_page_state, PageState
+from crawler.page_state import detect_page_state, PageState, detect_reply_area_error, click_reply_retry_button
 from crawler.packet_guard import wait_for_target_packet, is_tweet_detail_body, extract_packet_body_dict
 from crawler.recovery_policy import (
     RecoveryPolicy,
-    soft_recover_for_packet,
     backoff_seconds,
     sleep_with_jitter,
     build_challenge_wait_plan,
     wait_for_challenge,
 )
-from crawler.crawl_signals import StopSignal, ChallengeSignal, RiskState
+from crawler.crawl_signals import StopSignal, ChallengeSignal, SplashTimeoutSignal, RiskState
 from crawler.utils import jittered_sleep, check_signal, merge_remaining, interruptible_sleep
 from crawler.scroll_safe import safe_scroll_down, safe_scroll_up, safe_scroll_to_bottom
 from crawler.runtime_metrics import bump_metric
@@ -148,9 +147,18 @@ def _wait_reply_packet_with_recovery(
     tweet_url: str,
     task_id: Optional[str],
     policy: RecoveryPolicy,
+    on_reply_area_error_switch_account=None,
 ):
-    """等待 TweetDetail 数据包，超时时执行软恢复与硬刷新。"""
+    """等待 TweetDetail 数据包，超时时执行软恢复与硬刷新。
+
+    翻页策略：X 评论区由滚动触发 TweetDetail API。
+    快速探测未命中时，立即再次滚动到底部重新触发，比纯等待更高效。
+
+    on_reply_area_error_switch_account: 可选回调，连续点击 Retry 按钮无效时调用触发换账号。
+    """
     risk_hits = 0
+    reply_area_retry_hits = 0  # 评论区局部错误连续点击 Retry 次数
+    _REPLY_AREA_RETRY_SWITCH_THRESHOLD = 3  # 连续 3 次点击无效后换账号
     probe_timeout = quick_probe_timeout(timeout)
     packet, ignored = wait_for_target_packet(
         tab,
@@ -164,6 +172,9 @@ def _wait_reply_packet_with_recovery(
         return packet
 
     for soft_attempt in range(policy.packet_soft_retries + 1):
+        # 快探超时说明滚动可能没触发加载，补一次完整滚动再等
+        _scroll_incremental(tab, task_id=task_id)
+
         packet, ignored = wait_for_target_packet(
             tab,
             timeout=compensation_probe_timeout(timeout),
@@ -176,10 +187,45 @@ def _wait_reply_packet_with_recovery(
             return packet
         bump_metric(task_id, "reply_packet_timeouts")
 
+        # ── 评论区局部加载错误检测（"出错了。请尝试重新加载。"）────────────
+        # detect_page_state 对此返回 OK，需单独检测评论区组件错误
+        if detect_reply_area_error(tab):
+            reply_area_retry_hits += 1
+            bump_metric(task_id, "reply_area_retries")
+            logger.warning(
+                f"  回复第 {page_num} 页检测到评论区加载错误，点击重试 "
+                f"({reply_area_retry_hits}/{_REPLY_AREA_RETRY_SWITCH_THRESHOLD})..."
+            )
+            clicked = click_reply_retry_button(tab)
+            if clicked:
+                # 点击后重新等待数据包
+                packet, _ = wait_for_target_packet(
+                    tab,
+                    timeout=compensation_probe_timeout(timeout),
+                    accept_body=is_tweet_detail_body,
+                )
+                if packet:
+                    _update_reply_rate_tracker(packet, task_id=task_id)
+                    return packet
+                logger.info(f"  评论区点击重试后仍无数据包（hit={reply_area_retry_hits}）")
+            # 连续点击超过阈值，触发换账号信号
+            if reply_area_retry_hits >= _REPLY_AREA_RETRY_SWITCH_THRESHOLD:
+                logger.warning(
+                    f"  评论区连续错误 {reply_area_retry_hits} 次，发出换账号信号"
+                )
+                if on_reply_area_error_switch_account:
+                    try:
+                        on_reply_area_error_switch_account()
+                    except Exception as _cb_err:
+                        logger.debug(f"换账号回调异常: {_cb_err}")
+                raise SplashTimeoutSignal(
+                    f"评论区持续加载错误 {reply_area_retry_hits} 次，尝试切换账号"
+                )
+            continue  # 继续下一次软重试
+
         state, reason = detect_page_state(tab)
         if state in {PageState.CHALLENGE, PageState.RATE_LIMITED, PageState.LOGIN_REQUIRED}:
             risk_hits += 1
-            bump_metric(task_id, "risk_hits")
             telemetry.record_event(
                 task_id,
                 "reply_risk_detected",
@@ -220,11 +266,27 @@ def _wait_reply_packet_with_recovery(
 
         if soft_attempt < policy.packet_soft_retries:
             bump_metric(task_id, "soft_retries")
-            soft_recover_for_packet(tab, soft_attempt)
+            # 页面状态正常但无包：评论区可能已到底部，限制最多再重试1次
+            if state == PageState.OK:
+                if soft_attempt >= 1:
+                    logger.debug(
+                        f"  回复第 {page_num} 页页面正常但连续 {soft_attempt+1} 次无包，"
+                        f"可能已到底部，提前退出软重试"
+                    )
+                    break
             continue
 
-    # 回复翻页场景下限制硬恢复次数为 min(2, policy 配置)，避免无效等待
-    reply_hard_retries = min(2, policy.refresh_max_retries)
+    # 翻页场景（page_num > 1）下跳过硬恢复：重新导航会丢失翻页 cursor，
+    # 命中的是第 1 页数据（全重复），浪费时间且最终还要靠空页计数退出
+    if page_num > 1:
+        logger.debug(
+            f"  回复第 {page_num} 页软重试耗尽，翻页场景跳过硬恢复（避免丢失 cursor）"
+        )
+        return None
+
+    # 回复翻页场景下限制硬恢复次数为 1，避免无效等待
+    # 评论区到底部时软重试超时属正常情况，不应再重新导航
+    reply_hard_retries = min(1, policy.refresh_max_retries)
     for hard_attempt in range(reply_hard_retries):
         bump_metric(task_id, "hard_refreshes")
         wait = backoff_seconds(hard_attempt, base=2.0, cap=12.0)
@@ -375,7 +437,8 @@ def _ensure_reply_session_ready(tab, *, task_id: Optional[str], browser_instance
     injected = _inject_browser_instance_cookies_to_tab(tab, browser_instance)
     if injected:
         logger.info(f"评论抓取前补注入浏览器实例 Cookie {injected} 条")
-        time.sleep(0.5)
+        # 短暂等待让 cookie 生效（原先 0.5s → 0.15s，cookie 设置是同步操作）
+        time.sleep(0.15)
         try:
             if check_login(tab):
                 _mark_login_cached(tab)
@@ -440,6 +503,9 @@ def fetch_replies(
     page_num = 0
     empty_page_count = 0  # 连续无新评论计数
     max_empty_pages = _dynamic_max_empty_pages(expected_count or 0)
+    # 评论区换账号次数上限（防止无限换号）
+    _reply_account_switches = 0
+    _REPLY_MAX_ACCOUNT_SWITCHES = 2
 
     # 决定是否使用外部传入的 tab（DFS 时复用避免频繁开关）
     if existing_tab is not None:
@@ -472,7 +538,7 @@ def fetch_replies(
             max_retries=policy.refresh_max_retries,
             base_wait=3.0,
             load_timeout=30.0,
-            post_load_wait=0.3,
+            post_load_wait=0.0,
             challenge_retry_times=policy.challenge_retry_times,
             challenge_cooldown=policy.challenge_cooldown,
             raise_on_risk=True,
@@ -489,6 +555,11 @@ def fetch_replies(
             }
             return [], failure
 
+        # 导航完成后立即执行一次渐进式滚动，触发 TweetDetail API 初始加载。
+        # X 评论区由滚动触发数据包，第一页同样需要滚动才能稳定拿到包，
+        # 不滚动直接等会浪费 quick_probe_timeout 秒的无效等待。
+        _scroll_incremental(tab, task_id=task_id)
+
         while True:
             # 每页检查控制信号
             check_signal(task_id)
@@ -503,50 +574,56 @@ def fetch_replies(
                 page=page_num,
                 meta={"tweet_id": tweet_id},
             )
-            packet = _wait_reply_packet_with_recovery(
-                tab=tab,
-                timeout=timeout,
-                page_num=page_num,
-                tweet_url=tweet_url,
-                task_id=task_id,
-                policy=policy,
-            )
+            try:
+                packet = _wait_reply_packet_with_recovery(
+                    tab=tab,
+                    timeout=timeout,
+                    page_num=page_num,
+                    tweet_url=tweet_url,
+                    task_id=task_id,
+                    policy=policy,
+                )
+            except SplashTimeoutSignal as splash_err:
+                # 评论区持续加载错误，尝试换账号后重新导航
+                logger.warning(f"  {splash_err}")
+                bump_metric(task_id, "reply_area_account_switches")
+                _reply_account_switches += 1
+                switched = False
+                if _reply_account_switches <= _REPLY_MAX_ACCOUNT_SWITCHES:
+                    switched = _try_inject_pool_account_cookies(tab, task_id, browser_instance=browser_instance)
+                    if switched:
+                        _invalidate_login_cache(tab)
+                        logger.info(f"  评论区换账号成功（第 {_reply_account_switches} 次），重新导航")
+                        _safe_stop_listener(tab)
+                        tab.listen.start(TWEET_DETAIL_PATTERN)
+                        navigate_with_retry(
+                            tab, tweet_url,
+                            max_retries=policy.refresh_max_retries,
+                            base_wait=3.0, load_timeout=30.0,
+                            challenge_retry_times=policy.challenge_retry_times,
+                            challenge_cooldown=policy.challenge_cooldown,
+                            task_id=task_id,
+                        )
+                        _scroll_incremental(tab, task_id=task_id)
+                        continue  # 继续采集
+                if not switched:
+                    logger.warning(
+                        f"  评论区错误持续且无可用备用账号，跳过 tweet_id={tweet_id}"
+                    )
+                    break  # 放弃本推文评论采集
 
             if not packet:
-                # 恢复失败但覆盖率不足时，尝试额外滚动触发加载
-                if expected_count and len(all_replies) < expected_count * 0.5:
-                    logger.info(
-                        f"  恢复后仍未抓到数据（{len(all_replies)}/{expected_count}），"
-                        f"尝试额外滚动触发加载..."
-                    )
-                    _scroll_incremental(tab, task_id=task_id)
-                    packet, _ = wait_for_target_packet(
-                        tab,
-                        timeout=compensation_probe_timeout(timeout),
-                        accept_body=is_tweet_detail_body,
-                    )
-                    if not packet:
-                        logger.warning(f"  回复第 {page_num} 页连续超时（tweet_id={tweet_id}）")
-                        telemetry.record_event(
-                            task_id,
-                            "reply_packet_timeout_stop",
-                            status="running",
-                            phase=f"回复第 {page_num} 页连续超时，停止当前推文回复抓取",
-                            page=page_num,
-                            meta={"tweet_id": tweet_id},
-                        )
-                        break
-                else:
-                    logger.warning(f"  回复第 {page_num} 页连续超时（tweet_id={tweet_id}）")
-                    telemetry.record_event(
-                        task_id,
-                        "reply_packet_timeout_stop",
-                        status="running",
-                        phase=f"回复第 {page_num} 页连续超时，停止当前推文回复抓取",
-                        page=page_num,
-                        meta={"tweet_id": tweet_id},
-                    )
-                    break
+                # 所有重试均失败，停止当前推文评论抓取
+                logger.warning(f"  回复第 {page_num} 页连续超时（tweet_id={tweet_id}），停止抓取")
+                telemetry.record_event(
+                    task_id,
+                    "reply_packet_timeout_stop",
+                    status="running",
+                    phase=f"回复第 {page_num} 页连续超时，停止当前推文回复抓取",
+                    page=page_num,
+                    meta={"tweet_id": tweet_id},
+                )
+                break
 
             try:
                 body = extract_packet_body_dict(packet)
@@ -558,7 +635,7 @@ def fetch_replies(
                 if task_id:
                     save_reply_response(task_id, tweet_id, page_num, body)
 
-                _, page_replies, bottom_cursor, _ = parse_tweet_detail_response(
+                _, page_replies, bottom_cursor, _, has_spam_boundary = parse_tweet_detail_response(
                     body, focal_tweet_id=tweet_id
                 )
 
@@ -594,14 +671,35 @@ def fetch_replies(
                             f"  低评论推文首页无数据（预期 {expected_count} 条），直接跳过"
                         )
                         break
+                    # 已有数据但翻页全重复：说明 cursor 可能失效或评论区到底
+                    # 降低容忍阈值——如果已抓到至少 1 条评论，连续 2 页空就足够放弃
+                    effective_max_empty = min(max_empty_pages, 2) if len(all_replies) > 0 else max_empty_pages
                     bump_metric(task_id, "empty_pages")
-                    if empty_page_count >= max_empty_pages:
+                    if empty_page_count >= effective_max_empty:
                         logger.info(
-                            f"  连续 {max_empty_pages} 页无新评论，停止翻页"
+                            f"  连续 {empty_page_count} 页无新评论"
+                            f"{'（已有 ' + str(len(all_replies)) + ' 条，提前结束）' if len(all_replies) > 0 else ''}"
+                            f"，停止翻页"
                         )
                         break
                 else:
                     empty_page_count = 0  # 有新数据则重置计数
+
+                # ── 垃圾信息边界检测：出现"显示可能的垃圾信息"时停止翻页 ──
+                if has_spam_boundary:
+                    logger.info(
+                        f"  检测到垃圾信息边界（ShowMoreThreads），"
+                        f"有效评论已加载完毕，停止翻页（已抓 {len(all_replies)} 条）"
+                    )
+                    telemetry.record_event(
+                        task_id,
+                        "reply_spam_boundary",
+                        status="running",
+                        phase="检测到垃圾信息边界，停止翻页",
+                        page=page_num,
+                        meta={"tweet_id": tweet_id, "fetched": len(all_replies)},
+                    )
+                    break
 
                 # ── 快速退出：评论数已达标时立即完成 ────────
                 if expected_count > 0:
@@ -645,23 +743,9 @@ def fetch_replies(
 
                 # 无更多评论（API 没有返回 bottom_cursor）
                 if not bottom_cursor:
-                    if expected_count and len(all_replies) < expected_count * 0.5:
-                        # 覆盖率不足但 API 没给 cursor，尝试额外滚动
-                        # 纳入空页计数，避免无限循环
-                        empty_page_count += 1
-                        if empty_page_count >= max_empty_pages:
-                            logger.info(
-                                f"  API 无 cursor 且连续 {max_empty_pages} 次无新数据，"
-                                f"停止翻页（{len(all_replies)}/{expected_count}）"
-                            )
-                            break
-                        logger.info(
-                            f"  API 无 cursor 但仅抓到 {len(all_replies)}/{expected_count} 条，"
-                            f"尝试额外滚动触发加载..."
-                        )
-                        _scroll_incremental(tab, task_id=task_id)
-                        continue
-                    logger.info(f"  评论区无更多数据（tweet_id={tweet_id}）")
+                    # API 无 cursor 说明评论区已到底，无论覆盖率如何直接停止
+                    # 之前尝试额外滚动的逻辑会导致反复等包超时，浪费 20-30s
+                    logger.info(f"  评论区无更多数据（tweet_id={tweet_id}，已抓 {len(all_replies)} 条）")
                     break
 
                 # ── 翻页操作：渐进式滚动触发懒加载 ──────────────────────

@@ -50,7 +50,7 @@ def _pool_profile_base(*, pid: Optional[int] = None) -> str:
     返回当前进程专属的浏览器池 profile 根目录。
 
     多 worker / 多进程启动时，不同进程若共用同一组 profile 目录，
-    会在“清理残留实例”阶段互相误杀对方正在使用的浏览器。
+    会在"清理残留实例"阶段互相误杀对方正在使用的浏览器。
     """
     actual_pid = pid if pid is not None else os.getpid()
     return os.path.join(_POOL_PROFILE_ROOT, f"worker-{actual_pid}")
@@ -305,6 +305,10 @@ class BrowserInstance:
         co.set_argument("--disable-infobars")
         co.set_argument("--no-first-run")
         co.set_argument("--no-default-browser-check")
+        # 禁止会话恢复：防止 profile 被脏数据污染时 Chrome 恢复历史标签页
+        co.set_argument("--no-restore-last-session")
+        co.set_argument("--disable-session-crashed-bubble")
+        co.set_argument("--disable-features", "Translate,OptimizationHints,MediaRouter,DialMediaRouteProvider")
 
         load_mode = settings.browser_load_mode if settings.browser_load_mode in ("normal", "eager", "none") else "normal"
         co.set_load_mode(load_mode)
@@ -327,7 +331,7 @@ class BrowserInstance:
 
         浏览器池实例不依赖长期持久化登录态，任务启动时会自行注入 Cookie。
         因此前一次异常退出留下的脏 profile / 锁文件 / 偏好损坏，都应在新实例启动前清空，
-        避免 Chrome 弹出“打开您的个人资料时出了点问题”。
+        避免 Chrome 弹出『打开您的个人资料时出了点问题』或恢复历史标签页。
         """
         profile_path = Path(self.profile_dir)
         if profile_path.exists():
@@ -343,6 +347,8 @@ class BrowserInstance:
                                 child.unlink(missing_ok=True)
                         except Exception:
                             pass
+                    # 重点清除会话文件，防止 Chrome 恢复历史标签页
+                    self._clear_session_files(profile_path)
                     logger.debug(
                         "[BrowserPool] 实例 #%s profile 部分清理完成（被锁定文件已跳过）",
                         self.instance_id,
@@ -360,6 +366,29 @@ class BrowserInstance:
                     e,
                 )
         os.makedirs(self.profile_dir, exist_ok=True)
+        # profile 存在但未完全清干净时，主动清除会话文件防止 Chrome 恢复历史 tab
+        self._clear_session_files(Path(self.profile_dir))
+
+    def _clear_session_files(self, profile_path: Path) -> None:
+        """删除 Chrome 用于恢复上次会话的文件，防止新实例启动时自动恢复历史标签页。"""
+        # Chrome 的会话文件存在 Default/ 子目录下
+        default_dir = profile_path / "Default"
+        session_files = [
+            "Last Session",
+            "Last Tabs",
+            "Current Session",
+            "Current Tabs",
+            "Session Storage",
+        ]
+        for name in session_files:
+            target = default_dir / name
+            try:
+                if target.is_file():
+                    target.unlink(missing_ok=True)
+                elif target.is_dir():
+                    shutil.rmtree(target, ignore_errors=True)
+            except Exception:
+                pass
 
     def set_cookies(
         self,
@@ -780,6 +809,33 @@ _pool: Optional[BrowserPool] = None
 _pool_lock = threading.Lock()
 
 
+def _cleanup_stale_worker_dirs() -> None:
+    """
+    清理 ~/.xcrawl-browser-instances/ 下不属于当前进程的旧 worker 目录。
+
+    每次 BrowserPool 初始化时调用，防止历史残留 profile 导致 Chrome 恢复旧标签页。
+    只删除非当前进程（worker-<pid>）的目录，保留当前进程自己的目录（由 _reset_profile_dir 管理）。
+    """
+    current_pid = os.getpid()
+    current_worker_dir = _pool_profile_base(pid=current_pid)
+    root = Path(_POOL_PROFILE_ROOT)
+    if not root.exists():
+        return
+    removed = 0
+    for worker_dir in root.iterdir():
+        if not worker_dir.is_dir():
+            continue
+        if worker_dir.resolve() == Path(current_worker_dir).resolve():
+            continue  # 保留当前进程的目录
+        try:
+            shutil.rmtree(worker_dir, ignore_errors=True)
+            removed += 1
+        except Exception:
+            pass
+    if removed > 0:
+        logger.info("[BrowserPool] 已清理 %s 个旧 worker profile 目录", removed)
+
+
 def get_browser_pool() -> BrowserPool:
     """获取全局浏览器实例池（懒初始化，大小由配置决定）。"""
     global _pool
@@ -789,6 +845,7 @@ def get_browser_pool() -> BrowserPool:
                 max_size = compute_pool_max_size()
                 profile_base = _pool_profile_base()
                 cleanup_stale_pool_browsers(base_dir=profile_base)
+                _cleanup_stale_worker_dirs()
                 _pool = BrowserPool(max_size=max_size)
                 logger.info(
                     "[BrowserPool] 初始化，max_size=%s，profile_base=%s",

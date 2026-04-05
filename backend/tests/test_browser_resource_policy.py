@@ -58,6 +58,7 @@ def test_apply_tab_resource_policies_clears_blocked_urls_when_disabled(monkeypat
     import config
     from crawler.browser_resource_policy import apply_tab_resource_policies
 
+    monkeypatch.setattr(config.settings, "browser_block_images", False, raising=False)
     monkeypatch.setattr(config.settings, "browser_block_videos", False, raising=False)
     tab = _DummyTab()
 

@@ -21,6 +21,8 @@ class ScheduledTask:
     payload: dict
     platform: str = "x"
     task_kind: str = "search"
+    result_count: int = 0  # 推文数量（兼容字段）
+    total_expected_replies: int = 0  # 预期评论总数，用于补采任务优先级排序
 
 
 class SchedulerBackend(Protocol):
@@ -98,14 +100,14 @@ class TaskScheduler:
             self._backend = self._make_backend()
             logger.info(f"调度后端已刷新: {settings.scheduler_backend}")
 
-    def enqueue(self, task_id: str, payload: dict, platform: str = "x", task_kind: str = "search") -> bool:
+    def enqueue(self, task_id: str, payload: dict, platform: str = "x", task_kind: str = "search", result_count: int = 0, total_expected_replies: int = 0) -> bool:
         with self._lock:
             if task_id in self._running or task_id in self._queued_ids:
                 return False
             self._queued_ids.add(task_id)
             self._queued_order.append(task_id)
             self._queued_platforms[task_id] = platform
-            self._backend.put(ScheduledTask(task_id=task_id, payload=payload, platform=platform, task_kind=task_kind))
+            self._backend.put(ScheduledTask(task_id=task_id, payload=payload, platform=platform, task_kind=task_kind, result_count=result_count, total_expected_replies=total_expected_replies))
             return True
 
     def mark_done(self, task_id: str) -> None:
@@ -236,13 +238,18 @@ class TaskScheduler:
 
     def _try_dispatch_pending(self) -> bool:
         """尝试从 pending 列表中找到可调度的任务并执行。
-        按优先级排序：普通搜索任务优先于评论补采任务。
+        排序策略：有搜索任务时搜索优先；没有搜索任务时评论补采同等对待。
+        同为补采任务时按预期评论总数降序（高评论量优先保证广泛性）。
         """
         dispatched = False
         with self._lock:
-            # 排序：search 优先于 comment_backfill
+            has_search = any(it.task_kind != "comment_backfill" for it in self._pending_items)
             self._pending_items.sort(
-                key=lambda it: 1 if it.task_kind == "comment_backfill" else 0
+                key=lambda it: (
+                    # 只在队列中同时有搜索任务时，搜索才优先
+                    (1 if it.task_kind == "comment_backfill" else 0) if has_search else 0,
+                    -(it.total_expected_replies or it.result_count),
+                )
             )
             if self._pending_items:
                 logger.debug(
@@ -289,6 +296,8 @@ class TaskScheduler:
             for tid in dead:
                 self._running.pop(tid, None)
                 self._running_platforms.pop(tid, None)
+                if dead:
+                    logger.debug("调度器清理已死线程: %s", [t[:8] for t in dead])
 
     def _running_count(self) -> int:
         with self._lock:

@@ -3,6 +3,7 @@
 GET /api/v1/export/{task_id}?format=csv   - 导出为 CSV（UTF-8 BOM）
 GET /api/v1/export/{task_id}?format=excel - 导出为 Excel（xlsx）
 """
+import asyncio
 import io
 import csv
 import re
@@ -261,8 +262,9 @@ def _dedup_rows(rows: list[dict]) -> list[dict]:
 
 
 def _get_task_data(task_id: str, *, deduplicate: bool = False) -> tuple[dict, list[dict]]:
-    """获取任务元信息和推文列表（含回复展平），不存在则抛 404"""
-    task = task_manager.get_task_export_payload(task_id)
+    """获取任务元信息和推文列表（含回复展平），不存在则抛 404。
+    使用只读接口避免 deepcopy 开销。"""
+    task = task_manager.get_task_export_payload_readonly(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     tweets = task.get("tweets", [])
@@ -325,9 +327,14 @@ async def export_csv(
     task_id: str,
     deduplicate: bool = Query(default=False, description="是否对导出数据去重（完全相同的帖子/评论只保留一条）"),
 ):
-    task, tweets = _get_task_data(task_id, deduplicate=deduplicate)
-    data = _build_csv(tweets)
-    filename = _make_filename(task, "csv")
+    def _do():
+        task, tweets = _get_task_data(task_id, deduplicate=deduplicate)
+        data = _build_csv(tweets)
+        filename = _make_filename(task, "csv")
+        return data, filename
+
+    loop = asyncio.get_running_loop()
+    data, filename = await loop.run_in_executor(None, _do)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="text/csv; charset=utf-8",
@@ -423,9 +430,14 @@ async def export_excel(
     task_id: str,
     deduplicate: bool = Query(default=False, description="是否对导出数据去重（完全相同的帖子/评论只保留一条）"),
 ):
-    task, tweets = _get_task_data(task_id, deduplicate=deduplicate)
-    data = _build_excel(tweets)
-    filename = _make_filename(task, "xlsx")
+    def _do():
+        task, tweets = _get_task_data(task_id, deduplicate=deduplicate)
+        data = _build_excel(tweets)
+        filename = _make_filename(task, "xlsx")
+        return data, filename
+
+    loop = asyncio.get_running_loop()
+    data, filename = await loop.run_in_executor(None, _do)
     return StreamingResponse(
         io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

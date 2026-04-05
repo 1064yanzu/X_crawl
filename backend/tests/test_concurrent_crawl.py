@@ -122,7 +122,6 @@ class TestTaskManagerAccountBinding:
         task_id = task_manager.create_task(
             keyword="test",
             product="Top",
-            max_count=100,
         )
 
         # 绑定账号
@@ -139,7 +138,6 @@ class TestTaskManagerAccountBinding:
         task_id = task_manager.create_task(
             keyword="test",
             product="Top",
-            max_count=100,
         )
 
         # 绑定账号

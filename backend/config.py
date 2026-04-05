@@ -115,13 +115,13 @@ class Settings(BaseSettings):
         default=8.0, description="挑战页重试前冷却时间（秒）"
     )
     crawler_cloudflare_wait_seconds: float = Field(
-        default=60.0, description="检测到 Cloudflare 验证时每次等待时长（秒），给用户充足时间完成验证"
+        default=30.0, description="检测到 Cloudflare 验证时每次等待时长（秒）"
     )
     crawler_error_freeze_threshold: int = Field(
         default=15, description="连续错误页累计次数达到此阈值后触发长时间冻结"
     )
     crawler_error_freeze_seconds: float = Field(
-        default=600.0, description="连续错误触发冻结后的休眠时长（秒），默认 10 分钟"
+        default=180.0, description="连续错误触发冻结后的休眠时长（秒），默认 3 分钟"
     )
     crawler_max_concurrent_tasks: int = Field(
         default=1, description="允许并发运行的任务数上限（1 表示串行）"
@@ -152,6 +152,15 @@ class Settings(BaseSettings):
     )
     crawler_live_push_interval_ms: int = Field(
         default=800, description="SSE 实时推送间隔（毫秒）"
+    )
+    crawler_active_task_watchdog_enabled: bool = Field(
+        default=True, description="是否启用活跃任务卡死巡检与自动重排"
+    )
+    crawler_active_task_stale_timeout_sec: float = Field(
+        default=900.0, description="活跃任务超过多久无事件视为卡死（秒）"
+    )
+    crawler_active_task_watchdog_interval_sec: float = Field(
+        default=30.0, description="活跃任务巡检执行间隔（秒）"
     )
     crawler_auto_throttle_enabled: bool = Field(
         default=True, description="是否根据系统资源压力自动放慢抓取节奏"
@@ -214,13 +223,13 @@ class Settings(BaseSettings):
         default=True, description="是否启用休息节律（防长时间爬取被识别）"
     )
     crawler_micro_break_chance: float = Field(
-        default=0.05, description="微休息触发概率（每批新推文后）"
+        default=0.02, description="微休息触发概率（每批新推文后）"
     )
     crawler_short_break_every_n: int = Field(
-        default=500, description="小憩触发阈值（累计推文数）"
+        default=1000, description="小憩触发阈值（累计推文数）"
     )
     crawler_long_rest_interval_hours: float = Field(
-        default=2.0, description="长休息间隔（小时），运行满此时间后强制休息 15-25 分钟"
+        default=4.0, description="长休息间隔（小时），运行满此时间后强制休息"
     )
 
     # 任务历史数据库

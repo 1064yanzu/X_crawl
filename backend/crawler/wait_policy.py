@@ -17,13 +17,13 @@ from crawler.utils import interruptible_sleep, jittered_sleep
 def quick_probe_timeout(total_timeout: float) -> float:
     """首轮抢包窗口。"""
     total = max(1.0, float(total_timeout))
-    return min(3.0, max(0.8, total * 0.2))
+    return min(2.0, max(0.5, total * 0.12))
 
 
 def compensation_probe_timeout(total_timeout: float) -> float:
     """补偿等待窗口。"""
     total = max(1.0, float(total_timeout))
-    return max(2.5, min(12.0, total * 0.65))
+    return max(2.0, min(8.0, total * 0.4))
 
 
 def scroll_steps() -> int:

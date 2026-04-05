@@ -49,6 +49,7 @@ from crawler.crawl_signals import (
     StopSignal,
     ChallengeSignal,
     LoginRequiredPause,
+    SplashTimeoutSignal,
     RiskState,
 )
 from crawler.utils import (
@@ -1160,12 +1161,36 @@ def search(
         # ── 4. 访问搜索页面（含错误页自动刷新）───────────────────────────
         # X 的搜索框原生支持高级语法（如 since:、from:、min_faves: 等）
         # 直接导航到完整 URL 即可，无需分阶段预热
-        ok = _navigate_direct(
-            tab=tab,
-            search_url=search_url,
-            policy=policy,
-            task_id=task_id,
-        )
+        try:
+            ok = _navigate_direct(
+                tab=tab,
+                search_url=search_url,
+                policy=policy,
+                task_id=task_id,
+            )
+        except SplashTimeoutSignal as splash_e:
+            # 黑屏持续无法恢复，尝试切换账号后重新导航
+            logger.warning(f"{splash_e}，尝试切换账号...")
+            rotated = _try_rotate_account(
+                tab,
+                current_account,
+                pool,
+                "splash_timeout",
+                reply_browser_instance=reply_browser_instance,
+                task_id=task_id,
+            )
+            if rotated:
+                current_account = rotated
+                logger.info(f"已切换到账号 {rotated.alias!r}，重新导航搜索页面")
+                ok = _navigate_direct(
+                    tab=tab,
+                    search_url=search_url,
+                    policy=policy,
+                    task_id=task_id,
+                )
+            else:
+                logger.warning("无可用备用账号，继续使用当前账号（页面可能仍黑屏）")
+                ok = False
 
         if not ok:
             raise RuntimeError(f"搜索页面反复出现错误，无法加载: {search_url}")
@@ -1489,6 +1514,35 @@ def search(
                 raise
             except ChallengeSignal:
                 raise
+            except SplashTimeoutSignal as splash_e:
+                # 主循环中页面持续黑屏，尝试换账号后重新导航继续
+                logger.warning(f"主循环检测到黑屏信号：{splash_e}，尝试切换账号...")
+                bump_metric(task_id, "splash_account_rotations")
+                rotated = _try_rotate_account(
+                    tab,
+                    current_account,
+                    pool,
+                    "splash_in_loop",
+                    reply_browser_instance=reply_browser_instance,
+                    task_id=task_id,
+                )
+                if rotated:
+                    current_account = rotated
+                    logger.info(f"已切换到账号 {rotated.alias!r}，重新导航搜索页面继续采集")
+                    try:
+                        tab.listen.stop()
+                    except Exception:
+                        pass
+                    tab.listen.start(SEARCH_TIMELINE_PATTERN)
+                    _navigate_direct(
+                        tab=tab,
+                        search_url=search_url,
+                        policy=policy,
+                        task_id=task_id,
+                    )
+                else:
+                    logger.warning("无可用备用账号，跳过黑屏恢复，继续等待下一页")
+                # 不 break，继续采集循环
             except Exception as e:
                 logger.error(f"第 {page_num} 页解析失败: {e}", exc_info=True)
                 break

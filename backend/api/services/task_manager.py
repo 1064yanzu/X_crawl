@@ -67,6 +67,7 @@ def _default_comment_backfill_progress() -> dict:
         "skipped_posts": 0,
         "succeeded_posts": 0,
         "failed_posts": 0,
+        "total_expected_replies": 0,
     }
 
 
@@ -781,6 +782,9 @@ def get_task(task_id: str) -> Optional[dict]:
 
 def get_task_summary(task_id: str) -> Optional[dict]:
     _ensure_db()
+    from api.services.task_watchdog import maybe_heal_stale_active_tasks
+
+    maybe_heal_stale_active_tasks()
     return _build_task_view(task_id, include_tweets=False)
 
 
@@ -800,13 +804,79 @@ def get_task_export_payload(task_id: str) -> Optional[dict]:
     }
 
 
+def get_task_export_payload_readonly(task_id: str) -> Optional[dict]:
+    """导出专用只读接口——不做 deepcopy，仅在只读场景（CSV/Excel 构建）使用。
+    调用方不得修改返回的 tweets 列表中的数据。"""
+    _ensure_db()
+    summary = _get_task_summary_snapshot(task_id)
+    if not summary:
+        return None
+
+    # 确保数据已加载到内存
+    with _tasks_lock:
+        if task_id not in _loaded_task_results:
+            tweets = _get_db().load_task_result(task_id)
+            _task_results[task_id] = tweets
+            _loaded_task_results.add(task_id)
+        tweets_ref = _task_results.get(task_id, [])
+
+    return {
+        "task_id": summary.get("task_id", task_id),
+        "keyword": summary.get("keyword", ""),
+        "platform": summary.get("platform", "x"),
+        "fetch_replies": bool(summary.get("fetch_replies", False)),
+        "tweets": tweets_ref,
+    }
+
+
+def get_export_estimate(task_ids: list[str]) -> dict:
+    """返回导出预估信息：行数、推文数、评论数。"""
+    _ensure_db()
+    total_tweets = 0
+    total_replies = 0
+    task_details = []
+    for task_id in task_ids:
+        summary = _get_task_summary_snapshot(task_id)
+        if not summary:
+            continue
+        tweet_count = int(summary.get("result_count", 0) or 0)
+        reply_count = int(summary.get("reply_count", 0) or 0)
+        total_tweets += tweet_count
+        total_replies += reply_count
+        task_details.append({
+            "task_id": task_id,
+            "keyword": summary.get("keyword", ""),
+            "tweet_count": tweet_count,
+            "reply_count": reply_count,
+        })
+    total_rows = total_tweets + total_replies
+    # 粗略估算：每行约 500 字节 CSV / 800 字节 Excel
+    estimated_csv_size = total_rows * 500
+    estimated_excel_size = total_rows * 800
+    return {
+        "task_count": len(task_details),
+        "total_tweets": total_tweets,
+        "total_replies": total_replies,
+        "total_rows": total_rows,
+        "estimated_csv_bytes": estimated_csv_size,
+        "estimated_excel_bytes": estimated_excel_size,
+        "tasks": task_details,
+    }
+
+
 def get_task_full(task_id: str) -> Optional[dict]:
     _ensure_db()
+    from api.services.task_watchdog import maybe_heal_stale_active_tasks
+
+    maybe_heal_stale_active_tasks()
     return _build_task_view(task_id, include_tweets=True)
 
 
 def list_tasks(*, include_payload: bool = False) -> list[dict]:
     _ensure_db()
+    from api.services.task_watchdog import maybe_heal_stale_active_tasks
+
+    maybe_heal_stale_active_tasks()
     with _tasks_lock:
         tasks = [copy.deepcopy(t) for t in _tasks.values()]
     queue_positions = _queue_positions()

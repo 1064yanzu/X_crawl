@@ -24,21 +24,24 @@ TWEET_DETAIL_PATTERN = "TweetDetail"
 def parse_tweet_detail_response(
     raw_json: dict,
     focal_tweet_id: Optional[str] = None,
-) -> tuple[Optional[dict], list[dict], Optional[str], Optional[str]]:
+) -> tuple[Optional[dict], list[dict], Optional[str], Optional[str], bool]:
     """
     解析 TweetDetail GraphQL 响应。
 
     Returns:
-        (focal_tweet, replies, bottom_cursor, top_cursor)
-        focal_tweet:   原始焦点推文（第一条，entryType=TimelineTimelineItem）
-        replies:       解析后的回复列表（每个元素是 tweet dict，含 thread_context）
-        bottom_cursor: 下一页评论的 cursor
-        top_cursor:    上一页评论的 cursor
+        (focal_tweet, replies, bottom_cursor, top_cursor, has_spam_boundary)
+        focal_tweet:        原始焦点推文（第一条，entryType=TimelineTimelineItem）
+        replies:            解析后的回复列表（每个元素是 tweet dict，含 thread_context）
+        bottom_cursor:      下一页评论的 cursor
+        top_cursor:         上一页评论的 cursor
+        has_spam_boundary:  是否遇到 ShowMoreThreads（"显示可能的垃圾信息"）边界，
+                            出现时表示有效评论已加载完毕，无需继续翻页
     """
     focal_tweet: Optional[dict] = None
     replies: list[dict] = []
     bottom_cursor: Optional[str] = None
     top_cursor: Optional[str] = None
+    has_spam_boundary: bool = False
 
     try:
         instructions = (
@@ -49,7 +52,7 @@ def parse_tweet_detail_response(
         )
     except AttributeError:
         logger.error("TweetDetail 响应 JSON 结构异常")
-        return focal_tweet, replies, bottom_cursor, top_cursor
+        return focal_tweet, replies, bottom_cursor, top_cursor, has_spam_boundary
 
     for instruction in instructions:
         entries = instruction.get("entries", [])
@@ -79,12 +82,33 @@ def parse_tweet_detail_response(
                     bottom_cursor = cursor_val
                 elif cursor_type == "Top" and cursor_val:
                     top_cursor = cursor_val
+                elif cursor_type == "ShowMoreThreads":
+                    # 出现"显示可能的垃圾信息"边界，有效评论已加载完毕
+                    has_spam_boundary = True
+                    logger.debug(
+                        f"TweetDetail 检测到 ShowMoreThreads cursor（垃圾信息边界），"
+                        f"entryId={entry_id}"
+                    )
+
+            # ── 通过 entryId 兜底检测垃圾信息边界 ──────────────────────
+            # X API 有时把 ShowMoreThreads 封装在 Module 或其他类型里
+            if not has_spam_boundary and (
+                "show-more-threads" in entry_id.lower()
+                or "show_more_threads" in entry_id.lower()
+                or "showmorethreads" in entry_id.lower()
+            ):
+                has_spam_boundary = True
+                logger.debug(
+                    f"TweetDetail 通过 entryId 检测到垃圾信息边界，"
+                    f"entryId={entry_id}"
+                )
 
     logger.info(
         f"TweetDetail 解析完成：回复 {len(replies)} 条，"
         f"bottomCursor={'有' if bottom_cursor else '无'}"
+        f"{'，已到垃圾信息边界' if has_spam_boundary else ''}"
     )
-    return focal_tweet, replies, bottom_cursor, top_cursor
+    return focal_tweet, replies, bottom_cursor, top_cursor, has_spam_boundary
 
 
 # ═══════════════════════════════════════════════════════════════════
