@@ -23,6 +23,7 @@ from api.routers.export import (
     _flatten_tweet,
     _collect_all_rows,
     _dedup_rows,
+    _hydrate_tweets_for_export,
     _make_row_dedup_key,
     _build_csv,
 )
@@ -56,7 +57,7 @@ def _load_single_task(task_id: str) -> tuple[dict, list[dict]] | None:
     if not task:
         logger.warning(f"批量导出: 任务 {task_id} 不存在，跳过")
         return None
-    tweets = task.get("tweets", [])
+    tweets = _hydrate_tweets_for_export(task, task.get("tweets", []))
     if not tweets:
         logger.warning(f"批量导出: 任务 {task_id} 无数据，跳过")
         return None
@@ -180,7 +181,7 @@ def _build_batch_excel(
     col_widths = [
         20,  # 来源关键词
         20,  # 来源任务ID
-        10, 20, 20, 20, 18, 16, 16, 18, 10, 12, 10,
+        10, 20, 20, 20, 18, 16, 16, 18, 12, 14, 20, 16, 12, 10,
         60, 8, 10, 10, 10, 10, 10, 10, 50,
         10, 20, 20, 16, 10, 10, 10, 20, 20, 10, 12, 50,
     ]

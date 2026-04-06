@@ -36,8 +36,13 @@ class UserOut(BaseModel):
     listed_count: int = Field(default=0)
     # ── 认证 ──
     verified: bool = Field(default=False, description="官方认证")
-    verified_type: Optional[str] = Field(default=None, description="认证类型")
+    verified_type: Optional[str] = Field(default=None, description="认证类型（Business/Government 等）")
     is_blue_verified: bool = Field(default=False, description="Twitter Blue 蓝勾")
+    # ── 专业账号 ──
+    professional_type: Optional[str] = Field(default=None, description="专业账号类型（Business/Creator）")
+    professional_category: Optional[str] = Field(default=None, description="专业账号行业分类")
+    # ── 关联标签 ──
+    affiliate_label: Optional[str] = Field(default=None, description="关联标签（自动化/机构关联等）")
     # ── 账号属性 ──
     created_at: str = Field(default="", description="账号创建时间（ISO 8601）")
     is_protected: bool = Field(default=False, description="是否私密账号")

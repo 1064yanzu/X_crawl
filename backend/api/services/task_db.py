@@ -51,7 +51,16 @@ def init_db(db_path: str | Path) -> None:
     应在应用启动时调用一次。
     """
     global _DB_PATH
-    _DB_PATH = Path(db_path)
+    new_path = Path(db_path)
+    old_conn = getattr(_local, "conn", None)
+    if old_conn is not None and _DB_PATH is not None and Path(_DB_PATH) != new_path:
+        try:
+            old_conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+    _DB_PATH = new_path
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     with _get_conn() as conn:
@@ -417,6 +426,38 @@ def load_task_result(task_id: str) -> list[dict]:
     except Exception as e:
         logger.error(f"读取任务结果失败 task_id={task_id}: {e}", exc_info=True)
         return []
+
+
+def load_cached_replies_map(tweet_ids: list[str]) -> dict[str, list[dict]]:
+    """按 tweet_id 批量读取评论缓存。"""
+    if _DB_PATH is None or not _DB_PATH.exists():
+        return {}
+
+    normalized_ids = [str(tweet_id or "").strip() for tweet_id in tweet_ids if str(tweet_id or "").strip()]
+    if not normalized_ids:
+        return {}
+
+    result: dict[str, list[dict]] = {}
+    try:
+        with _get_conn() as conn:
+            chunk_size = 500
+            for start in range(0, len(normalized_ids), chunk_size):
+                chunk = normalized_ids[start:start + chunk_size]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"""
+                    SELECT tweet_id, replies_json
+                    FROM tweet_fingerprints
+                    WHERE tweet_id IN ({placeholders})
+                    """,
+                    chunk,
+                ).fetchall()
+                for row in rows:
+                    result[str(row["tweet_id"])] = _decode_result_json(row["replies_json"])
+        return result
+    except Exception as e:
+        logger.error(f"读取评论缓存失败: {e}", exc_info=True)
+        return {}
 
 
 def load_all_tasks() -> list[dict]:

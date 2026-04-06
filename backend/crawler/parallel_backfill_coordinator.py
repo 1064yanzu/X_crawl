@@ -55,7 +55,7 @@ class ParallelBackfillCoordinator:
         max_replies_per_tweet: int,
         reply_depth: int,
         on_progress: Optional[Callable[[dict], None]] = None,
-        reply_worker_count_per_pipeline: int = 1,
+        reply_worker_count_per_pipeline: int = 3,
     ):
         self.task_id = task_id
         self.tweets = tweets
@@ -135,7 +135,7 @@ class ParallelBackfillCoordinator:
                     logger.warning("预热浏览器 nested #%d 失败: %s", i, e)
             # 错开启动，减少 CPU 峰值
             if i < self.n - 1:
-                _time.sleep(2.0)
+                _time.sleep(1.0)
 
         # ── 共享回调（线程安全） ──
         def _on_reply_done(tweet_id: str, replies: list[dict]) -> None:

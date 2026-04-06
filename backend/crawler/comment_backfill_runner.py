@@ -280,6 +280,7 @@ def _run_x_comment_backfill(
 ) -> CommentBackfillResult:
     from config import settings
     from crawler.pipeline import CrawlPipeline
+    from crawler.tweet_dedup import register_tweets
 
     task_manager.update_task_phase(task_id, "正在准备 X 评论补采任务...")
     baseline = _compute_backfill_progress(tweets)
@@ -365,6 +366,7 @@ def _run_x_comment_backfill(
     task_manager.update_comment_backfill_progress(task_id, progress)
     current_page = progress["processed_posts"]
     task_manager.update_preview_tweets(task_id, current_page, updated_tweets)
+    register_tweets(updated_tweets, task_id)
 
     return CommentBackfillResult(
         tweets=updated_tweets,

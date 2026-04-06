@@ -223,6 +223,8 @@ def parse_search_page(html: str) -> tuple[list[WeiboPost], bool, int]:
 
         # 认证信息
         verified, verified_type = _extract_verified(card)
+        # HTML 解析无法获取数字认证类型和认证原因，映射近似值
+        verified_type_num = {"blue": 1, "yellow": 0}.get(verified_type, -1)
 
         # ---------- 时间、URL、来源 ----------
         created_at = ""
@@ -304,6 +306,7 @@ def parse_search_page(html: str) -> tuple[list[WeiboPost], bool, int]:
                 source=source,
                 verified=verified,
                 verified_type=verified_type,
+                verified_type_num=verified_type_num,
                 reposts_count=reposts,
                 comments_count=comments_count,
                 likes_count=likes,

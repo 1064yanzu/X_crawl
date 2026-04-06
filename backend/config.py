@@ -88,7 +88,7 @@ class Settings(BaseSettings):
 
     # 爬虫配置
     crawler_timeout: float = Field(
-        default=30.0, description="等待数据包超时时间（秒），适当余量减少误判"
+        default=15.0, description="等待数据包超时时间（秒），快速失败以便重试"
     )
     crawler_page_interval: float = Field(
         default=3.0, description="翻页操作间隔（秒），适当放慢避免触发反爬"
@@ -164,6 +164,9 @@ class Settings(BaseSettings):
     )
     crawler_active_task_watchdog_interval_sec: float = Field(
         default=30.0, description="活跃任务巡检执行间隔（秒）"
+    )
+    crawler_watchdog_min_reply_rate: int = Field(
+        default=1000, description="评论抓取最低速率阈值（条/分），低于此值 watchdog 告警"
     )
     crawler_auto_throttle_enabled: bool = Field(
         default=True, description="是否根据系统资源压力自动放慢抓取节奏"

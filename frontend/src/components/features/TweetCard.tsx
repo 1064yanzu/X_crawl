@@ -6,6 +6,7 @@ import {
     ChevronDown, ChevronUp, Link2, Quote
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -148,6 +149,7 @@ function ReplyCard({ reply }: { reply: AnyRecord }) {
                 {/* Header */}
                 <div className="flex items-center gap-1.5 flex-wrap mb-1">
                     <span className="text-sm font-semibold truncate">{author.name || "未知用户"}</span>
+                    <VerifiedBadge author={author} />
                     <span className="text-xs text-muted-foreground">@{author.screen_name || "unknown"}</span>
                     <span className="text-xs text-muted-foreground">·</span>
                     <span className="text-xs text-muted-foreground">{formatDate(reply.created_at)}</span>
@@ -239,11 +241,7 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
                         <span className={cn("font-bold truncate hover:underline cursor-pointer", compact ? "text-[14px]" : "text-[15px]")}>
                             {author.name || "未知用户"}
                         </span>
-                        {(author.is_blue_verified || author.verified) && (
-                            <svg viewBox="0 0 24 24" aria-label="Verified account" className="w-4 h-4 fill-blue-500 shrink-0">
-                                <g><path d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.918-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.337 2.25c-.416-.165-.866-.25-1.336-.25-2.21 0-3.918 1.792-3.918 4 0 .495.084.965.238 1.4-1.273.65-2.148 2.02-2.148 3.6 0 1.46.827 2.76 2.044 3.4-.144.42-.224.87-.224 1.33 0 2.21 1.71 4 3.918 4 .47 0 .92-.086 1.336-.25.52 1.33 1.828 2.25 3.337 2.25s2.816-.917 3.337-2.25c.416.164.866.25 1.336.25 2.21 0 3.918-1.792 3.918-4 0-.46-.08-.91-.224-1.33 1.217-.64 2.044-1.94 2.044-3.4zm-13.06 4.312l-3.415-3.414 1.413-1.414 2 2 6.586-6.586 1.414 1.414-8 8z"></path></g>
-                            </svg>
-                        )}
+                        <VerifiedBadge author={author} />
                         <span className={cn("text-muted-foreground truncate", compact ? "text-[13px]" : "text-[14px]")}>
                             @{author.screen_name || "未知"}
                         </span>

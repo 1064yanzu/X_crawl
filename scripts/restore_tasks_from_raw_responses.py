@@ -131,7 +131,7 @@ def _restore_task_payload(task_dir: Path) -> Optional[dict]:
             replies: list[dict] = []
             for reply_file in reply_files:
                 payload = json.loads(reply_file.read_text(encoding="utf-8"))
-                _focal, parsed_replies, _bottom, _top = parse_tweet_detail_response(
+                _focal, parsed_replies, _bottom, _top, _has_spam_boundary = parse_tweet_detail_response(
                     payload,
                     focal_tweet_id=reply_dir.name,
                 )

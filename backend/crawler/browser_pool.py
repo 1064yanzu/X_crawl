@@ -331,6 +331,11 @@ class BrowserInstance:
 
         logger.info(f"[BrowserPool] 启动浏览器实例 #{self.instance_id}，port={port}，profile={self.profile_dir}")
         browser = Chromium(co)
+        # 缩短 DrissionPage 内部超时（默认 30s），减少资源争抢时的无效等待
+        try:
+            browser.set.timeouts(base=10, page_load=15, script=10)
+        except Exception as _te:
+            logger.debug("[BrowserPool] 设置浏览器超时失败（非关键）: %s", _te)
         logger.info(f"[BrowserPool] 浏览器实例 #{self.instance_id} 就绪")
         return browser
 

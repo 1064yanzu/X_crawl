@@ -578,7 +578,7 @@ def search(
                                 pages_fetched=comment_result.pages_fetched,
                             )
                             new_dict = dict(post_dict)
-                            new_dict["comments"] = [c.__dict__ if hasattr(c, "__dict__") else c for c in comment_result.comments]
+                            new_dict["replies"] = [c.to_dict() if hasattr(c, "to_dict") else c for c in comment_result.comments]
                             new_dict["comment_stats"] = comment_stats.__dict__ if hasattr(comment_stats, "__dict__") else comment_stats
                             updated.append(new_dict)
                             if task_id and tree_stats.total_count > 0:

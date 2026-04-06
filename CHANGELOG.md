@@ -1,40 +1,107 @@
 # Changelog
 
-## [2026-04-05] 并发爬取性能优化 — 消除浏览器资源争抢
+## [2026-04-06] 新增用户认证状态字段（X + 微博）
 
-### 问题
-3 路并发模式下启动了 7 个 Chrome 进程（3×L1 + 3×L2 + 1 主浏览器），MacBook Air 资源耗尽导致：
-- 大量 30s 导航超时（`Page.stopLoading timeout`）
-- 错误页面连续出现（浏览器卡死/响应慢）
-- scroll 操作频繁超时（线程池不够用）
-- "连续超时" 提前终止推文评论抓取，覆盖率极低（4-9%）
-- 并发反而比单路更慢
+### 背景
+做数据分析时需要区分官方媒体、自媒体网红、企业账号等用户类型。原始 API 响应中有丰富的认证字段但未被解析和导出。
 
-### 优化措施
-1. **Chrome 进程数从 7 降到 4**：3 个 Pipeline 共享 1 个 nested browser（L2二级评论），而非各自独拥
-2. **每 Pipeline 的 reply worker 从 2 降到 1**：并行模式已有 3 个 Pipeline，每个内部只需 1 个 worker（总并发 3 vs 之前的 6）
-3. **浏览器预热**：Pipeline 启动前逐个调用 `get_browser()` 触发 Chrome 初始化，避免 6 个 worker 同时触发浏览器启动风暴。每个浏览器间隔 2s 错峰启动
-4. **导航超时从 20-30s 降到 12-15s**：快速失败快速重试，比卡 30s 效率更高
-5. **scroll 线程池从 2 扩到 8**：避免多 Pipeline 并发 scroll 操作排队阻塞
-6. **resume 自动携带并发数**：`useTaskControls` 恢复时传递当前 concurrency，避免用户改了并发数但 resume 仍按 1 启动
-7. **运行中提示**：并发选择器显示"修改将在下次恢复时生效"
+### 变更内容
 
-### 资源对比（3路并发）
-| | 优化前 | 优化后 |
-|---|---|---|
-| Chrome 进程 | 7 (3×L1 + 3×L2 + 1主) | 4 (3×L1 + 1共享L2) |
-| 并发 tab 加载 | 6 | 3 |
-| scroll 线程池 | 2 | 8 |
-| 导航超时 | 20-30s | 12-15s |
+#### X (Twitter) — 新增字段
+- `professional_type`: 专业账号类型（Business / Creator）
+- `professional_category`: 专业账号行业分类（如 Science & Technology）
+- `affiliate_label`: 关联标签（自动化账号、机构关联等）
+
+#### 微博 — 新增/统一字段
+- `verified_type` (数字): -1=无, 0=个人黄V, 1=企业蓝V, 2=媒体, 3=其他
+- `verified_type_str`: 认证类型文字（yellow/blue/media/other）
+- `verified_reason`: 认证原因说明（帖子和评论统一拥有此字段）
+- `mbtype`: 微博会员类型
+- `mbrank`: 微博会员等级（0-6）
+
+#### 导出层
+- 新增 3 列：「认证类型」「认证说明」「专业账号」
+- 「认证状态」列增强：微博区分黄V/蓝V，X 区分蓝标/官方/关联标签
+
+#### 前端展示
+- 新增 `VerifiedBadge` 组件，区分不同认证类型徽标颜色
+  - X 蓝标：蓝色 ✓ | X 官方 (Business/Government)：金色 ✓
+  - 微博黄V：金色 ✓ | 微博蓝V：蓝色 ✓
+- TweetCard 和 ReplyCard 均显示认证徽标，hover 可看认证详情
 
 ### 文件变更
-- `backend/crawler/parallel_backfill_coordinator.py` — worker 数默认 1；预热浏览器逻辑
-- `backend/api/services/crawl_service.py` — 并发模式共享 1 个 nested browser
-- `backend/crawler/page_health.py` — `load_timeout` 默认 15s
-- `backend/crawler/reply_fetcher.py` — 所有 `load_timeout` 降到 12-15s
-- `backend/crawler/scroll_safe.py` — 线程池 max_workers 8
-- `frontend/src/hooks/useTaskControls.ts` — resume 自动传递 concurrency
-- `frontend/src/components/features/task-detail/TaskDetailHeader.tsx` — 运行中提示
+- `backend/crawler/parser.py` — 新增 `_extract_professional`、`_extract_affiliate_label`
+- `backend/api/schemas/user.py` — 新增 `professional_type`、`professional_category`、`affiliate_label` 字段
+- `backend/crawler/weibo/models.py` — WeiboPost/WeiboComment 新增 verified_type_num/verified_type_str/verified_reason/mbtype/mbrank
+- `backend/crawler/weibo/comment_fetcher.py` — 评论解析补充 verified_type/mbtype/mbrank，新增 `_map_weibo_verified_type`
+- `backend/crawler/weibo/html_parser.py` — HTML 解析补充 verified_type_num 近似映射
+- `backend/api/routers/export.py` — 导出新增 3 列，新增 `_format_verified_status`、`_format_verified_type`
+- `backend/api/routers/batch_export.py` — 同步更新列宽
+- `frontend/src/components/features/VerifiedBadge.tsx` — 新增认证徽标组件
+- `frontend/src/components/features/TweetCard.tsx` — 引用 VerifiedBadge，ReplyCard 也加上徽标
+
+---
+
+## [2026-04-06] 修复微博评论导出丢失 BUG
+
+### 问题
+微博搜索任务在特定代码路径下，评论数据被存储在 `"comments"` 键下而非统一的 `"replies"` 键，导致导出（CSV/Excel）时评论被静默丢弃。
+
+### 根因
+1. **`searcher.py:581`**（日期分割统一评论抓取路径）：`new_dict["comments"] = [c.__dict__ ...]`
+   - 使用了错误的键名 `"comments"` 而非 `"replies"`
+   - 同时使用 `__dict__` 进行序列化，导致子评论（`WeiboComment` 对象）无法被正确递归序列化
+2. **`pipeline.py:636`**（`WeiboCommentPipeline` dict 分支）：`post_dict["comments"] = comment_result.comments`
+   - 同样使用了错误的键名
+   - 未对 `WeiboComment` 对象调用 `.to_dict()` 进行序列化
+
+### 修复
+- `searcher.py:581` → 改用 `"replies"` 键 + `.to_dict()` 序列化
+- `pipeline.py:636` → 改用 `"replies"` 键 + `.to_dict()` 序列化
+
+### 验证结论
+- **X/Twitter 侧**：导出功能本身完整，已包含评论和评论补采任务导出，无 bug
+- **微博侧**：仅上述两个代码路径存在键名不一致，其余路径（`WeiboPost.to_dict()`、评论补采 runner 等）均正确使用 `"replies"`
+
+### 文件变更
+- `backend/crawler/weibo/searcher.py` — 修复评论键名和序列化方式
+- `backend/crawler/pipeline.py` — 修复 WeiboCommentPipeline 评论键名和序列化方式
+
+---
+
+## [2026-04-05] 并发爬取性能深度优化 + Watchdog 速率监控
+
+### 问题
+3 路并发模式下 7 个 Chrome 进程把 MacBook Air 打爆：
+- 大量 30s 导航超时（`Page.stopLoading timeout`）
+- 错误页面连续出现（浏览器卡死/响应慢）
+- scroll 操作频繁超时
+- "连续 2 页无新评论" 过早放弃热门推文（覆盖率仅 4-9%）
+- 并发反而比单路更慢
+
+### 性能优化措施
+1. **`crawler_timeout` 30s → 15s**：快速失败快速重试，不在超时上浪费时间
+2. **DrissionPage 内部超时 30s → 15s**：`browser.set.timeouts(base=10, page_load=15)` 在浏览器实例创建后设置
+3. **scroll 超时 4s → 2s**：scroll_safe 模块更快回退到 JS 方式
+4. **空页判断放宽**：不再 `min(max_empty, 2)` 激进终止，改用 `_dynamic_max_empty_pages` 完整阈值（预期>2000条 → 允许连续 12 页空才放弃）
+5. **每 Pipeline reply worker 1 → 3**：3 Pipeline × 3 worker = 9 并发 tab，充分利用 CPU 和带宽
+6. **浏览器预热间隔 2s → 1s**：加快初始化
+
+### Watchdog 速率监控（新增）
+- 每 30s 采样一次运行中 `comment_backfill_group` 任务的 `replies_fetched`
+- 计算 replies/min 速率，低于 `crawler_watchdog_min_reply_rate`（默认 1000 条/分）时告警
+- 速率 > 0 但低于阈值：更新任务 phase 提示用户，不自动重启
+- 速率 == 0 且超过 5 分钟：判定卡死，自动 stop + 重排任务
+- 告警冷却 120s 防止刷屏
+- 新增配置项 `crawler_watchdog_min_reply_rate`
+
+### 文件变更
+- `backend/config.py` — `crawler_timeout` 15s、新增 `crawler_watchdog_min_reply_rate`
+- `backend/crawler/scroll_safe.py` — `_SCROLL_TIMEOUT_SEC` 4s → 2s
+- `backend/crawler/browser_pool.py` — 浏览器实例创建后设置 `set.timeouts()`
+- `backend/crawler/reply_fetcher.py` — 空页判断放宽，使用完整 `max_empty_pages` 阈值
+- `backend/crawler/parallel_backfill_coordinator.py` — `reply_worker_count_per_pipeline` 1→3、预热间隔 2s→1s
+- `backend/api/services/task_watchdog.py` — 新增速率监控 `_check_group_reply_rates` + 自愈逻辑
 
 ---
 

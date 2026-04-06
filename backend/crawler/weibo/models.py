@@ -21,7 +21,11 @@ class WeiboComment:
     avatar_url: str = ""                        # 头像
     is_author: bool = False                     # 是否博主
     verified: bool = False                      # 是否认证用户
+    verified_type: int = -1                     # 认证类型（-1=无,0=个人黄V,1=企业蓝V,2=媒体,3=其他）
+    verified_type_str: str = ""                 # 认证类型文字（yellow/blue/media/other/空）
     verified_reason: str = ""                   # 认证原因
+    mbtype: int = 0                             # 微博会员类型（0=非会员）
+    mbrank: int = 0                             # 微博会员等级（0-6）
     gender: str = ""                            # f/m
     location: str = ""                          # 所在地
     followers_count: int = 0                    # 粉丝数
@@ -41,7 +45,11 @@ class WeiboComment:
                 "avatar_url": self.avatar_url,
                 "profile_url": f"https://weibo.com/u/{self.author_id}",
                 "verified": self.verified,
+                "verified_type": self.verified_type,
+                "verified_type_str": self.verified_type_str,
                 "verified_reason": self.verified_reason,
+                "mbtype": self.mbtype,
+                "mbrank": self.mbrank,
                 "gender": self.gender,
                 "location": self.location,
                 "followers_count": self.followers_count,
@@ -78,6 +86,10 @@ class WeiboPost:
     source: str = ""                            # 来源设备（如 "微博网页版"）
     verified: bool = False                      # 是否认证用户
     verified_type: str = ""                     # blue/yellow/none
+    verified_type_num: int = -1                 # 认证类型数字（-1=无,0=个人,1=企业,2=媒体,3=其他）
+    verified_reason: str = ""                   # 认证原因
+    mbtype: int = 0                             # 微博会员类型
+    mbrank: int = 0                             # 微博会员等级
     is_repost: bool = False                     # 是否转发微博
     repost_text: str = ""                       # 原微博正文
     repost_author: str = ""                     # 原微博作者
@@ -103,6 +115,10 @@ class WeiboPost:
                 "profile_url": f"https://weibo.com/u/{self.author_id}",
                 "verified": self.verified,
                 "verified_type": self.verified_type,
+                "verified_type_num": self.verified_type_num,
+                "verified_reason": self.verified_reason,
+                "mbtype": self.mbtype,
+                "mbrank": self.mbrank,
             },
             "created_at": self.created_at,
             "url": self.url,

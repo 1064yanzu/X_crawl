@@ -101,11 +101,16 @@ def test_batch_export_uses_lightweight_task_payload(monkeypatch):
 
     monkeypatch.setattr(
         batch_export.task_manager,
-        "get_task_export_payload",
+        "get_task_export_payload_readonly",
         lambda task_id: payload_calls.append(task_id) or {
             "task_id": task_id,
             "keyword": "kw",
             "platform": "x",
+            "task_kind": "search",
+            "fetch_replies": False,
+            "replies_fetched": 0,
+            "source_task_id": None,
+            "source_task_ids": [],
             "tweets": [{"id": "1", "text": "hello"}],
         },
     )
@@ -114,6 +119,84 @@ def test_batch_export_uses_lightweight_task_payload(monkeypatch):
 
     assert payload_calls == ["task-1", "task-2"]
     assert len(tasks_data) == 2
+
+
+def test_export_hydrates_missing_x_replies_preferring_raw_then_richer_candidates(monkeypatch):
+    from api.routers import export as export_router
+
+    source_replies = [
+        {"id": "reply-source", "text": "source reply"},
+    ]
+    cached_replies = [
+        {"id": "reply-cache-1", "text": "cache reply 1"},
+        {"id": "reply-cache-2", "text": "cache reply 2", "replies": [{"id": "nested-1", "text": "nested"}]},
+    ]
+
+    raw_replies = [
+        {"id": "reply-raw-1", "text": "raw reply"},
+        {"id": "reply-raw-2", "text": "raw reply 2"},
+    ]
+
+    monkeypatch.setattr(
+        export_router.task_manager,
+        "get_task_export_payload_readonly",
+        lambda task_id: {
+            "task_id": task_id,
+            "platform": "x",
+            "tweets": [{"id": "tweet-1", "replies": source_replies}],
+        } if task_id == "source-1" else None,
+    )
+    monkeypatch.setattr(
+        export_router.task_db,
+        "load_cached_replies_map",
+        lambda tweet_ids: {"tweet-1": cached_replies},
+    )
+    monkeypatch.setattr(
+        export_router,
+        "_load_raw_reply_map",
+        lambda task_id, tweet_ids: {"tweet-1": raw_replies},
+    )
+
+    task = {
+        "task_id": "backfill-1",
+        "platform": "x",
+        "task_kind": "comment_backfill",
+        "fetch_replies": True,
+        "replies_fetched": 10,
+        "source_task_id": "source-1",
+        "source_task_ids": [],
+    }
+    tweets = [{"id": "tweet-1", "text": "post", "replies": None}]
+
+    hydrated = export_router._hydrate_tweets_for_export(task, tweets)
+
+    assert hydrated[0]["replies"] == cached_replies
+
+
+def test_get_export_estimate_uses_replies_fetched(monkeypatch):
+    from api.services import task_manager
+
+    summaries = {
+        "task-1": {
+            "task_id": "task-1",
+            "keyword": "Claude",
+            "result_count": 12,
+            "replies_fetched": 34,
+        }
+    }
+
+    monkeypatch.setattr(
+        task_manager,
+        "_get_task_summary_snapshot",
+        lambda task_id: summaries.get(task_id),
+    )
+    monkeypatch.setattr(task_manager, "_ensure_db", lambda: None)
+
+    result = task_manager.get_export_estimate(["task-1"])
+
+    assert result["total_tweets"] == 12
+    assert result["total_replies"] == 34
+    assert result["total_rows"] == 46
 
 
 def test_resume_all_resumes_standalone_and_queue_tasks_once(monkeypatch):

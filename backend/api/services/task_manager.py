@@ -825,7 +825,11 @@ def get_task_export_payload(task_id: str) -> Optional[dict]:
         "task_id": summary.get("task_id", task_id),
         "keyword": summary.get("keyword", ""),
         "platform": summary.get("platform", "x"),
+        "task_kind": summary.get("task_kind", "search"),
         "fetch_replies": bool(summary.get("fetch_replies", False)),
+        "replies_fetched": int(summary.get("replies_fetched", 0) or 0),
+        "source_task_id": summary.get("source_task_id"),
+        "source_task_ids": list(summary.get("source_task_ids") or []),
         "tweets": _get_task_result_snapshot(task_id, load=True),
     }
 
@@ -850,7 +854,11 @@ def get_task_export_payload_readonly(task_id: str) -> Optional[dict]:
         "task_id": summary.get("task_id", task_id),
         "keyword": summary.get("keyword", ""),
         "platform": summary.get("platform", "x"),
+        "task_kind": summary.get("task_kind", "search"),
         "fetch_replies": bool(summary.get("fetch_replies", False)),
+        "replies_fetched": int(summary.get("replies_fetched", 0) or 0),
+        "source_task_id": summary.get("source_task_id"),
+        "source_task_ids": list(summary.get("source_task_ids") or []),
         "tweets": tweets_ref,
     }
 
@@ -866,7 +874,7 @@ def get_export_estimate(task_ids: list[str]) -> dict:
         if not summary:
             continue
         tweet_count = int(summary.get("result_count", 0) or 0)
-        reply_count = int(summary.get("reply_count", 0) or 0)
+        reply_count = int(summary.get("replies_fetched", 0) or 0)
         total_tweets += tweet_count
         total_replies += reply_count
         task_details.append({

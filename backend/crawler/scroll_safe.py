@@ -14,7 +14,7 @@ from crawler.utils import interruptible_sleep
 logger = logging.getLogger(__name__)
 
 _SCROLL_EXECUTOR = ThreadPoolExecutor(max_workers=8, thread_name_prefix="scroll-safe")
-_SCROLL_TIMEOUT_SEC = 4.0
+_SCROLL_TIMEOUT_SEC = 2.0
 
 
 def safe_scroll_down(tab, px: int, *, task_id: Optional[str] = None) -> bool:

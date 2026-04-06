@@ -382,6 +382,10 @@ def _extract_user(user_result: dict) -> Optional[dict]:
         "verified": verification.get("verified", False) if isinstance(verification, dict) else False,
         "verified_type": verification.get("verified_type") if isinstance(verification, dict) else None,
         "is_blue_verified": user_result.get("is_blue_verified", False),
+        # ── 专业账号 ──
+        **_extract_professional(user_result),
+        # ── 关联标签（自动化/机构关联） ──
+        **_extract_affiliate_label(user_result),
         # ── 账号属性 ──
         "created_at": _parse_twitter_date(core.get("created_at", "") or legacy.get("created_at", "")),
         "is_protected": user_result.get("privacy", {}).get("protected", False),
@@ -391,6 +395,46 @@ def _extract_user(user_result: dict) -> Optional[dict]:
         # ── description 实体 ──
         "description_urls": desc_urls,
         "description_mentions": desc_mentions,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  专业账号 / 关联标签提取
+# ═══════════════════════════════════════════════════════════════════
+
+def _extract_professional(user_result: dict) -> dict:
+    """提取专业账号信息（Business / Creator）。"""
+    pro = user_result.get("professional")
+    if not isinstance(pro, dict):
+        return {
+            "professional_type": None,
+            "professional_category": None,
+        }
+    categories = pro.get("category", [])
+    category_names = [
+        c.get("name", "") for c in categories
+        if isinstance(c, dict) and c.get("name")
+    ]
+    return {
+        "professional_type": pro.get("professional_type"),       # "Business" / "Creator"
+        "professional_category": ", ".join(category_names) if category_names else None,
+    }
+
+
+def _extract_affiliate_label(user_result: dict) -> dict:
+    """提取关联标签（如机构关联、自动化账号）。"""
+    label_obj = user_result.get("affiliates_highlighted_label", {})
+    if not isinstance(label_obj, dict):
+        return {"affiliate_label": None}
+
+    label = label_obj.get("label")
+    if not isinstance(label, dict):
+        return {"affiliate_label": None}
+
+    desc = label.get("description", "")
+    label_type = label.get("userLabelType", "")
+    return {
+        "affiliate_label": desc or label_type or None,
     }
 
 

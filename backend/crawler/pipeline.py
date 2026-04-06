@@ -633,7 +633,7 @@ class WeiboCommentPipeline:
                         else:
                             # 已经是 dict
                             post_dict = dict(post)
-                            post_dict["comments"] = comment_result.comments
+                            post_dict["replies"] = [c.to_dict() if hasattr(c, "to_dict") else c for c in comment_result.comments]
 
                         self.result_map[str(mid)] = post_dict
 

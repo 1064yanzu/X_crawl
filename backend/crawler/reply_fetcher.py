@@ -704,11 +704,10 @@ def fetch_replies(
                             f"  低评论推文首页无数据（预期 {expected_count} 条），直接跳过"
                         )
                         break
-                    # 已有数据但翻页全重复：说明 cursor 可能失效或评论区到底
-                    # 降低容忍阈值——如果已抓到至少 1 条评论，连续 2 页空就足够放弃
-                    effective_max_empty = min(max_empty_pages, 2) if len(all_replies) > 0 else max_empty_pages
+                    # X 评论区翻页时出现重复/空页是常见现象（cursor 漂移等），
+                    # 不应过于激进地放弃——使用 _dynamic_max_empty_pages 的完整阈值
                     bump_metric(task_id, "empty_pages")
-                    if empty_page_count >= effective_max_empty:
+                    if empty_page_count >= max_empty_pages:
                         logger.info(
                             f"  连续 {empty_page_count} 页无新评论"
                             f"{'（已有 ' + str(len(all_replies)) + ' 条，提前结束）' if len(all_replies) > 0 else ''}"

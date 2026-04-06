@@ -618,6 +618,24 @@ def fetch_comments(
 
 
 # ────────────────────────────────────────────────────────────
+#  认证类型映射
+# ────────────────────────────────────────────────────────────
+
+_WEIBO_VERIFIED_TYPE_MAP = {
+    -1: "",         # 未认证
+    0: "yellow",    # 个人认证（黄V）
+    1: "blue",      # 企业/机构认证（蓝V）
+    2: "blue",      # 媒体认证（蓝V）
+    3: "blue",      # 其他官方认证（蓝V）
+}
+
+
+def _map_weibo_verified_type(verified_type_num: int) -> str:
+    """将微博数字认证类型映射为文字标识。"""
+    return _WEIBO_VERIFIED_TYPE_MAP.get(verified_type_num, "other" if verified_type_num >= 0 else "")
+
+
+# ────────────────────────────────────────────────────────────
 #  评论解析
 # ────────────────────────────────────────────────────────────
 
@@ -650,7 +668,11 @@ def _parse_comment(c: dict) -> WeiboComment:
         avatar_url=user.get("avatar_hd", "") or user.get("profile_image_url", ""),
         is_author=bool(c.get("is_mblog_author", False)),
         verified=bool(user.get("verified", False)),
+        verified_type=int(user.get("verified_type", -1)),
+        verified_type_str=_map_weibo_verified_type(int(user.get("verified_type", -1))),
         verified_reason=user.get("verified_reason", ""),
+        mbtype=int(user.get("mbtype", 0)),
+        mbrank=int(user.get("mbrank", 0)),
         gender=user.get("gender", ""),
         location=user.get("location", ""),
         followers_count=user.get("followers_count", 0),
