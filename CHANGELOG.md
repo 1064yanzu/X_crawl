@@ -1,5 +1,46 @@
 # Changelog
 
+## [2026-04-09] 微博翻页 V5：tab.get 超时恢复 + 跳页兜底
+
+### 问题
+V4 的 `tab.get(href)` 在第 9 页仍然超时（`Page.stopLoading` CDP 命令 30 秒无响应）。页面已加载好但 DrissionPage 内部确认信号没通过拥堵的 CDP 管道。
+
+### 修复
+
+#### `pagination.py`（V5）
+- 导航前切换 **eager 加载模式**（DOM 就绪即完成，不等资源），减少 CDP 操作
+- `tab.get()` 超时后**不放弃**，尝试读取 `tab.html`——页面很可能已加载好
+- 反爬检测和页面读取抽为独立函数
+
+#### `searcher.py` — 跳页兜底
+- 连续 timeout 后**重建 tab 并跳页**（而非终止搜索）
+- 失败页直接跳到下一页继续，连续 3 页失败才终止
+- 日志明确标注跳过了哪些页
+
+## [2026-04-09] run_js → DrissionPage 原生 API 迁移
+
+### 背景
+审查了项目中所有 `run_js()` 调用，将不必要的 JS 执行替换为 DrissionPage 原生 API，降低 CDP 管道压力，提高稳定性。
+
+### 迁移（5 处，3 个文件）
+
+#### `scroll_safe.py`
+- 反转优先级：DP 原生滚动（`tab.scroll.down/up/to_bottom`）**优先**，`run_js` 作为回退
+- 原来逻辑是反的——优先 JS 滚动，DP 原生作为回退
+
+#### `browser_lifecycle.py`
+- `is_tab_alive()`: `tab.run_js("1", timeout=2)` → `tab.states.is_alive`
+- 原生属性更轻量，不需要 JS 执行上下文
+
+#### `mouse_behavior.py`
+- `random_mouse_wander()`: `tab.run_js("return [window.innerWidth, window.innerHeight]")` → `tab.rect.viewport_size`
+
+### 保留不动（5 处，有正当理由）
+- `searcher.py` JS 导航路径：需要 `window.location.href` 和 DOM 复合状态查询
+- `comment_fetcher.py` 滚动回退：已是 DP 优先模式
+- `mouse_behavior.py` 鼠标事件回退：`dispatchEvent` 无原生替代
+- `page_state.py` X 搜索状态检测：需要原子性多状态查询
+
 ## [2026-04-09] 微博搜索翻页反爬优化（V3）：点击翻页 + CDP 死亡恢复 + 间隔修正
 
 ### 问题

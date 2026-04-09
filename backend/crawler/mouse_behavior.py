@@ -73,7 +73,7 @@ def random_mouse_wander(
     """在视口内随机移动鼠标，模拟真人偶尔挪动鼠标"""
     from crawler.utils import interruptible_sleep
     try:
-        dims = tab.run_js("return [window.innerWidth, window.innerHeight]")
+        dims = tab.rect.viewport_size
         if not dims or len(dims) < 2:
             return
         w, h = int(dims[0]), int(dims[1])

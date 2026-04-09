@@ -91,16 +91,15 @@ def recycle_instance(instance: "BrowserInstance") -> bool:
 
 def is_tab_alive(tab) -> bool:
     """
-    轻量检测 tab 是否还能响应 CDP 命令。
+    轻量检测 tab 是否还能响应。
 
-    使用 run_js("1") 执行最简单的 JS 表达式，超时 2 秒。
-    比 tab.url 更可靠（url 可能是缓存值）。
+    使用 DrissionPage 原生属性 tab.states.is_alive，
+    比 run_js("1") 更轻量（不需要 JS 执行上下文），不会因 CDP 拥堵而超时。
     """
     if tab is None:
         return False
     try:
-        result = tab.run_js("1", timeout=2)
-        return result is not None
+        return tab.states.is_alive
     except Exception:
         return False
 

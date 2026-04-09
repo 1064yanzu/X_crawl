@@ -1035,13 +1035,23 @@ def search(
                 if not html:
                     consecutive_errors += 1
                     logger.error(f"获取微博搜索页最终失败 page={page}: {page_error}")
-                    # 连续 timeout 超限 → 终止搜索（系统资源不足）
+
+                    # 连续 timeout 超限 → 重建 tab 并跳页（而非终止搜索）
                     if consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
-                        logger.error(
-                            f"连续 {consecutive_timeouts} 次 timeout，终止搜索以释放资源"
+                        logger.warning(
+                            f"连续 {consecutive_timeouts} 次 timeout，"
+                            f"重建 Tab 并跳过第 {page} 页..."
                         )
-                        break
-                    # 如果最终失败原因是真正的连接断开（而不是 timeout），尝试重建 tab
+                        try:
+                            tab = _do_rebuild_tab(tab)
+                            consecutive_timeouts = 0  # 重建后重置
+                        except RuntimeError:
+                            logger.error("Tab 重建次数超限，终止搜索")
+                            break
+                        except Exception as e:
+                            logger.error(f"Tab 重建失败: {e}")
+
+                    # 连接断开 → 重建 tab
                     error_lower_final = (page_error or "").lower()
                     is_truly_disconnected = (
                         any(kw in error_lower_final for kw in (
@@ -1053,17 +1063,21 @@ def search(
                         logger.info("页面最终失败且连接已断开，尝试重建 Tab...")
                         try:
                             tab = _do_rebuild_tab(tab)
-                            logger.info("Tab 重建成功，继续搜索")
-                            consecutive_errors = 0  # 重建成功，重置计数器给一次机会
-                            continue
+                            consecutive_errors = 0
                         except RuntimeError:
                             logger.error("Tab 重建次数超限，终止搜索")
                             break
                         except Exception as e:
                             logger.error(f"Tab 重建失败: {e}")
+
+                    # ── 跳页兜底：连续 3 页失败才终止，否则跳过当前页继续 ──
                     if consecutive_errors >= 3:
                         logger.error("连续 3 页获取失败，终止搜索")
                         break
+                    logger.warning(
+                        f"第 {page} 页获取失败（连续失败 {consecutive_errors}/3），"
+                        f"跳过此页继续爬第 {page + 1} 页"
+                    )
                     continue
                 else:
                     consecutive_errors = 0
