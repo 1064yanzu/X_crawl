@@ -64,11 +64,7 @@ def click_next_page(
 
     logger.debug("下一页链接: %s", next_href[:100])
 
-    # ── 2. 切换到 eager 加载模式（DOM 就绪即完成，不等资源）───────
-    try:
-        tab.set.load_mode.eager()
-    except Exception:
-        pass
+
 
     # ── 3. tab.get() 导航 ────────────────────────────────────────
     nav_success = False
@@ -79,11 +75,7 @@ def click_next_page(
         nav_error = str(e)
         logger.debug("tab.get() 异常: %s", nav_error[:120])
 
-    # ── 4. 恢复 normal 加载模式 ──────────────────────────────────
-    try:
-        tab.set.load_mode.normal()
-    except Exception:
-        pass
+
 
     # ── 5. 验证页面（即使 tab.get 超时，页面可能已加载好）──────────
     # tab.get() 超时通常是 Page.stopLoading CDP 命令拥堵，

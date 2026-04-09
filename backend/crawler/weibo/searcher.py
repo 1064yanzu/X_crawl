@@ -454,6 +454,12 @@ def _prepare_search_session(tab, task_id: Optional[str], slot_id: Optional[int] 
     except Exception as e:
         logger.warning(f"搜索 Cookie 准备失败: {e}")
 
+    try:
+        tab.set.load_mode.eager()
+        logger.debug("已将搜索 Tab 设为 eager 加载模式（DOM 就绪即完成）")
+    except Exception as e:
+        logger.warning(f"设置 eager 加载模式失败: {e}")
+
 
 def _close_tab_safe(tab, label: str = "") -> None:
     """安全关闭 tab，忽略所有异常并记录日志。"""

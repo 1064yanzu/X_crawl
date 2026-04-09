@@ -12,7 +12,13 @@ V4 的 `tab.get(href)` 在第 9 页仍然超时（`Page.stopLoading` CDP 命令 
 - `tab.get()` 超时后**不放弃**，尝试读取 `tab.html`——页面很可能已加载好
 - 反爬检测和页面读取抽为独立函数
 
-#### `searcher.py` — 跳页兜底
+#### `pagination.py` 同步调整
+- 移除了原 V5 中在 `pagination.py` 里临时的加载模式切换。
+
+#### `searcher.py`（全局 Eager）
+- 将整个微博搜索爬虫**全局设置为 eager 加载模式**（在 `_prepare_search_session` 中设置）。
+- 以前只在翻页时设 eager，但如果翻页失败回退到 `_safe_get_html` 走 URL 导航时，仍然会等待所有资源（图片、引用的 js 代码）加载完毕。这导致第 10 页即便回退导航成功，也经常因为 20秒 的超时限制而失败。
+- 对于爬虫，DOM 就绪（eager 模式）就足够提取信息。
 - 连续 timeout 后**重建 tab 并跳页**（而非终止搜索）
 - 失败页直接跳到下一页继续，连续 3 页失败才终止
 - 日志明确标注跳过了哪些页
