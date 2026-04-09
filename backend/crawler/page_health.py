@@ -36,6 +36,15 @@ import threading
 _per_task_errors: dict[str | None, int] = {}
 _error_lock = threading.Lock()
 
+# ── 调试快照频率限制（防止错误风暴时产出海量截图） ─────────────────
+# task_id -> 上次保存快照的 monotonic 时间戳
+_snapshot_last_save: dict[str | None, float] = {}
+_snapshot_lock = threading.Lock()
+# 同一任务两次快照之间最小间隔（秒）
+_SNAPSHOT_MIN_INTERVAL = 30.0
+# 连续错误超过此阈值后完全跳过截图（已有足够诊断信息）
+_SNAPSHOT_SKIP_AFTER_ERRORS = 10
+
 # 连续错误次数 → 额外冷却秒数（递增缓冲，给 X 服务端恢复时间）
 _COOLDOWN_TIERS = [
     (3, 3.0),    # 连续 3 次错误后额外等 3 秒
@@ -83,60 +92,71 @@ def _record_success(task_id: str | None = None) -> None:
             logger.debug(f"[{tag}] 页面恢复正常，重置连续错误计数（之前 {prev} 次）")
 
 
+def _should_save_snapshot(task_id: Optional[str] = None) -> bool:
+    """判断是否应该保存快照（频率限制 + 错误风暴跳过）。"""
+    # 连续错误过多时，已有足够诊断信息，跳过截图以避免 I/O 风暴
+    error_count = _get_error_count(task_id)
+    if error_count > _SNAPSHOT_SKIP_AFTER_ERRORS:
+        return False
+
+    now = time.monotonic()
+    with _snapshot_lock:
+        last = _snapshot_last_save.get(task_id, 0.0)
+        if now - last < _SNAPSHOT_MIN_INTERVAL:
+            return False
+        _snapshot_last_save[task_id] = now
+    return True
+
+
 def _save_debug_snapshot(tab, state: PageState, reason: str, attempt: int, task_id: Optional[str] = None) -> None:
     """
     保存当前页面的截图和 HTML，方便在无显示器的 Linux 服务器上诊断页面问题。
     文件保存到 backend/logs/debug/ 目录。
+
+    内置频率限制：同一任务每 30s 最多保存一次，连续错误超过 10 次后完全跳过。
     """
+    # 频率限制：避免错误风暴时产出海量截图导致 I/O 阻塞
+    if not _should_save_snapshot(task_id):
+        return
+
     try:
         _DEBUG_DIR.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         tag = task_id[:8] if task_id else "notask"
         prefix = f"{ts}_{tag}_attempt{attempt}_{state.value}"
 
-        # 保存截图
-        try:
-            screenshot_name = f"{prefix}.png"
-            saved_path = tab.get_screenshot(path=str(_DEBUG_DIR), name=screenshot_name, full_page=True)
-            logger.info(f"已保存调试截图: {saved_path}")
-
-            # 把截图 URL 同步到任务状态里，让前端可见
-            if task_id:
-                try:
-                    from api.services import task_manager
-                    if task_manager.get_task_summary(task_id) is not None:
-                        task_manager.update_task_debug_screenshot(
-                            task_id,
-                            f"/api/v1/debug/{screenshot_name}",
-                        )
-                        task_manager.send_signal(task_id, "changed")
-                except Exception as e:
-                    logger.warning(f"无法将截图 URL 同步至任务状态: {e}")
-
-        except Exception as e:
-            logger.warning(f"保存截图失败: {e}")
-
-        # 保存 HTML
-        try:
-            html_path = _DEBUG_DIR / f"{prefix}.html"
-            html_content = tab.html or "(empty)"
-            html_path.write_text(html_content, encoding="utf-8")
-            logger.info(f"已保存页面 HTML: {html_path}")
-        except Exception as e:
-            logger.warning(f"保存 HTML 失败: {e}")
-
-        # 保存 URL 和状态信息
+        # 保存 URL 和状态信息（零 CDP 开销，不做截图）
+        # 注意：v2 移除了 tab.get_screenshot(full_page=True) 调用，
+        # 因为 CDP 全页渲染在浏览器压力大时可阻塞 10-30s，是级联超时的最大元凶。
         try:
             info_path = _DEBUG_DIR / f"{prefix}_info.txt"
+            current_url = "(unknown)"
+            try:
+                current_url = tab.url or "(empty)"
+            except Exception:
+                pass
             info = (
                 f"时间: {datetime.now().isoformat()}\n"
-                f"URL: {tab.url}\n"
+                f"URL: {current_url}\n"
                 f"页面状态: {state.value}\n"
                 f"原因: {reason}\n"
                 f"重试次数: {attempt}\n"
                 f"Task ID: {task_id}\n"
+                f"连续错误: {_get_error_count(task_id)}\n"
             )
             info_path.write_text(info, encoding="utf-8")
+            logger.info(f"已保存调试信息: {info_path}")
+        except Exception:
+            pass
+
+        # 保存 HTML（轻量：只读取已有 DOM，不触发 CDP 渲染）
+        try:
+            html_path = _DEBUG_DIR / f"{prefix}.html"
+            html_content = tab.html or "(empty)"
+            # 截断过长 HTML，防止写入巨量数据
+            if len(html_content) > 500_000:
+                html_content = html_content[:500_000] + "\n<!-- truncated -->"
+            html_path.write_text(html_content, encoding="utf-8")
         except Exception:
             pass
 
@@ -170,6 +190,7 @@ def navigate_with_retry(
     challenge_cooldown: float = 8.0,
     raise_on_risk: bool = False,
     task_id: Optional[str] = None,
+    browser_instance=None,
 ) -> bool:
     """
     导航到目标 URL，遇到错误页面自动刷新重试。
@@ -182,18 +203,34 @@ def navigate_with_retry(
         load_timeout:   页面加载超时（秒）
         post_load_wait: 加载成功后额外等待时间（秒，0 表示不额外等待）
         task_id:        任务 ID（仅用于日志标记）
+        browser_instance: 浏览器实例（用于页面导航计数和回收）
 
     Returns:
         True  = 页面加载正常
         False = 所有重试失败
     """
     log_prefix = f"[task={task_id}] " if task_id else ""
+    _nav_browser_instance = browser_instance
 
     challenge_hits = 0
     # 追踪 splash 状态的连续次数，触发换账号
     splash_hits = 0
 
-    for attempt in range(max_retries + 1):
+    # ── 全局断路器：错误风暴时阻塞等待统一冷却 ──
+    from crawler.circuit_breaker import get_breaker
+    breaker = get_breaker()
+    breaker.acquire_permission(task_id)
+
+    # ── 错误风暴快速失败：当连续错误已很多时，减少本次 max_retries ──
+    error_count = _get_error_count(task_id)
+    effective_max_retries = max_retries
+    if error_count >= 8:
+        # 连续错误 8+ 次，缩减重试到 1 次（快速失败，把时间让给冷却恢复）
+        effective_max_retries = min(max_retries, 1)
+    elif error_count >= 5:
+        effective_max_retries = min(max_retries, 2)
+
+    for attempt in range(effective_max_retries + 1):
         try:
             if attempt == 0:
                 tab.get(url, timeout=load_timeout)
@@ -245,6 +282,14 @@ def navigate_with_retry(
 
             if state == PageState.OK:
                 _record_success(task_id)
+                breaker.record_success(task_id)
+                # ── 记录页面导航次数（支撑浏览器主动回收） ──
+                if _nav_browser_instance is not None:
+                    try:
+                        from crawler.browser_lifecycle import record_navigation
+                        record_navigation(_nav_browser_instance.instance_id)
+                    except Exception:
+                        pass
                 if post_load_wait > 0:
                     interruptible_sleep(post_load_wait, task_id=task_id)
                 if attempt > 0:
@@ -349,6 +394,7 @@ def navigate_with_retry(
 
             if is_error_like_state(state):
                 extra_cooldown = _record_error(task_id)
+                breaker.record_error(task_id)
                 # 检查是否触发长时间冻结
                 if _should_freeze(task_id):
                     from config import settings
@@ -404,8 +450,8 @@ def navigate_with_retry(
                     pass
                 if extra_cooldown > 0:
                     sleep_with_jitter(extra_cooldown, jitter_ratio=0.15, minimum=2.0)
-                if attempt == max_retries:
-                    logger.error(f"{log_prefix}已达最大重试次数 {max_retries}，放弃 (url={url[:80]})")
+                if attempt == effective_max_retries:
+                    logger.error(f"{log_prefix}已达最大重试次数 {effective_max_retries}，放弃 (url={url[:80]})")
                     return False
                 continue  # 继续重试
 
@@ -418,7 +464,7 @@ def navigate_with_retry(
         except ChallengeSignal:
             raise
         except Exception as e:
-            if attempt == max_retries:
+            if attempt == effective_max_retries:
                 logger.error(f"{log_prefix}导航失败，已达最大重试次数: {e}")
                 return False
             logger.warning(f"{log_prefix}导航异常 (attempt={attempt}): {e}")

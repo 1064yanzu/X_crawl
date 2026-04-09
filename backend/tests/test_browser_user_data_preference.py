@@ -121,3 +121,94 @@ def test_resolve_profile_directory_name_falls_back_to_default(tmp_path):
     profile_name = browser._resolve_profile_directory_name(str(user_data))
 
     assert profile_name == "Default"
+
+
+def test_create_browser_falls_back_to_crawler_profile_when_real_user_dir_launch_fails(monkeypatch, tmp_path):
+    import config
+    from crawler import browser
+
+    real_user_data = tmp_path / "real-user-data"
+    fallback_user_data = tmp_path / "crawler-profile"
+    real_user_data.mkdir()
+    fallback_user_data.mkdir()
+    (real_user_data / "Default").mkdir()
+    (fallback_user_data / "Default").mkdir()
+
+    monkeypatch.setattr(config.settings, "browser_debug_port", 9222, raising=False)
+    monkeypatch.setattr(config.settings, "browser_user_data_path", "", raising=False)
+    monkeypatch.setattr(config.settings, "browser_exec_path", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", raising=False)
+    monkeypatch.setattr(config.settings, "browser_selected_id", "", raising=False)
+    monkeypatch.setattr(config.settings, "browser_prefer_user_data_dir", True, raising=False)
+    monkeypatch.setattr(config.settings, "browser_proxy", "", raising=False)
+    monkeypatch.setattr(config.settings, "browser_headless", False, raising=False)
+    monkeypatch.setattr(config.settings, "browser_linux_hardening", False, raising=False)
+    monkeypatch.setattr(config.settings, "browser_load_mode", "normal", raising=False)
+    monkeypatch.setattr(browser, "_CRAWLER_PROFILE_DIR", str(fallback_user_data))
+    monkeypatch.setattr(browser, "_is_port_open", lambda host, port: False)
+    monkeypatch.setattr(browser, "_pick_free_local_port", lambda: 45678)
+    monkeypatch.setattr(
+        browser,
+        "_resolve_browser_paths",
+        lambda: ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", str(real_user_data)),
+    )
+    monkeypatch.setattr(browser, "_is_user_data_locked", lambda path: False)
+    monkeypatch.setattr(browser, "_cleanup_stale_singleton_locks", lambda path: None)
+    monkeypatch.setattr(browser, "_refresh_current_browser_pid", lambda: None)
+
+    chromium_calls: list[str] = []
+
+    class DummyChromiumOptions:
+        def __init__(self):
+            self.user_data_path = None
+
+        def set_local_port(self, port):
+            self.local_port = port
+
+        def set_browser_path(self, path):
+            self.browser_path = path
+
+        def set_user_data_path(self, path):
+            self.user_data_path = path
+
+        def set_argument(self, *_args):
+            return None
+
+        def set_proxy(self, _proxy):
+            return None
+
+        def headless(self, _enabled):
+            return None
+
+        def set_load_mode(self, _mode):
+            return None
+
+        def mute(self, _enabled):
+            return None
+
+        def no_imgs(self, _enabled):
+            return None
+
+        def set_pref(self, *_args):
+            return None
+
+    class DummyBrowser:
+        def __init__(self):
+            self.set = self
+
+        def timeouts(self, **_kwargs):
+            return None
+
+    def fake_chromium(co):
+        chromium_calls.append(co.user_data_path)
+        if co.user_data_path == str(real_user_data):
+            raise RuntimeError("real profile launch failed")
+        return DummyBrowser()
+
+    monkeypatch.setattr(browser, "ChromiumOptions", DummyChromiumOptions)
+    monkeypatch.setattr(browser, "Chromium", fake_chromium)
+
+    launched = browser._create_browser()
+
+    assert isinstance(launched, DummyBrowser)
+    assert chromium_calls == [str(real_user_data), str(fallback_user_data)]
+    assert browser.get_browser_session_info()["effective_user_data_path"] == str(fallback_user_data / "Default")

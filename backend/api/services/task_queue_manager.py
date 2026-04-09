@@ -477,7 +477,7 @@ def resume_queue(queue_id: str) -> dict:
 def notify_task_terminal(task_id: str, status: str) -> None:
     """
     任务终态通知。
-    更新队列状态，并在并发模式下自动调度同队列中下一个等待的任务。
+    更新队列状态，并自动调度同队列中下一个等待的任务。
     """
     _ensure_loaded()
 
@@ -494,10 +494,13 @@ def notify_task_terminal(task_id: str, status: str) -> None:
         if task_id not in task_ids:
             return
 
-        # 检查是否还有未完成的任务，同时收集需要恢复的任务
+        started_set = set(queue.get("started_task_ids", []))
+
+        # 检查是否还有未完成的任务，同时收集需要恢复/调度的任务
         first_active_id = None
         all_done = True
         stalled_ids: list[str] = []  # 状态残留但线程已死的任务
+        waiting_ids: list[str] = []  # 尚未启动、等待调度的任务
         for tid in task_ids:
             t = task_manager.get_task_summary(tid)
             if not t:
@@ -510,6 +513,19 @@ def notify_task_terminal(task_id: str, status: str) -> None:
                 # 检测状态残留：running/pending 但线程已死
                 if t_status in ("running", "pending") and not task_manager.is_thread_alive(tid):
                     stalled_ids.append(tid)
+            elif t_status == "stopped" and int(t.get("result_count", 0)) == 0 and tid != task_id:
+                # 从未运行过的任务（被 restore_waiting_task 标记为 stopped / 初始等待）
+                # 但当前标记为终态 → 需要重新激活调度
+                all_done = False
+                waiting_ids.append(tid)
+                if first_active_id is None:
+                    first_active_id = tid
+            elif t_status == "pending" and not task_manager.is_thread_alive(tid):
+                # pending 但线程未启动（可能是创建后还未被调度器处理）
+                all_done = False
+                waiting_ids.append(tid)
+                if first_active_id is None:
+                    first_active_id = tid
 
         if all_done:
             queue["status"] = "completed"
@@ -521,16 +537,46 @@ def notify_task_terminal(task_id: str, status: str) -> None:
             queue["finished_at"] = None
         _persist_queue(queue)
 
-    # 并发模式下：通过调度器恢复状态残留的任务（受并发限制保护，不直接启动线程）
-    max_concurrent = int(settings.crawler_max_concurrent_tasks)
-    if max_concurrent > 1 and stalled_ids:
-        from api.services.task_scheduler import scheduler
-        for tid in stalled_ids:
+    # ── 自动调度队列中等待的任务 ──────────────────────────────────────────
+    # 无论串行还是并发模式，都通过调度器来控制并发上限
+    from api.services.task_scheduler import scheduler
+
+    # 1) 恢复状态残留的任务（running/pending 但线程已死）
+    for tid in stalled_ids:
+        t = task_manager.get_task_summary(tid)
+        if not t:
+            continue
+        logger.info(
+            "notify_task_terminal: 恢复残留任务 %s（状态=%s 但线程已死）",
+            tid[:8], t.get("status"),
+        )
+        task_manager.update_task_status(tid, "stopped")
+        task_manager.resume_finished_task(tid)
+        platform = t.get("platform", "x")
+        task_kind = t.get("task_kind", "search")
+        crawl_service.start_crawler_thread(tid, t, force_new_browser=True)
+
+    # 2) 调度尚未启动的等待任务
+    for tid in waiting_ids:
+        t = task_manager.get_task_summary(tid)
+        if not t:
+            continue
+        t_status = t.get("status", "")
+        # 对于 stopped 状态的等待任务，需要先 resume
+        if t_status == "stopped":
+            success = task_manager.resume_finished_task(tid)
+            if not success:
+                logger.warning(
+                    "notify_task_terminal: 无法恢复等待任务 %s（status=%s）",
+                    tid[:8], t_status,
+                )
+                continue
+            # 刷新任务信息
             t = task_manager.get_task_summary(tid)
             if not t:
                 continue
-            logger.info("notify_task_terminal: 恢复残留任务 %s（状态=%s 但线程已死）", tid[:8], t.get("status"))
-            task_manager.update_task_status(tid, "stopped")
-            task_manager.resume_finished_task(tid)
-            platform = t.get("platform", "x")
-            scheduler.enqueue(tid, t, platform=platform)
+        logger.info(
+            "notify_task_terminal: 自动调度等待任务 %s（原状态=%s）",
+            tid[:8], t_status,
+        )
+        crawl_service.start_crawler_thread(tid, t, resume=False)

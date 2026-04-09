@@ -57,8 +57,19 @@ async def lifespan(app: FastAPI):
         f"| user_data={'✅' if detected['user_data_path'] else '⚠️'} "
         f"| platform={detected['platform']}"
     )
+    # 启动浏览器生命周期守护线程（健康心跳 + debug 清理）
+    try:
+        from crawler.browser_lifecycle import start_all as start_lifecycle
+        start_lifecycle()
+    except Exception as e:
+        logger.warning("启动浏览器生命周期守护失败（非致命）: %s", e)
     yield
     logger.info("正在关闭浏览器并释放资源...")
+    try:
+        from crawler.browser_lifecycle import stop_all as stop_lifecycle
+        stop_lifecycle()
+    except Exception:
+        pass
     try:
         from crawler.browser_pool import set_shutting_down
         set_shutting_down()

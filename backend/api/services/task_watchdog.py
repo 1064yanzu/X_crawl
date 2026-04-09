@@ -1,9 +1,10 @@
 """
 任务看门狗（watchdog）
 
-监控两类问题：
+监控三类问题：
 1. 长时间无进展的 comment_backfill 任务（stale 检测 + 自动重排）
 2. comment_backfill_group 任务的评论抓取速率低于阈值时发出告警并尝试自愈
+3. search 任务（X / 微博）长时间零产出时发出告警并尝试自愈重启
 """
 from __future__ import annotations
 
@@ -29,6 +30,13 @@ _rate_samples_lock = threading.Lock()
 # 速率告警的冷却时间（防止反复告警）
 _rate_alert_cooldown: dict[str, float] = {}
 _RATE_ALERT_COOLDOWN_SEC = 120.0  # 同一任务最多 2 分钟告警一次
+
+# ── 搜索任务卡住告警冷却 ──────────────────────────────────────
+# key = task_id, value = last_alert_mono
+_search_warn_cooldown: dict[str, float] = {}
+_search_heal_cooldown: dict[str, float] = {}
+_SEARCH_WARN_COOLDOWN_SEC = 180.0    # 同一任务最多 3 分钟警告一次
+_SEARCH_HEAL_COOLDOWN_SEC = 300.0    # 同一任务最多 5 分钟执行一次自愈
 
 
 def _parse_iso(value: object) -> datetime | None:
@@ -56,6 +64,16 @@ def _watchdog_interval_sec() -> float:
 
 def _stale_timeout_sec() -> float:
     return max(60.0, float(getattr(settings, "crawler_active_task_stale_timeout_sec", 900.0)))
+
+
+def _search_stall_timeout_sec() -> float:
+    """搜索任务自愈触发阈值（秒），默认 10 分钟。"""
+    return max(60.0, float(getattr(settings, "crawler_search_stall_timeout_sec", 600.0)))
+
+
+def _search_stall_warn_sec() -> float:
+    """搜索任务警告触发阈值（秒），默认 5 分钟。"""
+    return max(30.0, float(getattr(settings, "crawler_search_stall_warn_sec", 300.0)))
 
 
 def _is_stale_comment_backfill(task: dict, *, now: datetime) -> tuple[bool, float]:
@@ -197,6 +215,121 @@ def clear_rate_samples(task_id: str) -> None:
     with _rate_samples_lock:
         _rate_samples.pop(task_id, None)
     _rate_alert_cooldown.pop(task_id, None)
+    _search_warn_cooldown.pop(task_id, None)
+    _search_heal_cooldown.pop(task_id, None)
+
+
+# ── 搜索任务卡住检测 ──────────────────────────────────────────
+
+def _get_search_task_idle_sec(task_id: str, task: dict) -> float:
+    """
+    计算搜索任务的空闲秒数。
+
+    优先使用 telemetry 的 idle_sec（基于 monotonic 时钟，不会因系统时间跳变失准），
+    回退到 last_event_at（UTC 时间戳）来计算。
+    """
+    # 方法1：telemetry idle_sec（最准确）
+    try:
+        from crawler import telemetry
+        snapshot = telemetry.get_snapshot(task_id)
+        telemetry_idle = float(snapshot.get("idle_sec", 0) or 0)
+        if telemetry_idle > 0:
+            return telemetry_idle
+    except Exception:
+        pass
+
+    # 方法2：last_event_at（UTC 时间戳回退）
+    now = datetime.now(timezone.utc)
+    heartbeat = _parse_iso(task.get("last_event_at")) or _parse_iso(task.get("created_at"))
+    if heartbeat is None:
+        return 0.0
+    return max(0.0, (now - heartbeat).total_seconds())
+
+
+def _check_search_task_stall(task_manager) -> None:
+    """
+    检查所有运行中的搜索任务（task_kind == "search"）是否长时间无进展。
+
+    检测逻辑：
+    - 利用 telemetry idle_sec（基于 monotonic 时钟）判断最近活动时间
+    - 回退使用 last_event_at（UTC 时间戳）
+    - 分级处理：
+        * warn_sec  内：正常，不干预
+        * warn_sec  后：发出警告日志，更新任务 phase 提示用户
+        * stall_sec 后：执行自愈重启（停止→保存→重排）
+
+    注意：
+    - 任务刚启动的初始化阶段（< warn_sec）不干预，避免误杀正常启动流程
+    - 带冷却机制，同一任务不会被频繁告警/自愈
+    """
+    now_mono = time.monotonic()
+    warn_sec = _search_stall_warn_sec()
+    stall_sec = _search_stall_timeout_sec()
+
+    with task_manager._tasks_lock:
+        search_tasks = [
+            copy.deepcopy(t)
+            for t in task_manager._tasks.values()
+            if str(t.get("task_kind") or "") == "search"
+            and str(t.get("status") or "") == "running"
+        ]
+
+    for task in search_tasks:
+        task_id = str(task.get("task_id") or "")
+        if not task_id:
+            continue
+
+        idle_sec = _get_search_task_idle_sec(task_id, task)
+        platform = str(task.get("platform") or "x")
+        keyword = str(task.get("keyword") or "")[:30]
+
+        if idle_sec < warn_sec:
+            # 正常状态，不干预
+            continue
+
+        # ── 达到警告阈值 ──────────────────────────────────
+        if idle_sec < stall_sec:
+            last_warn = _search_warn_cooldown.get(task_id, 0.0)
+            if now_mono - last_warn < _SEARCH_WARN_COOLDOWN_SEC:
+                continue  # 冷却中，跳过
+            _search_warn_cooldown[task_id] = now_mono
+
+            thread_alive = task_manager.is_thread_alive(task_id)
+            logger.warning(
+                "[watchdog] 搜索任务疑似卡住: task=%s platform=%s keyword=%r "
+                "idle=%.0fs (阈值=%ds) thread_alive=%s",
+                task_id[:8], platform, keyword,
+                idle_sec, int(warn_sec), thread_alive,
+            )
+            task_manager.update_task_phase(
+                task_id,
+                f"⚠ 搜索任务已 {idle_sec / 60:.0f} 分钟无新数据，watchdog 持续监控中...",
+            )
+            continue
+
+        # ── 达到自愈阈值 ──────────────────────────────────
+        last_heal = _search_heal_cooldown.get(task_id, 0.0)
+        if now_mono - last_heal < _SEARCH_HEAL_COOLDOWN_SEC:
+            continue  # 冷却中，跳过
+        _search_heal_cooldown[task_id] = now_mono
+
+        # 再次获取最新快照（避免自愈时任务已经自行结束）
+        latest = task_manager._get_task_summary_snapshot(task_id)
+        if not latest or str(latest.get("status") or "") != "running":
+            logger.info(
+                "[watchdog] 搜索任务 %s 状态已変更，跳过自愈",
+                task_id[:8],
+            )
+            continue
+
+        thread_alive = task_manager.is_thread_alive(task_id)
+        idle_minutes = max(1, int(round(idle_sec / 60.0)))
+        logger.warning(
+            "[watchdog] 搜索任务长时间零产出，执行自愈: task=%s platform=%s keyword=%r "
+            "idle=%dmin thread_alive=%s",
+            task_id[:8], platform, keyword, idle_minutes, thread_alive,
+        )
+        _heal_stale_task(latest, idle_sec=idle_sec)
 
 
 # ── 主入口 ──────────────────────────────────────────────────
@@ -235,8 +368,11 @@ def maybe_heal_stale_active_tasks(*, force: bool = False) -> None:
         for task, idle_sec in candidates:
             _heal_stale_task(task, idle_sec=idle_sec)
 
-        # ── 2. 新增：comment_backfill_group 速率监控 ──
+        # ── 2. 原有逻辑：comment_backfill_group 速率监控 ──
         _check_group_reply_rates(task_manager)
+
+        # ── 3. 新增：search 任务零产出检测 ──
+        _check_search_task_stall(task_manager)
 
     finally:
         _watchdog_local.running = False
@@ -301,6 +437,10 @@ def _heal_stale_task(task: dict, *, idle_sec: float) -> None:
 
     if task_manager.resume_finished_task(task_id):
         refreshed = task_manager._get_task_summary_snapshot(task_id) or latest
+        # search/weibo 任务重启前确保 product 字段存在（防御 _build_worker_payload KeyError）
+        if not refreshed.get("product"):
+            refreshed = dict(refreshed)
+            refreshed.setdefault("product", "Top")
         crawl_service.start_crawler_thread(task_id, refreshed, force_new_browser=True)
 
 

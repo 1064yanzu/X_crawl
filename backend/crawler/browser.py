@@ -468,6 +468,36 @@ def _resolve_profile_directory_name(user_data_path: str) -> Optional[str]:
     return None
 
 
+def _launch_browser_with_options(
+    co: ChromiumOptions,
+    *,
+    user_data: str,
+    profile_directory: Optional[str],
+    effective_headless: bool,
+    local_port: int,
+    session_mode: str = "crawler_profile",
+) -> Chromium:
+    """按给定选项启动浏览器，并同步会话状态。"""
+    _update_session_info(
+        session_mode=session_mode,
+        effective_user_data_path=os.path.join(user_data, profile_directory) if profile_directory else user_data,
+        debug_port=local_port,
+        browser_pid=None,
+        browser_alive=True,
+        headless=effective_headless,
+    )
+
+    logger.info("正在初始化浏览器...")
+    browser = Chromium(co)
+    try:
+        browser.set.timeouts(base=10, page_load=15, script=10)
+    except Exception as e:
+        logger.debug("设置浏览器超时失败（非关键）: %s", e)
+    _refresh_current_browser_pid()
+    logger.info("浏览器初始化成功")
+    return browser
+
+
 def _create_browser() -> Chromium:
     debug_port = settings.browser_debug_port  # 默认 9222
 
@@ -553,15 +583,6 @@ def _create_browser() -> Chromium:
         co.set_argument("--user-agent", _REAL_UA)
         logger.info("浏览器运行于无头模式（已覆盖 User-Agent 为 Edge 145 macOS）")
 
-    _update_session_info(
-        session_mode="crawler_profile",
-        effective_user_data_path=os.path.join(user_data, profile_directory) if profile_directory else user_data,
-        debug_port=local_port,
-        browser_pid=None,
-        browser_alive=True,
-        headless=effective_headless,
-    )
-
     # 反识别与运行稳定策略
     # 1) 显式窗口尺寸与语言，减少自动化默认指纹
     co.set_argument("--window-size", "1366,860")
@@ -602,13 +623,79 @@ def _create_browser() -> Chromium:
     logger.info(f"页面加载模式: {load_mode}")
 
     co.mute(True)
+    try:
+        return _launch_browser_with_options(
+            co,
+            user_data=user_data,
+            profile_directory=profile_directory,
+            effective_headless=effective_headless,
+            local_port=local_port,
+        )
+    except Exception as e:
+        if os.path.abspath(user_data) == os.path.abspath(_CRAWLER_PROFILE_DIR):
+            raise
 
-    logger.info("正在初始化浏览器...")
-    browser = Chromium(co)
-    _refresh_current_browser_pid()
-    logger.info("浏览器初始化成功")
+        logger.warning(
+            "真实用户目录启动失败，自动回退到隔离 Profile 重试: user_data=%s, profile=%s, error=%s",
+            user_data,
+            profile_directory,
+            e,
+        )
 
-    return browser
+        fallback_user_data = _CRAWLER_PROFILE_DIR
+        os.makedirs(fallback_user_data, exist_ok=True)
+        if _is_user_data_locked(fallback_user_data):
+            _cleanup_stale_singleton_locks(fallback_user_data)
+        fallback_profile_directory = _resolve_profile_directory_name(fallback_user_data)
+
+        fallback_co = ChromiumOptions()
+        fallback_co.set_local_port(local_port)
+        if exec_path:
+            fallback_co.set_browser_path(exec_path)
+        fallback_co.set_user_data_path(fallback_user_data)
+        if fallback_profile_directory:
+            fallback_co.set_argument("--profile-directory", fallback_profile_directory)
+            logger.info(f"回退后使用浏览器 Profile: {fallback_profile_directory}")
+        logger.info(f"回退后使用用户数据目录: {fallback_user_data}")
+
+        if settings.browser_proxy:
+            fallback_co.set_proxy(settings.browser_proxy)
+        if effective_headless:
+            fallback_co.headless(True)
+            _REAL_UA = (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0"
+            )
+            fallback_co.set_argument("--user-agent", _REAL_UA)
+
+        fallback_co.set_argument("--window-size", "1366,860")
+        fallback_co.set_argument("--lang", "zh-CN,zh,en,en-GB,en-US")
+        fallback_co.set_argument("--accept-lang", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
+        if effective_headless:
+            fallback_co.set_argument("--disable-blink-features", "AutomationControlled")
+        fallback_co.set_argument("--disable-infobars")
+        fallback_co.set_argument("--no-first-run")
+        fallback_co.set_argument("--no-default-browser-check")
+        if linux_headless_args_enabled(
+            browser_linux_hardening=bool(settings.browser_linux_hardening),
+            browser_headless=effective_headless,
+        ) or need_root_no_sandbox:
+            fallback_co.set_argument("--no-sandbox")
+            fallback_co.set_argument("--disable-dev-shm-usage")
+            fallback_co.set_argument("--disable-gpu")
+            fallback_co.set_argument("--disable-setuid-sandbox")
+        apply_browser_option_policies(fallback_co)
+        fallback_co.set_load_mode(load_mode)
+        fallback_co.mute(True)
+
+        return _launch_browser_with_options(
+            fallback_co,
+            user_data=fallback_user_data,
+            profile_directory=fallback_profile_directory,
+            effective_headless=effective_headless,
+            local_port=local_port,
+        )
 
 
 def get_new_tab(background: Optional[bool] = None, *, _retried: bool = False):
@@ -618,7 +705,20 @@ def get_new_tab(background: Optional[bool] = None, *, _retried: bool = False):
         if not background and sys.platform == "darwin":
             logger.debug("macOS 当前配置为前台打开新标签页，浏览器可能会抢占系统焦点")
     try:
-        tab = get_browser().new_tab(background=background)
+        browser = get_browser()
+        # ── 防止 tab 无限增长：创建前检查并清理 ──
+        _MAX_TABS = 15
+        try:
+            tab_count = len(browser.tab_ids)
+            if tab_count >= _MAX_TABS:
+                logger.warning(
+                    f"[Browser] 全局浏览器 tab 数量过多 ({tab_count})，触发自动清理..."
+                )
+                _cleanup_zombie_tabs(browser, keep_count=2)
+        except Exception:
+            pass
+
+        tab = browser.new_tab(background=background)
         # 始终注入 stealth 脚本（反检测是基本需求，不应默认关闭）
         apply_stealth_to_tab(tab, enabled=True)
         apply_tab_resource_policies(tab)
@@ -631,6 +731,28 @@ def get_new_tab(background: Optional[bool] = None, *, _retried: bool = False):
             _browser = None
             return get_new_tab(background=background, _retried=True)
         raise
+
+
+def _cleanup_zombie_tabs(browser, *, keep_count: int = 2) -> int:
+    """清理全局浏览器中多余的 tab，保留最新的 keep_count 个。"""
+    try:
+        tab_ids = browser.tab_ids
+        if len(tab_ids) <= keep_count:
+            return 0
+        to_close = tab_ids[:-keep_count] if keep_count > 0 else tab_ids
+        closed = 0
+        for tid in to_close:
+            try:
+                browser.close_tabs(tid)
+                closed += 1
+            except Exception:
+                pass
+        if closed > 0:
+            logger.info(f"[Browser] 清理了 {closed} 个僵尸 tab，剩余 {len(tab_ids) - closed} 个")
+        return closed
+    except Exception as e:
+        logger.debug(f"[Browser] 清理僵尸 tab 失败: {e}")
+        return 0
 
 
 def _resolve_browser_app_name() -> Optional[str]:

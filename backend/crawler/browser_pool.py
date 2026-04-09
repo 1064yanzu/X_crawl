@@ -218,6 +218,8 @@ class BrowserInstance:
         self._cookies_to_inject: list[dict] = []
         self._bound_account_id: Optional[str] = None
         self._bound_account_alias: Optional[str] = None
+        # ── 延迟回收标记：heartbeat 设置此标记，实例在安全时机（new_tab/get_browser）执行实际回收 ──
+        self._recycle_requested: bool = False
 
     @property
     def is_alive(self) -> bool:
@@ -243,11 +245,29 @@ class BrowserInstance:
             return False
 
     def get_browser(self) -> "Chromium":
-        """获取或创建浏览器实例（懒初始化）。"""
+        """获取或创建浏览器实例（懒初始化）。
+
+        如果 heartbeat 标记了回收请求（_recycle_requested），
+        在此安全时机执行实际回收（此时没有活跃的 CDP 操作）。
+        """
         with self._lock:
+            # ── 延迟回收：heartbeat 请求回收时，在下次获取浏览器时才真正执行 ──
+            if self._recycle_requested and self._browser is not None:
+                logger.info(
+                    "[BrowserPool] 实例 #%s 执行延迟回收（heartbeat 此前标记了内存超标）",
+                    self.instance_id,
+                )
+                try:
+                    self._browser.quit()
+                except Exception:
+                    pass
+                self._browser = None
+                self._recycle_requested = False
+
             if self._browser is not None and self.is_alive:
                 return self._browser
             self._browser = self._create_browser()
+            self._recycle_requested = False
             return self._browser
 
     def _create_browser(self) -> "Chromium":
@@ -452,6 +472,9 @@ class BrowserInstance:
                 pass
         return injected
 
+    # 单个浏览器实例允许的最大 tab 数
+    _MAX_TABS_PER_INSTANCE = 15
+
     def new_tab(self, *, _retried: bool = False):
         """在此实例上创建新 tab（已注入 stealth 和 cookie）。断连时自动重建浏览器实例。"""
         from crawler.browser_resource_policy import apply_tab_resource_policies
@@ -461,6 +484,18 @@ class BrowserInstance:
         background = bool(settings.browser_background_tabs)
         try:
             browser = self.get_browser()
+            # ── 防止 tab 无限增长：创建前检查并清理 ──
+            try:
+                tab_count = len(browser.tab_ids)
+                if tab_count >= self._MAX_TABS_PER_INSTANCE:
+                    logger.warning(
+                        f"[BrowserPool] 实例 #{self.instance_id} tab 数量过多 ({tab_count})，"
+                        f"触发自动清理..."
+                    )
+                    self.cleanup_zombie_tabs(keep_count=2)
+            except Exception:
+                pass
+
             tab = browser.new_tab(background=background)
             apply_stealth_to_tab(tab, enabled=True)
             apply_tab_resource_policies(tab)
@@ -501,6 +536,38 @@ class BrowserInstance:
                     self._browser = None
                     self._bound_account_id = None
                     self._bound_account_alias = None
+
+    def cleanup_zombie_tabs(self, *, keep_count: int = 2) -> int:
+        """
+        清理多余的 tab（保留 keep_count 个），防止 tab 泄漏导致内存耗尽。
+
+        Returns:
+            关闭的 tab 数量
+        """
+        try:
+            browser = self.get_browser()
+            tab_ids = browser.tab_ids
+            if len(tab_ids) <= keep_count:
+                return 0
+
+            # 保留最后 keep_count 个（最新的），关闭其余的
+            to_close = tab_ids[:-keep_count] if keep_count > 0 else tab_ids
+            closed = 0
+            for tid in to_close:
+                try:
+                    browser.close_tabs(tid)
+                    closed += 1
+                except Exception:
+                    pass
+            if closed > 0:
+                logger.info(
+                    f"[BrowserPool] 实例 #{self.instance_id} 清理了 {closed} 个僵尸 tab，"
+                    f"剩余 {len(tab_ids) - closed} 个"
+                )
+            return closed
+        except Exception as e:
+            logger.debug(f"[BrowserPool] 清理僵尸 tab 失败: {e}")
+            return 0
 
 
 class _Slot:

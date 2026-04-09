@@ -1,5 +1,209 @@
 # Changelog
 
+## [2026-04-09] 微博搜索翻页反爬优化（V3）：点击翻页 + CDP 死亡恢复 + 间隔修正
+
+### 问题
+微博搜索每次翻到第 9 页左右就会触发反爬风控，页面卡住无法继续。浏览器显示页面已正常加载，但爬虫卡死无法继续。
+
+### 根因（共 6 个问题）
+1. **URL 直接导航被识别为机器人**：爬虫通过构造完整 URL（`page=N`）跳转到每一页
+2. **翻页间隔被截断**：虽然微博配置间隔为 12 秒，但 `jittered_sleep` 中的自适应等待将其截断为 `crawler_page_interval_max=6.0` 秒
+3. **分段切换无间隔**：日期分段之间 0 秒间隔
+4. **CDP 连接死亡**（核心问题）：点击"下一页"后 `wait.load_start()` 在页面已加载完毕情况下等待下一个永不到来的加载事件，阻塞 CDP WebSocket 管道 30+ 秒
+5. **`run_js()` 轮询超时**（V1 bug）：CDP 上下文销毁后所有 JS 执行超时
+6. **回退导航叠加卡死**：点击已触发导航 + URL 导航冲突
+
+### 修复
+
+#### `backend/crawler/weibo/pagination.py`（V3 重写）
+- **去掉 `wait.load_start()` 和 `wait.doc_loaded()`**——这两个方法在页面已加载完毕时会等待下一个永不到来的事件，阻塞 CDP 管道
+- 改用 **`sleep(1.5)` + 短超时轮询**：通过 `tab.url` 和 `tab.html`（原生属性）验证页面
+- 新增 **CDP_DEAD 标记**：连续 3 次 tab 属性读取失败时返回 `CDP_DEAD:` 前缀错误，调用方据此重建 tab
+
+#### `backend/crawler/weibo/searcher.py`
+- **CDP 死亡自动恢复**：检测到 `CDP_DEAD` 标记后自动重建 tab，用 URL 导航继续
+- **绕过自适应等待**：不使用 `jittered_sleep`（会被 `crawler_page_interval_max=6s` 截断），改用 `interruptible_sleep` + 手动 ±20% 抖动
+- 前 5 页预热间隔（1.2~1.5 倍基础值）
+- 日期分段切换间隔（1.0~1.5 倍基础值）
+
+#### `backend/config.py`
+- `weibo_search_page_interval` 默认值从 6.0 提高到 **12.0 秒**
+
+### 效果
+| 维度 | 修复前 | 修复后 |
+|------|--------|--------|
+| 导航方式 | URL 直接跳转 | 点击"下一页"按钮 |
+| 前 5 页间隔 | 3.0~4.8s（被截断） | 14~18s |
+| 第 6 页起间隔 | 3.0~4.8s（被截断） | 10~14s |
+| CDP 死亡恢复 | 卡死 30+ 秒 | 自动重建 tab 继续 |
+
+## [2026-04-09] 修复微博搜索翻页间隔过短触发风控
+
+### 问题
+微博搜索前几页翻页间隔只有 3-5 秒，远低于配置的 6 秒，导致第 9 页左右就触发微博反爬风控。
+
+### 根因
+1. `jittered_sleep(page_interval, fast_mode=True)` 中 `fast_mode=True` 将间隔缩短为配置值的 50-80%（6s → 3.0~4.8s）
+2. 前几页没有预热间隔——新建搜索会话后立刻高频翻页，而微博对新会话初期最敏感
+3. 日期分段切换时完全没有间隔——前一个分段的最后一页到下一个分段的第一页秒切
+
+### 修复
+
+#### `backend/crawler/weibo/searcher.py`
+- 移除 `fast_mode=True`，改用 `fast_mode=False` 使用完整配置间隔（6s ± 20% 抖动 ≈ 4.8~7.2s）
+- 新增前 3 页预热间隔：使用 1.3~1.6 倍基础间隔（约 8~10 秒），模拟真人首次浏览
+- 新增日期分段间间隔：1.0~1.5 倍基础间隔（约 6~9 秒），避免分段切换时无间隔连续请求
+
+### 效果
+| 阶段 | 修复前 | 修复后 |
+|------|--------|--------|
+| 前 3 页 | 3.0~4.8s | 7.8~9.6s（预热） |
+| 第 4 页起 | 3.0~4.8s | 4.8~7.2s（正常） |
+| 分段切换 | 0s（无间隔） | 6.0~9.0s |
+
+## [2026-04-09] 修复任务队列自动推进失效——前序任务完成后后续任务不自动启动
+
+### 问题
+任务队列中排在第 1 位的任务爬取完成后，后续排队的任务（队列位置 2、3…）不会自动启动，一直卡在"任务已恢复，队列等待中"状态。
+
+### 根因
+`task_queue_manager.notify_task_terminal()` 在任务到达终态时，只处理了两种场景：
+1. 所有任务都已完成 → 标记队列为 `completed`
+2. 状态残留任务（running/pending 但线程已死）→ 仅在并发模式（`max_concurrent > 1`）下重新入队
+
+**缺失的关键逻辑**：
+- 没有检查队列中是否有**尚未启动的等待任务**（status 为 `stopped` 且 `result_count=0` 的初始化等待任务）
+- 串行模式（`max_concurrent=1`）下，状态残留的恢复逻辑也被跳过（由 `if max_concurrent > 1` 门控）
+- 这些等待中的任务被 `_TERMINAL_STATUSES` 判定为"已完成"，导致队列被误标为 `completed`
+
+### 修复
+
+#### `backend/api/services/task_queue_manager.py`
+- `notify_task_terminal()` 新增 `waiting_ids` 收集逻辑：
+  - 识别 `stopped` 且 `result_count=0` 的未启动等待任务
+  - 识别 `pending` 但线程未启动的遗留任务
+  - 这两类任务不再被视为"已完成"，队列不会被误标为 `completed`
+- 移除 `max_concurrent > 1` 的门控限制：无论串行还是并发模式，都通过 `crawl_service.start_crawler_thread()` → 调度器统一控制并发
+- 新增自动调度逻辑：
+  1. 恢复状态残留的任务（running/pending 但线程已死）→ 直接提交调度器
+  2. 调度尚未启动的等待任务 → 先 `resume_finished_task` 重置状态再提交调度器
+
+### 效果
+队列中的任务按顺序自动推进：第 1 个任务完成后，第 2 个自动启动；第 2 个完成后，第 3 个自动启动，以此类推。
+
+
+## [2026-04-09] Watchdog 优化：搜索任务零产出检测与自动恢复
+
+### 问题
+微博/X 搜索任务（`task_kind == "search"`）长时间卡住不动（爬取数量长时间为 0）时，watchdog 完全无感知，无法自动恢复。原有 watchdog 仅监控 `comment_backfill` 和 `comment_backfill_group` 两类任务。
+
+### 根本原因
+- Watchdog `maybe_heal_stale_active_tasks` 主循环只过滤和处理上述两种 task_kind，搜索任务完全在监控盲区之外
+- 微博搜索 `_safe_get_html` 在 JS 导航或 `tab.get()` 阶段可能长时间阻塞，且内部重试不更新 telemetry 事件，导致 `idle_sec` 暴增
+
+### 改动
+
+#### `backend/api/services/task_watchdog.py`（重写）
+- 新增 `_check_search_task_stall()`：扫描所有 `status == "running"` 的搜索任务，利用 telemetry `idle_sec`（优先）+ `last_event_at`（回退）双重方式判断空闲时长
+- **分级告警策略**：
+  - 空闲 ≥ `crawler_search_stall_warn_sec`（默认 5 分钟）：更新任务 phase 发出警告，暂不干预
+  - 空闲 ≥ `crawler_search_stall_timeout_sec`（默认 10 分钟）：执行自愈重启（停止线程 → 保存已有数据 → 重新排队）
+- 带冷却机制：同一任务警告间隔 3 分钟、自愈间隔 5 分钟，防止反复干预
+- `_heal_stale_task` 新增防御：`search` 任务重启前自动补全缺失的 `product` 字段，避免 `_build_worker_payload` KeyError
+- `clear_rate_samples` 同步清理搜索任务的冷却状态
+
+#### `backend/crawler/weibo/searcher.py`
+- 在翻页重试循环中（每次 `_safe_get_html` 调用前）发送 `weibo_page_attempt` telemetry 心跳，让 watchdog 能区分「正在重试」和「完全死锁」
+- 每次翻页成功完成时发送 `weibo_page_done` 心跳（含本页新增推文数），更准确反映进度
+
+#### `backend/crawler/x_searcher.py`
+- 已有充足的 telemetry 心跳（`search_wait_packet` 每页开始前都会触发），无需修改
+
+#### `backend/config.py`
+- 新增 `crawler_search_stall_timeout_sec`（默认 600 秒 / 10 分钟）：搜索任务自愈阈值
+- 新增 `crawler_search_stall_warn_sec`（默认 300 秒 / 5 分钟）：搜索任务警告阈值
+
+#### `backend/api/routers/crawler_config.py`
+- `CrawlerConfig` schema 新增两个字段（含合法性约束）
+- GET / PUT 端点同步支持读写和持久化新配置项
+- 修复 PUT 端点返回值遗漏 `crawler_active_task_watchdog_*` 三个原有字段的问题
+
+#### `backend/tests/test_task_watchdog.py`
+新增 3 个测试用例（共 5 个全部通过）：
+- `test_watchdog_warns_on_stalling_search_task`：空闲超过 warn 阈值时仅告警，不自愈
+- `test_watchdog_heals_stuck_search_task`：空闲超过 stall 阈值时正确执行自愈重启
+- `test_watchdog_search_task_heal_cooldown`：冷却机制防止同一任务被重复自愈
+
+### 效果
+搜索任务（X 或微博）卡住后：
+- 5 分钟后：watchdog 在日志中发出 WARNING，并在 UI 的任务 phase 中显示提示
+- 10 分钟后：watchdog 自动停止卡死任务，保存已有数据，重新排队继续爬取
+
+
+
+### 问题
+微博搜索爬虫在翻到第 4 页时频繁卡住/超时，即使浏览器中搜索结果已正常加载。
+
+### 根因
+`_safe_get_html()` 使用两阶段导航策略：先 JS 导航（`window.location.href`），失败后回退 `tab.get()`。问题在于：
+
+1. JS 导航 `window.location.href = url` **已触发浏览器导航**，页面开始加载
+2. 导航后旧 CDP 执行上下文被销毁，`tab.run_js()` 轮询因上下文切换全部超时
+3. 12 秒 deadline 到期后，代码回退到 `tab.get(url)` 对同一 URL **重复导航**
+4. 双重请求可能触发微博反爬，且浪费了已加载好的页面
+
+前 3 页因页面较轻，JS 轮询在 12 秒内赶上了新执行上下文建立；第 4 页稍重，刚好错过窗口。
+
+### 修复
+- `backend/crawler/weibo/searcher.py`
+  - JS 导航已触发但 `run_js()` 提取失败时，插入一步 `tab.html` 等待读取（DrissionPage 原生属性能正确处理 CDP 上下文切换），避免 `tab.get()` 双重导航
+  - JS 导航轮询 deadline 从 12 秒加长到 15 秒，`run_js()` 超时从 2 秒增加到 3 秒
+  - 当 `tab.html` 在 4 秒内成功读取已加载页面时，直接返回，完全跳过 `tab.get()` 路径
+
+### 附带改进（X 搜索）
+- `backend/crawler/x_searcher.py`
+  - 从 `early_exit_check` 回调中移除 `detect_end_of_timeline`，避免在 API 响应到达前误判”时间线到底”
+- `backend/crawler/page_state.py`
+  - `detect_end_of_timeline` 阈值从 ≤10 降到 ≤3，新增 loading indicator 选择器
+
+## [2026-04-08] 修正微博搜索页 timeout 误判为”浏览器卡住”
+
+### 问题
+微博搜索过程中出现 `Page.stopLoading timeout` 时，日志会写成“超时，可能是浏览器卡了”。但实际场景里浏览器进程、标签页和页面渲染可能都还正常，只是 DevTools 的停止加载调用没在超时内返回。
+
+### 修复
+- `backend/crawler/weibo/searcher.py`
+  - `_safe_get_html()` 在导航 timeout 后，先检查当前 tab 的 URL 和 DOM 是否已可用；若页面其实已经加载出来，则直接复用当前 HTML，不再误判为失败。
+  - timeout 错误文案调整为“页面导航超时（浏览器/标签页可能仍在线）”，不再把 page-level timeout 误写成浏览器卡死。
+  - 搜索重试日志同步调整为“tab 仍在线，未判定浏览器卡死”。
+  - 修复 timeout 诊断链路的回归：当 `tab.url` / `tab.html` 自身也发生 CDP timeout 时，只把诊断信息拼进错误文案，不再抛出二次异常导致任务直接失败。
+  - 新增微博搜索页 JS 导航快速路径：当页面肉眼已加载、但 `tab.get()` 迟迟不返回时，优先通过 `window.location.href` + 轻量 DOM 就绪探测拿到 HTML，避免卡在 DrissionPage 的 `Page.stopLoading` 等待上。
+- `backend/tests/test_weibo_searcher_timeout_handling.py`
+  - 新增回归测试，覆盖“stopLoading timeout 但 DOM 已就绪”“timeout 且 DOM 未就绪”“timeout 后诊断读取再次 timeout”“搜索页优先走 JS 快速导航”四条路径。
+
+## [2026-04-08] 修复浏览器首次启动误报“连接失败”
+
+### 问题
+macOS 下独立启动 Chrome 时，程序会优先尝试复用真实用户数据目录。某些多 Profile 场景中，即便启动前未检测到 `SingletonLock`，DrissionPage 仍可能在初始化阶段卡住并抛出“浏览器连接失败”。
+
+### 根因
+- 现有逻辑只在“目录已被占用”时回退到爬虫专用 Profile。
+- 对“真实用户目录未显式上锁，但启动仍失败”的情况，没有在浏览器初始化层即时兜底。
+- 导致第一次失败被抛到上层 `searcher` 的 tab 重试流程里，额外消耗一轮约 30 秒等待。
+
+### 修复
+- `backend/crawler/browser.py`
+  - 新增浏览器启动 helper，统一处理启动、超时配置与会话状态同步。
+  - 当真实用户目录启动失败时，在同一次 `_create_browser()` 调用里立即回退到 `~/.xcrawl-browser-profile` 并重试。
+- `backend/tests/test_browser_user_data_preference.py`
+  - 新增回归测试，覆盖“真实用户目录失败 -> 隔离 Profile 自动接管”的恢复链路。
+- `frontend/src/components/features/settings/EngineConfigCard.tsx`
+  - 调整设置说明，明确“稳定复用真实登录态”更推荐调试端口接管模式。
+- `frontend/src/components/features/BrowserSelector.tsx`
+  - 调整自动模式说明，明确独立启动失败会自动回退隔离 Profile。
+- `docs/api.md`
+  - 更新浏览器管理文档，补充推荐策略说明。
+
 ## [2026-04-06] 新增用户认证状态字段（X + 微博）
 
 ### 背景

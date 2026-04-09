@@ -68,6 +68,7 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 ```bash
 # 单节点生产推荐命令（必须单 worker）
+source .venv/bin/activate
 uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 

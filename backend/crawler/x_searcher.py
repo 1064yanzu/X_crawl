@@ -519,28 +519,23 @@ def _wait_search_packet_with_recovery(
                 risk_state="search_blocked",
             )
 
-    _early_exit_reason: Optional[str] = None  # 记录早期退出的原因
-
     def _check_no_results_early() -> bool:
-        """在等待数据包期间快速检测页面是否显示无结果或已到底。"""
-        nonlocal _no_results_detected, _early_exit_reason
+        """在等待数据包期间快速检测页面是否显示无结果。
+
+        注意：不在此处检测 detect_end_of_timeline，因为：
+        1. 滚动后 at_bottom=True + X 虚拟滚动导致 DOM 中推文数少 → 极易误判
+        2. API 响应可能尚未到达，loading indicator 也可能还没出现
+        3. detect_end_of_timeline 仅在数据包等待超时后作为兜底检测（见下方）
+        """
+        nonlocal _no_results_detected
         if detect_no_results(tab):
             _no_results_detected = True
-            _early_exit_reason = "no_results"
             logger.info(f"第 {page_num} 页在等待期间检测到搜索无结果页面")
-            return True
-        # 只有已经拿到过数据（fetched_count > 0）才检测"到底"
-        # 避免页面刚加载时误判
-        if fetched_count > 0 and detect_end_of_timeline(tab):
-            _no_results_detected = True
-            _early_exit_reason = "end_of_timeline"
-            logger.info(f"第 {page_num} 页在等待期间检测到时间线已到底部（已获取 {fetched_count} 条）")
             return True
         return False
 
     for soft_attempt in range(policy.packet_soft_retries + 1):
         _no_results_detected = False
-        _early_exit_reason = None
         packet, ignored = wait_for_target_packet(
             tab,
             timeout=timeout,
@@ -549,10 +544,8 @@ def _wait_search_packet_with_recovery(
             early_exit_check=_check_no_results_early,
         )
         
-        # 如果在等待期间检测到无结果或到底，立即返回对应哨兵
+        # 如果在等待期间检测到无结果，立即返回哨兵
         if _no_results_detected:
-            if _early_exit_reason == "end_of_timeline":
-                return _END_OF_TIMELINE_SENTINEL
             return _NO_RESULTS_SENTINEL
         
         if packet:
@@ -562,6 +555,9 @@ def _wait_search_packet_with_recovery(
             _update_rate_tracker(packet, endpoint="search", task_id=task_id)
             return packet
         bump_metric(task_id, "search_packet_timeouts")
+        # 断路器：搜索数据包超时也需记录
+        from crawler.circuit_breaker import get_breaker
+        get_breaker().record_error(task_id)
 
         # ── 快速检测搜索无结果页面 ─────────────────────────────────
         # X 的 "No results for ..." 页面可能不触发 SearchTimeline 请求，

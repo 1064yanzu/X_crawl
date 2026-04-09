@@ -674,11 +674,10 @@ def run_search_task(
         if final_status in ("done", "failed", "stopped"):
             task_queue_manager.notify_task_terminal(task_id, final_status)
         clear_metrics(task_id)
-        # 清理按任务隔离的速率状态和错误计数，防止内存泄漏
+        # 统一清理所有模块级 per-task 资源（page_health / circuit_breaker / rate_tracker 等）
         try:
-            from crawler.rate_tracker import get_tracker
-
-            get_tracker().cleanup_task(task_id)
+            from crawler.browser_lifecycle import cleanup_task_resources
+            cleanup_task_resources(task_id)
         except Exception:
             pass
 

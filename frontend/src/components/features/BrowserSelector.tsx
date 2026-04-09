@@ -217,7 +217,7 @@ export function BrowserSelector() {
                             <h4 className="text-sm font-semibold text-foreground">自动检测</h4>
                             {!selectedId ? <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary">当前模式</span> : null}
                         </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">自动选择系统中首个可用的 Chromium 内核浏览器，并按引擎设置决定是否优先复用其用户数据目录。</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">自动选择系统中首个可用的 Chromium 内核浏览器。若开启“优先复用用户目录”，独立启动失败时会自动回退到隔离 Profile；稳定复用真实登录态更推荐调试端口接管。</p>
                     </div>
                     {!selectedId ? (
                         <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">

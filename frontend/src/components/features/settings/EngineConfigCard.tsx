@@ -95,7 +95,7 @@ export function EngineConfigCard() {
                             <ToggleField label="无头模式" description="浏览器在后台静默运行，适合服务器环境。" checked={headless} onChange={setHeadless} disabled={saving} />
                             <ToggleField label="后台标签页" description="任务创建的新标签页保持在后台，减少前台打断。" checked={backgroundTabs} onChange={setBackgroundTabs} disabled={saving} />
                             <ToggleField label="登录时切回前台" description="遇到登录或风控时主动唤起浏览器，便于人工介入。" checked={foregroundOnLogin} onChange={setForegroundOnLogin} disabled={saving} />
-                            <ToggleField label="优先复用用户目录" description="启动新浏览器时优先使用真实用户数据目录；若目录正被占用，会自动回退到隔离 Profile。" checked={preferUserDataDir} onChange={setPreferUserDataDir} disabled={saving} />
+                            <ToggleField label="优先复用用户目录" description="仅在独立启动浏览器时尝试复用真实用户目录；若启动失败或目录被占用，会自动回退到隔离 Profile。若想稳定复用登录态，优先使用调试端口接管模式。" checked={preferUserDataDir} onChange={setPreferUserDataDir} disabled={saving} />
                             <ToggleField label="无图模式" description="阻止图片资源加载，适合纯文本/抓包型采集，能明显省流量。" checked={blockImages} onChange={setBlockImages} disabled={saving} />
                             <ToggleField label="无视频模式" description="阻止视频与流媒体资源加载，降低带宽占用；不影响接口抓包结果。" checked={blockVideos} onChange={setBlockVideos} disabled={saving} />
                             <ToggleField label="Stealth 伪装" description="增强浏览器伪装配置，优先提高平台兼容性。" checked={stealth} onChange={setStealth} disabled={saving} />

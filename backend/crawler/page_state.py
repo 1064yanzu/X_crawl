@@ -266,18 +266,25 @@ def detect_end_of_timeline(tab) -> bool:
     滚动也不会触发新的 SearchTimeline 请求。
     爬虫应识别此情况并停止等待，而非傻等数据包超时。
 
+    注意：此函数仅用于数据包超时后的兜底检测，
+    不应在 wait_for_target_packet 的 early_exit_check 中调用，
+    以避免在 API 响应到达前误判（X 虚拟滚动 + at_bottom 易导致假阳性）。
+
     检测策略：
     1. 检查页面是否存在"正在加载"指示器（若有则说明还在加载）
     2. 检查滚动位置是否已接近底部
     3. 综合判断是否已无更多内容
     """
     try:
-        # 检测是否存在加载指示器
+        # 检测是否存在加载指示器（包含 X 当前和历史版本的选择器）
         loading_indicators = [
             '[data-testid="cellInnerDiv"] [role="progressbar"]',
+            '[role="progressbar"]',
             '[aria-label="Loading"]',
             '[aria-label="正在加载"]',
             'div[style*="spinner"]',
+            # X 当前版本的全局加载条
+            '[data-testid="primaryColumn"] svg circle[stroke-dasharray]',
         ]
         for selector in loading_indicators:
             try:
@@ -295,14 +302,20 @@ def detect_end_of_timeline(tab) -> bool:
                 const clientHeight = document.documentElement.clientHeight;
                 const atBottom = scrollTop + clientHeight >= scrollHeight - 200;
                 const timeline = document.querySelector('[data-testid="primaryColumn"]');
-                const tweetCount = timeline ? timeline.querySelectorAll('[data-testid="tweet"]').length : 0;
+                const tweetCount = timeline ? timeline.querySelectorAll('[data-testid="tweet"]').length : -1;
                 return { atBottom, scrollHeight, tweetCount };
             """)
             if isinstance(scroll_info, dict):
                 at_bottom = scroll_info.get("atBottom", False)
-                tweet_count = scroll_info.get("tweetCount", 0)
-                # 如果已到底部且推文数很少，说明确实没有更多内容
-                if at_bottom and tweet_count > 0 and tweet_count <= 10:
+                tweet_count = scroll_info.get("tweetCount", -1)
+                # 选择器匹配不到 tweet 时返回 -1，
+                # 说明 X 可能更新了 DOM 结构，不能据此判断到底
+                if tweet_count < 0:
+                    return False
+                # 如果已到底部且推文数很少（<=3），说明确实没有更多内容
+                # 阈值从 10 降到 3：X 虚拟滚动在快速翻页后 DOM 中可渲染 5-20 条推文，
+                # 只有真正"到底"（仅 1-3 条结果）时才应触发
+                if at_bottom and 0 < tweet_count <= 3:
                     return True
         except Exception:
             pass

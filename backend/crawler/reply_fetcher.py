@@ -97,15 +97,8 @@ def _invalidate_login_cache(tab) -> None:
 
 
 def _safe_stop_listener(tab) -> None:
-    try:
-        listener = getattr(tab, "listen", None)
-        if listener is None:
-            return
-        if getattr(listener, "_driver", None) is None:
-            return
-        listener.stop()
-    except Exception as e:
-        logger.debug("停止监听器失败，已忽略: %s", e)
+    from crawler.tab_guard import safe_stop_listener
+    safe_stop_listener(tab)
 
 
 def _to_risk_state(state: PageState) -> RiskState:
@@ -156,6 +149,10 @@ def _wait_reply_packet_with_recovery(
 
     on_reply_area_error_switch_account: 可选回调，连续点击 Retry 按钮无效时调用触发换账号。
     """
+    # 断路器：错误风暴时等待统一冷却
+    from crawler.circuit_breaker import get_breaker
+    get_breaker().acquire_permission(task_id)
+
     risk_hits = 0
     reply_area_retry_hits = 0  # 评论区局部错误连续点击 Retry 次数
     _REPLY_AREA_RETRY_SWITCH_THRESHOLD = 3  # 连续 3 次点击无效后换账号
@@ -186,6 +183,7 @@ def _wait_reply_packet_with_recovery(
             _update_reply_rate_tracker(packet, task_id=task_id)
             return packet
         bump_metric(task_id, "reply_packet_timeouts")
+        get_breaker().record_error(task_id)
 
         # ── 评论区局部加载错误检测（"出错了。请尝试重新加载。"）────────────
         # detect_page_state 对此返回 OK，需单独检测评论区组件错误

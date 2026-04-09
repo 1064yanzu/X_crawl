@@ -185,10 +185,8 @@ class CrawlPipeline:
 
     def _cleanup_tabs(self) -> None:
         if self._owns_reply_tab and self._reply_tab is not None:
-            try:
-                self._reply_tab.listen.stop()
-            except Exception:
-                pass
+            from crawler.tab_guard import safe_stop_listener
+            safe_stop_listener(self._reply_tab)
             try:
                 self._reply_tab.close()
             except Exception:
@@ -232,30 +230,36 @@ class CrawlPipeline:
         from crawler.reply_fetcher import fetch_replies_single
         from crawler.crawl_signals import StopSignal, ChallengeSignal
         from crawler.utils import check_signal
+        from crawler.tab_guard import TabGuard
 
         effective_browser = self.reply_browser_instance or self.browser_instance
         # 一级 worker 始终只抓第 1 层
         effective_depth = 1
 
-        # 每个 worker 各自创建独立的 reply tab
+        # 每个 worker 的 tab 延迟到第一次使用时才创建（避免 sentinel-only 浪费资源）
+        # 使用 TabGuard 确保退出时必定清理 listener 和 tab
         reply_tab = None
-        owns_tab = False
-        try:
-            if effective_browser is not None:
-                reply_tab = effective_browser.new_tab()
-                owns_tab = True
-            elif self.browser_instance is not None:
-                reply_tab = self.browser_instance.new_tab()
-                owns_tab = True
-            else:
-                from crawler.browser import get_new_tab
-                reply_tab = get_new_tab()
-                owns_tab = True
-        except Exception as e:
-            logger.error(f"[Pipeline] reply worker #{worker_id} 创建 tab 失败: {e}")
-            # 回退：不创建 tab，走原有逻辑让 fetch_replies_single 自行创建
-            reply_tab = None
-            owns_tab = False
+        guard = None  # type: TabGuard | None
+        _tab_created = False
+
+        def _ensure_worker_tab():
+            nonlocal reply_tab, guard, _tab_created
+            if _tab_created:
+                return reply_tab
+            try:
+                if effective_browser is not None:
+                    reply_tab = effective_browser.new_tab()
+                elif self.browser_instance is not None:
+                    reply_tab = self.browser_instance.new_tab()
+                else:
+                    from crawler.browser import get_new_tab
+                    reply_tab = get_new_tab()
+                guard = TabGuard(reply_tab, close_on_exit=True)
+            except Exception as e:
+                logger.error(f"[Pipeline] reply worker #{worker_id} 创建 tab 失败: {e}")
+                reply_tab = None
+            _tab_created = True
+            return reply_tab
 
         logger.debug(f"[Pipeline] reply worker #{worker_id} 进入主循环")
         # 通知用户浏览器准备就绪，即将开始抓取评论
@@ -355,16 +359,9 @@ class CrawlPipeline:
             if should_exit:
                 break
 
-        # 清理 worker 自己的 tab
-        if owns_tab and reply_tab is not None:
-            try:
-                reply_tab.listen.stop()
-            except Exception:
-                pass
-            try:
-                reply_tab.close()
-            except Exception:
-                pass
+        # TabGuard 清理：确保 listener 和 tab 在任何退出路径下都被释放
+        if guard is not None:
+            guard.close()
 
         logger.debug(f"[Pipeline] reply worker #{worker_id} 退出主循环")
 

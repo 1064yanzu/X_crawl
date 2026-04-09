@@ -55,7 +55,7 @@ class ParallelBackfillCoordinator:
         max_replies_per_tweet: int,
         reply_depth: int,
         on_progress: Optional[Callable[[dict], None]] = None,
-        reply_worker_count_per_pipeline: int = 3,
+        reply_worker_count_per_pipeline: int = 1,
     ):
         self.task_id = task_id
         self.tweets = tweets

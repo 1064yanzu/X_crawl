@@ -168,6 +168,17 @@ class Settings(BaseSettings):
     crawler_watchdog_min_reply_rate: int = Field(
         default=1000, description="评论抓取最低速率阈值（条/分），低于此值 watchdog 告警"
     )
+    crawler_search_stall_timeout_sec: float = Field(
+        default=600.0,
+        description=(
+            "搜索任务零产出超过此时长（秒）后 watchdog 执行自愈重启。"
+            "搜索任务正常翻页间隔仅数秒，10 分钟无进展基本可确认卡死。"
+        ),
+    )
+    crawler_search_stall_warn_sec: float = Field(
+        default=300.0,
+        description="搜索任务零产出超过此时长（秒）后 watchdog 发出警告日志（不自愈）。",
+    )
     crawler_auto_throttle_enabled: bool = Field(
         default=True, description="是否根据系统资源压力自动放慢抓取节奏"
     )
@@ -223,6 +234,10 @@ class Settings(BaseSettings):
         default=500,
         description="每完成 N 次页面导航后触发浏览器重启（防内存泄漏，0=禁用）"
     )
+    browser_memory_limit_mb: float = Field(
+        default=2500.0,
+        description="浏览器进程树 RSS 内存上限 (MB)，超过后在安全时机回收"
+    )
 
     # 休息节律配置（百万级数据爬取专项）
     crawler_enable_break_rhythm: bool = Field(
@@ -263,7 +278,7 @@ class Settings(BaseSettings):
 
     # 微博爬虫配置
     weibo_search_page_interval: float = Field(
-        default=6.0, description="微博搜索翻页间隔（秒）"
+        default=12.0, description="微博搜索翻页间隔（秒），建议 ≥10 秒避免触发风控"
     )
     weibo_comment_page_interval: float = Field(
         default=4.0, description="微博评论翻页间隔（秒）"

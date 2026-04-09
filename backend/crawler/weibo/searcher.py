@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import random
 import time
@@ -187,14 +188,210 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 1.0) -> tuple[Optional[s
     """
     安全获取页面 HTML。
 
-    优化：默认等待时间从 3.0s 降低到 1.0s，并使用标题/内容检测代替固定 sleep。
-
     Returns:
         (html, error) — 成功时 error 为 None，失败时 html 为 None
     """
-    try:
+    def _safe_read_tab_url() -> tuple[str, Optional[str]]:
+        try:
+            value = tab.url
+            return value or "", None
+        except Exception as e:
+            return "", f"读取 tab.url 失败: {e}"
+
+    def _safe_read_tab_html() -> tuple[str, Optional[str]]:
+        try:
+            value = tab.html
+            return value or "", None
+        except Exception as e:
+            return "", f"读取 tab.html 失败: {e}"
+
+    def _extract_html_from_snapshot(current_url: str, html: str) -> tuple[Optional[str], Optional[str]]:
         from .http_418_guard import detect_weibo_http_418
 
+        if "s.weibo.com" in url and current_url:
+            if "s.weibo.com" not in current_url:
+                return None, f"被重定向到非搜索页: {current_url}"
+
+        if html:
+            html_lower = html.lower()
+            if "passport.weibo.com" in current_url or "请登录" in html:
+                return None, "反爬拦截: 被重定向到登录页（Cookie 可能过期）"
+            if "security.weibo.com" in current_url:
+                return None, "反爬拦截: 触发安全验证页面"
+            if len(html) < 2000 and ("验证" in html or "verify" in html_lower):
+                return None, "反爬拦截: 页面包含验证码提示"
+
+        try:
+            if detect_weibo_http_418(tab):
+                return None, "微博 HTTP 418 错误页"
+        except Exception:
+            pass
+
+        if not html:
+            return None, "页面 HTML 为空"
+        return html, None
+
+    def _try_js_navigate_and_collect_html() -> tuple[Optional[str], Optional[str]]:
+        if "s.weibo.com/weibo" not in url or not hasattr(tab, "run_js"):
+            return None, "js_navigation_not_applicable"
+
+        try:
+            tab.run_js(f"window.location.href = {json.dumps(url)}", timeout=2)
+        except Exception as e:
+            return None, f"js 导航失败: {e}"
+
+        deadline = time.monotonic() + 15.0  # JS 导航轮询加长到 15 秒
+        last_reason = "js 导航后页面尚未就绪"
+        while time.monotonic() < deadline:
+            try:
+                snapshot = tab.run_js(
+                    """
+                    return {
+                      href: location.href || "",
+                      readyState: document.readyState || "",
+                      bodyTextLength: document.body && document.body.innerText ? document.body.innerText.length : 0,
+                      cardCount: document.querySelectorAll('.card-wrap').length || 0,
+                      htmlLength: document.documentElement ? document.documentElement.outerHTML.length : 0
+                    };
+                    """,
+                    timeout=3,
+                )
+            except Exception as e:
+                # run_js 失败说明 CDP 执行上下文还在切换中，快速重试
+                last_reason = f"js 状态探测失败: {e}"
+                time.sleep(0.3)
+                continue
+
+            if not isinstance(snapshot, dict):
+                last_reason = "js 状态探测返回值异常"
+                time.sleep(0.3)
+                continue
+
+            current_url = str(snapshot.get("href") or "")
+            ready_state = str(snapshot.get("readyState") or "")
+            body_text_length = int(snapshot.get("bodyTextLength") or 0)
+            card_count = int(snapshot.get("cardCount") or 0)
+            html_length = int(snapshot.get("htmlLength") or 0)
+
+            page_looks_ready = (
+                "s.weibo.com" in current_url
+                and ready_state in ("interactive", "complete")
+                and (card_count > 0 or body_text_length > 500 or html_length > 4000)
+            )
+            if not page_looks_ready:
+                last_reason = (
+                    f"readyState={ready_state}, cardCount={card_count}, "
+                    f"bodyTextLength={body_text_length}, htmlLength={html_length}"
+                )
+                time.sleep(0.3)
+                continue
+
+            # ── 校验页码是否与目标一致 ────────────────────────────────────────
+            # 微博翻页有时会因为浏览器状态跳到其他页码（如 page=4 而非 3），
+            # 此时必须等待继续导航，不能拿错误页面的 HTML 直接使用。
+            from urllib.parse import urlparse, parse_qs
+            try:
+                target_page = parse_qs(urlparse(url).query).get("page", [None])[0]
+                actual_page = parse_qs(urlparse(current_url).query).get("page", [None])[0]
+                if target_page and actual_page and target_page != actual_page:
+                    last_reason = (
+                        f"URL 页码不匹配：目标 page={target_page}，"
+                        f"当前 page={actual_page}，等待导航完成"
+                    )
+                    logger.debug("[safe_get_html] %s", last_reason)
+                    time.sleep(0.5)
+                    continue
+            except Exception:
+                pass  # URL 解析失败时不阻塞，继续走正常流程
+
+            try:
+                html = tab.run_js(
+                    "return document.documentElement ? document.documentElement.outerHTML : ''",
+                    timeout=3,
+                ) or ""
+            except Exception as e:
+                last_reason = f"js 提取 HTML 失败: {e}"
+                time.sleep(0.3)
+                continue
+
+            parsed_html, parsed_error = _extract_html_from_snapshot(current_url, str(html))
+            if parsed_html:
+                logger.info("微博搜索页使用 JS 导航快速就绪路径成功")
+                return parsed_html, None
+            last_reason = parsed_error or last_reason
+            time.sleep(0.3)
+
+        return None, last_reason
+
+    def _extract_current_tab_html(*, from_timeout: bool = False) -> tuple[Optional[str], Optional[str]]:
+        from .http_418_guard import detect_weibo_http_418
+
+        # 检查是否被重定向到非搜索页面
+        current_url, url_error = _safe_read_tab_url()
+        if "s.weibo.com" in url and current_url:
+            if "s.weibo.com" not in current_url:
+                return None, f"被重定向到非搜索页: {current_url}"
+
+        # 检查反爬
+        try:
+            anti_crawl_reason = _check_anti_crawl(tab)
+        except Exception as e:
+            anti_crawl_reason = None
+            anti_crawl_error = f"反爬检测异常: {e}"
+        else:
+            anti_crawl_error = None
+        if anti_crawl_reason:
+            return None, f"反爬拦截: {anti_crawl_reason}"
+
+        try:
+            if detect_weibo_http_418(tab):
+                return None, "微博 HTTP 418 错误页"
+        except Exception as e:
+            detect_418_error = f"418 检测异常: {e}"
+        else:
+            detect_418_error = None
+
+        html, html_error = _safe_read_tab_html()
+        if not html:
+            diagnostics = [msg for msg in (url_error, html_error, anti_crawl_error, detect_418_error) if msg]
+            if from_timeout and diagnostics:
+                return None, "；".join(diagnostics)
+            return None, "页面 HTML 为空"
+
+        # `Page.stopLoading` 超时时，浏览器/标签页可能仍正常，DOM 也可能已经就绪。
+        # 这里允许在 timeout 后直接复用已得到的页面内容，避免误判为浏览器卡死。
+        if from_timeout and len(html) <= 2000:
+            return None, "页面 HTML 过短，疑似未加载完成"
+        return html, None
+
+    js_html, js_error = _try_js_navigate_and_collect_html()
+    if js_html:
+        return js_html, None
+
+    # ── JS 导航已触发但提取失败时，先用 tab.html 尝试读取已加载的页面 ──────
+    # window.location.href 已触发浏览器导航，页面可能已经加载好；
+    # 但 tab.run_js() 因 CDP 上下文切换失败无法提取 HTML。
+    # 此处用 DrissionPage 原生属性 tab.html（内部会正确处理上下文切换）来读取，
+    # 避免 tab.get() 对同一 URL 双重导航（触发微博反爬）。
+    js_did_navigate = (
+        js_error
+        and js_error != "js_navigation_not_applicable"
+        and not js_error.startswith("js 导航失败")
+    )
+    if js_did_navigate:
+        logger.debug("JS 导航已触发但 run_js 提取失败 (%s)，尝试 tab.html 等待页面就绪...", js_error)
+        for _wait_i in range(8):  # 最多等 4s（0.5s × 8）
+            time.sleep(0.5)
+            recovered_html, recovered_error = _extract_current_tab_html()
+            if recovered_html:
+                logger.info("JS 导航后通过 tab.html 成功提取页面内容（等待 %.1fs）", (_wait_i + 1) * 0.5)
+                return recovered_html, None
+        logger.debug("JS 导航后 tab.html 仍未能提取，回退到 tab.get(): %s", recovered_error)
+
+    if js_error and js_error != "js_navigation_not_applicable":
+        logger.debug("微博搜索页 JS 导航快速路径未成功，回退 tab.get: %s", js_error)
+
+    try:
         tab.get(url, timeout=20)
 
         # 动态等待：先等一个较短的基础时间，然后检测页面内容是否就绪
@@ -204,30 +401,22 @@ def _safe_get_html(tab, url: str, wait_seconds: float = 1.0) -> tuple[Optional[s
         for _ in range(3):
             html_check = tab.html
             if html_check and len(html_check) > 2000:
-                break  # 页面已有实质内容
+                break
             time.sleep(0.5)
 
-        # 检查是否被重定向到非搜索页面
-        current_url = tab.url or ""
-        if "s.weibo.com" in url and current_url:
-            # 如果目标是搜索页面但被重定向到了其他页面
-            if "s.weibo.com" not in current_url:
-                return None, f"被重定向到非搜索页: {current_url}"
-
-        # 检查反爬
-        anti_crawl_reason = _check_anti_crawl(tab)
-        if anti_crawl_reason:
-            return None, f"反爬拦截: {anti_crawl_reason}"
-
-        if detect_weibo_http_418(tab):
-            return None, "微博 HTTP 418 错误页"
-
-        html = tab.html
-        if not html:
-            return None, "页面 HTML 为空"
-        return html, None
+        return _extract_current_tab_html()
     except Exception as e:
         error_str = str(e)
+        err_lower = error_str.lower()
+        if "timeout" in err_lower and "disconnect" not in err_lower and "crashed" not in err_lower:
+            recovered_html, recovered_error = _extract_current_tab_html(from_timeout=True)
+            if recovered_html:
+                logger.info("微博搜索页导航超时，但当前 DOM 已可用，继续使用已加载页面")
+                return recovered_html, None
+            return None, (
+                "[timeout] 页面导航超时（Page.stopLoading 未在超时内返回，"
+                f"浏览器/标签页可能仍在线）; detail={recovered_error or error_str}"
+            )
         return None, error_str
 
 
@@ -266,6 +455,31 @@ def _prepare_search_session(tab, task_id: Optional[str], slot_id: Optional[int] 
         logger.warning(f"搜索 Cookie 准备失败: {e}")
 
 
+def _close_tab_safe(tab, label: str = "") -> None:
+    """安全关闭 tab，忽略所有异常并记录日志。"""
+    if tab is None:
+        return
+    try:
+        tab.close()
+        if label:
+            logger.debug(f"Tab 已关闭: {label}")
+    except Exception as e:
+        logger.debug(f"关闭 Tab 失败（忽略）{label}: {e}")
+
+
+def _count_browser_tabs(browser_instance) -> int:
+    """获取浏览器实例当前的 tab 数量（用于诊断）。"""
+    try:
+        if browser_instance is not None:
+            browser = browser_instance.get_browser()
+        else:
+            from crawler.browser import get_browser
+            browser = get_browser()
+        return len(browser.tab_ids)
+    except Exception:
+        return -1
+
+
 def search(
     keyword: str,
     task_id: Optional[str] = None,
@@ -297,6 +511,45 @@ def search(
 
     owns_tab = _tab is None
     tab = _tab or _get_tab_with_retry(browser_instance=browser_instance)
+
+    # ── 预先提取 account_cookies，供后续 Tab 重建复用 ──────────────
+    _account_cookies_for_rebuild: Optional[list[dict]] = None
+    if slot_id is not None:
+        try:
+            from .account_pool import get_weibo_pool
+            pool = get_weibo_pool()
+            account = pool.pick_account_by_index(slot_id)
+            if account and account.cookies:
+                _account_cookies_for_rebuild = account.cookies
+        except Exception:
+            pass
+
+    # Tab 重建计数器（断路器：同一个 search() 调用中最多重建 N 次）
+    _MAX_TAB_REBUILDS = 10
+    _tab_rebuild_count = 0
+
+    def _do_rebuild_tab(old_tab) -> "ChromiumTab":
+        """关闭旧 tab 并重建新 tab，带断路器保护。"""
+        nonlocal _tab_rebuild_count
+        _tab_rebuild_count += 1
+        if _tab_rebuild_count > _MAX_TAB_REBUILDS:
+            logger.error(
+                f"Tab 重建次数已达上限 {_MAX_TAB_REBUILDS}，停止重建以避免资源泄漏"
+            )
+            raise RuntimeError(f"Too many tab rebuilds ({_MAX_TAB_REBUILDS})")
+
+        _close_tab_safe(old_tab, label=f"rebuild #{_tab_rebuild_count}")
+
+        tab_count = _count_browser_tabs(browser_instance)
+        logger.info(
+            f"Tab 重建 #{_tab_rebuild_count}/{_MAX_TAB_REBUILDS}，"
+            f"当前浏览器 tab 数: {tab_count}"
+        )
+
+        return _rebuild_weibo_tab(
+            account_cookies=_account_cookies_for_rebuild,
+            browser_instance=browser_instance,
+        )
 
     try:
         # ── 1. 登录验证 + 搜索 Cookie 准备（仅首次执行）──────────────
@@ -475,6 +728,13 @@ def search(
                     for seg_idx in range(start_segment_index, len(date_ranges)):
                         seg_start, seg_end = date_ranges[seg_idx]
                         check_signal(task_id)  # 支持 pause/stop
+
+                        # ── 分段间间隔：避免分段切换时无间隔地连续请求 ──
+                        if seg_idx > start_segment_index:
+                            seg_interval = page_interval * random.uniform(1.0, 1.5)
+                            logger.debug("微博分段间间隔: seg=%d, interval=%.1fs", seg_idx, seg_interval)
+                            interruptible_sleep(seg_interval, task_id=task_id)
+
                         if task_id:
                             update_task_phase(
                                 task_id,
@@ -605,6 +865,8 @@ def search(
         kw_encoded = quote(keyword)
 
         consecutive_errors = 0  # 连续错误计数
+        consecutive_timeouts = 0  # 连续 timeout 计数（用于检测系统资源不足）
+        _MAX_CONSECUTIVE_TIMEOUTS = 5  # 连续 5 次 timeout 终止搜索
 
         try:
             for page in range(start_page, max_pages + 1):
@@ -624,76 +886,179 @@ def search(
                 html = None
                 page_error = None
 
-                for retry in range(MAX_PAGE_RETRIES + 1):
-                    html, page_error = _safe_get_html(tab, url)
-                    if html:
-                        break
-
-                    # 错误处理
-                    error_lower = (page_error or "").lower()
-                    is_tab_dead = any(kw in error_lower for kw in (
-                        "crashed", "timeout", "连接已断开",
-                        "disconnected", "connection lost", "target closed",
-                    ))
-                    logger.warning(
-                        f"获取微博搜索页失败 page={page} retry={retry}/{MAX_PAGE_RETRIES}: {page_error}"
+                # ── 优先路径：第 2 页起通过点击"下一页"按钮翻页 ──
+                # 点击翻页按钮是真实用户行为，不容易触发微博反爬风控；
+                # 直接 URL 导航则容易被检测为机器人。
+                _used_click_pagination = False
+                _click_attempted = False
+                if page > start_page:
+                    _click_attempted = True
+                    from .pagination import click_next_page
+                    click_html, click_error = click_next_page(
+                        tab, expected_page=page, timeout=15.0,
                     )
-
-                    if is_tab_dead and retry < MAX_PAGE_RETRIES:
-                        # Tab 崩溃 / 连接断开：先关闭旧 tab 再重建，防止 tab 泄漏
-                        logger.info("检测到 Tab 崩溃/断开连接，正在重建...")
-                        try:
-                            tab.close()
-                        except Exception:
-                            pass
-                        try:
-                            tab = _rebuild_weibo_tab(browser_instance=browser_instance)
-                        except Exception as e:
-                            logger.error(f"重建 Tab 失败: {e}")
-                        interruptible_sleep(RETRY_DELAY, task_id=task_id)
-                    elif "http 418" in error_lower and retry < MAX_PAGE_RETRIES:
-                        wait_weibo_http_418_cooldown(
-                            task_id=task_id,
-                            cooldown_seconds=float(
-                                getattr(settings, "weibo_http_418_cooldown_seconds", 600.0)
-                            ),
-                            context="搜索页",
-                            phase_callback=(lambda msg: update_task_phase(task_id, msg)) if task_id else None,
-                        )
-                        try:
-                            tab.close()
-                        except Exception:
-                            pass
-                        try:
-                            tab = _rebuild_weibo_tab(browser_instance=browser_instance)
-                        except Exception as e:
-                            logger.error(f"微博 418 冷却后重建 Tab 失败: {e}")
-                    elif "反爬拦截" in (page_error or ""):
-                        # 反爬拦截：加大延迟后重试
-                        wait = RETRY_DELAY * (retry + 1) * 2
-                        logger.warning(f"触发反爬，等待 {wait}s 后重试...")
-                        time.sleep(wait)
+                    if click_html:
+                        html = click_html
+                        _used_click_pagination = True
+                        consecutive_timeouts = 0
+                        logger.debug("微博第 %d 页使用点击翻页成功", page)
                     else:
-                        interruptible_sleep(RETRY_DELAY, task_id=task_id)
+                        click_error_str = click_error or ""
+                        # CDP 连接死亡 → 必须重建 tab，不可能恢复
+                        if "CDP_DEAD" in click_error_str:
+                            logger.warning(
+                                "微博第 %d 页 CDP 连接已死，重建 Tab 并用 URL 导航...",
+                                page,
+                            )
+                            try:
+                                tab = _do_rebuild_tab(tab)
+                                logger.info("Tab 重建成功，将用 URL 导航第 %d 页", page)
+                            except RuntimeError:
+                                logger.error("Tab 重建次数超限，终止搜索")
+                                break
+                            except Exception as e:
+                                logger.error("Tab 重建失败: %s", e)
+                        else:
+                            logger.info(
+                                "微博第 %d 页点击翻页失败 (%s)，回退到 URL 导航",
+                                page, click_error,
+                            )
+
+                # ── 回退路径：URL 导航（第 1 页、断点恢复、点击失败时使用）──
+                if not html:
+                    for retry in range(MAX_PAGE_RETRIES + 1):
+                        # 每次取页前发送心跳，让 watchdog 知道任务仍在尝试获取数据
+                        # 避免在 tab.get() 或 JS 导航长时间阻塞时被误判为卡死
+                        from crawler import telemetry as _telemetry
+                        _telemetry.record_event(
+                            task_id,
+                            "weibo_page_attempt",
+                            page=page,
+                            meta={"retry": retry, "url": url[:80]},
+                        )
+                        html, page_error = _safe_get_html(tab, url)
+                        if html:
+                            consecutive_timeouts = 0  # 成功获取页面，重置 timeout 计数
+                            break
+
+                        # 错误处理
+                        error_lower = (page_error or "").lower()
+                        is_timeout = "[timeout]" in error_lower or (
+                            "timeout" in error_lower
+                            and "disconnect" not in error_lower
+                            and "crashed" not in error_lower
+                        )
+                        # 只有真正的 crash/disconnect 才算 tab 死亡
+                        is_tab_dead = (
+                            any(kw in error_lower for kw in (
+                                "crashed", "连接已断开",
+                                "disconnected", "connection lost", "target closed",
+                            ))
+                            and not is_timeout
+                        )
+                        logger.warning(
+                            f"获取微博搜索页失败 page={page} retry={retry}/{MAX_PAGE_RETRIES}: {page_error}"
+                        )
+
+                        if is_timeout:
+                            consecutive_timeouts += 1
+                            if consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
+                                logger.error(
+                                    f"连续 {consecutive_timeouts} 次 timeout，"
+                                    f"系统可能资源不足，终止搜索"
+                                )
+                                break
+
+                        if is_timeout and retry < MAX_PAGE_RETRIES:
+                            # 检查浏览器是否被标记了延迟回收（内存超标）
+                            # 如果是，超时很可能是内存压力导致的，走重建路径释放内存
+                            _needs_rebuild = (
+                                browser_instance is not None
+                                and getattr(browser_instance, "_recycle_requested", False)
+                            )
+                            if _needs_rebuild:
+                                logger.info(
+                                    "页面超时且浏览器已标记内存回收，走重建路径释放内存..."
+                                )
+                                try:
+                                    tab = _do_rebuild_tab(tab)
+                                except RuntimeError:
+                                    logger.error("Tab 重建次数超限，终止搜索")
+                                    break
+                                except Exception as e:
+                                    logger.error(f"内存回收重建 Tab 失败: {e}")
+                                interruptible_sleep(RETRY_DELAY, task_id=task_id)
+                            else:
+                                # 页面导航超时：tab 本身还活着，不等同于浏览器卡死。
+                                # 先等待一小段时间再重试，避免对微博搜索页过度重建。
+                                logger.info(
+                                    f"页面导航超时（tab 仍在线，未判定浏览器卡死），在原 tab 上重试... "
+                                    f"(retry {retry + 1}/{MAX_PAGE_RETRIES}), "
+                                    f"连续 timeout: {consecutive_timeouts}/{_MAX_CONSECUTIVE_TIMEOUTS}"
+                                )
+                                interruptible_sleep(RETRY_DELAY * 2, task_id=task_id)
+                        elif is_tab_dead and retry < MAX_PAGE_RETRIES:
+                            # Tab 崩溃 / 连接断开：先关闭旧 tab 再重建，防止 tab 泄漏
+                            logger.info("检测到 Tab 崩溃/断开连接，正在重建...")
+                            try:
+                                tab = _do_rebuild_tab(tab)
+                            except RuntimeError:
+                                logger.error("Tab 重建次数超限，终止搜索")
+                                break
+                            except Exception as e:
+                                logger.error(f"重建 Tab 失败: {e}")
+                            interruptible_sleep(RETRY_DELAY, task_id=task_id)
+                        elif "http 418" in error_lower and retry < MAX_PAGE_RETRIES:
+                            wait_weibo_http_418_cooldown(
+                                task_id=task_id,
+                                cooldown_seconds=float(
+                                    getattr(settings, "weibo_http_418_cooldown_seconds", 600.0)
+                                ),
+                                context="搜索页",
+                                phase_callback=(lambda msg: update_task_phase(task_id, msg)) if task_id else None,
+                            )
+                            try:
+                                tab = _do_rebuild_tab(tab)
+                            except RuntimeError:
+                                logger.error("Tab 重建次数超限，终止搜索")
+                                break
+                            except Exception as e:
+                                logger.error(f"微博 418 冷却后重建 Tab 失败: {e}")
+                        elif "反爬拦截" in (page_error or ""):
+                            # 反爬拦截：加大延迟后重试
+                            wait = RETRY_DELAY * (retry + 1) * 2
+                            logger.warning(f"触发反爬，等待 {wait}s 后重试...")
+                            time.sleep(wait)
+                        else:
+                            interruptible_sleep(RETRY_DELAY, task_id=task_id)
 
                 if not html:
                     consecutive_errors += 1
                     logger.error(f"获取微博搜索页最终失败 page={page}: {page_error}")
-                    # 如果最终失败原因是连接断开，尝试重建 tab 以便后续页面/分段可用
+                    # 连续 timeout 超限 → 终止搜索（系统资源不足）
+                    if consecutive_timeouts >= _MAX_CONSECUTIVE_TIMEOUTS:
+                        logger.error(
+                            f"连续 {consecutive_timeouts} 次 timeout，终止搜索以释放资源"
+                        )
+                        break
+                    # 如果最终失败原因是真正的连接断开（而不是 timeout），尝试重建 tab
                     error_lower_final = (page_error or "").lower()
-                    if any(kw in error_lower_final for kw in (
-                        "连接已断开", "disconnected", "connection lost", "target closed",
-                    )):
+                    is_truly_disconnected = (
+                        any(kw in error_lower_final for kw in (
+                            "连接已断开", "disconnected", "connection lost", "target closed",
+                        ))
+                        and "timeout" not in error_lower_final
+                    )
+                    if is_truly_disconnected:
                         logger.info("页面最终失败且连接已断开，尝试重建 Tab...")
                         try:
-                            tab.close()
-                        except Exception:
-                            pass
-                        try:
-                            tab = _rebuild_weibo_tab(browser_instance=browser_instance)
+                            tab = _do_rebuild_tab(tab)
                             logger.info("Tab 重建成功，继续搜索")
                             consecutive_errors = 0  # 重建成功，重置计数器给一次机会
                             continue
+                        except RuntimeError:
+                            logger.error("Tab 重建次数超限，终止搜索")
+                            break
                         except Exception as e:
                             logger.error(f"Tab 重建失败: {e}")
                     if consecutive_errors >= 3:
@@ -791,6 +1156,15 @@ def search(
                     f"微博搜索第 {page} 页完成，"
                     f"本页 {len(posts)} 条，累计 {len(all_posts_dicts)} 条"
                 )
+                # 页面成功完成时发送心跳（含本页新增推文数）
+                from crawler import telemetry as _telemetry
+                _telemetry.record_event(
+                    task_id,
+                    "weibo_page_done",
+                    page=page,
+                    delta_tweets=len(posts),
+                    meta={"total": len(all_posts_dicts)},
+                )
 
                 # 实时上报进度给前端（合并父级已累积数据，确保前端看到的是全任务数据）
                 combined = (_parent_accumulated or []) + all_posts_dicts
@@ -821,7 +1195,18 @@ def search(
                 if not has_next:
                     break
 
-                jittered_sleep(page_interval, task_id=task_id, fast_mode=True)
+                # ── 翻页间隔 ──────────────────────────────────────────────
+                # 不使用 jittered_sleep（其自适应等待 crawler_page_interval_max=6s
+                # 会将微博专用的 12s 间隔截断为 6s）。直接用 interruptible_sleep + 手动抖动。
+                _warmup_pages = 5  # 前 N 页使用加长间隔
+                if page <= _warmup_pages:
+                    # 预热阶段：1.2~1.5 倍间隔，模拟真人首次浏览
+                    actual_interval = page_interval * random.uniform(1.2, 1.5)
+                else:
+                    # 正常阶段：±20% 抖动
+                    actual_interval = page_interval * random.uniform(0.8, 1.2)
+                logger.debug("微博翻页间隔: page=%d, interval=%.1fs", page, actual_interval)
+                interruptible_sleep(max(3.0, actual_interval), task_id=task_id)
 
         except StopSignal:
             logger.info(f"收到停止信号，微博搜索终止 task_id={task_id}")
@@ -846,10 +1231,6 @@ def search(
 
         # 仅最外层调用负责关闭搜索 tab，分段子调用复用当前 tab。
         if owns_tab and tab is not None:
-            try:
-                tab.close()
-                logger.debug("微博搜索 tab 已关闭")
-            except Exception:
-                pass
+            _close_tab_safe(tab, label="微博搜索 owns_tab 最终关闭")
 
     return WeiboSearchResult(posts=all_posts_dicts, resumed=resumed)
