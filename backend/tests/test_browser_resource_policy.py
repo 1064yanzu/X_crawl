@@ -54,6 +54,19 @@ def test_apply_tab_resource_policies_blocks_video_urls(monkeypatch):
     assert any("video.twimg.com" in pattern for pattern in tab.set.blocked)
 
 
+def test_apply_tab_resource_policies_does_not_url_block_images(monkeypatch):
+    import config
+    from crawler.browser_resource_policy import apply_tab_resource_policies
+
+    monkeypatch.setattr(config.settings, "browser_block_images", True, raising=False)
+    monkeypatch.setattr(config.settings, "browser_block_videos", False, raising=False)
+    tab = _DummyTab()
+
+    apply_tab_resource_policies(tab)
+
+    assert tab.set.blocked is None
+
+
 def test_apply_tab_resource_policies_clears_blocked_urls_when_disabled(monkeypatch):
     import config
     from crawler.browser_resource_policy import apply_tab_resource_policies

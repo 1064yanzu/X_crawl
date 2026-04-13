@@ -1,5 +1,92 @@
 # Changelog
 
+## [2026-04-11] 微博搜索卡住排查：修正伪点击翻页为真实点击
+
+### 问题
+用户提供的微博任务日志持续出现以下现象：
+- `Page.stopLoading` / `Page.getFrameTree` 超时
+- `CDP 连接已死` 后反复重建 Tab
+- watchdog 每隔 5 分钟提示“搜索任务疑似卡住”，但线程仍存活
+
+### 根因
+排查 `backend/crawler/weibo/pagination.py` 后确认：
+- 模块语义是“点击下一页”
+- 实际实现却仍是读取下一页 `href` 后执行 `tab.get(next_href)`
+
+这意味着微博第 2 页起的主翻页路径一直在走 DrissionPage 最脆弱的导航确认链路，容易在浏览器内存压力升高时触发 `Page.stopLoading` / `Page.getFrameTree` 超时，进而造成看起来“长时间卡住”。
+
+### 修复
+
+#### `backend/crawler/weibo/pagination.py`
+- 将主翻页路径改为真实的 `next_btn.click()`
+- 点击后改用轻量轮询验证：
+  - `tab.url` 是否切到目标页码
+  - `tab.html` 是否已达到可解析长度
+- 连验证阶段都 timeout 时，明确返回 `[CDP_DEAD]`，交由上层统一重建恢复
+
+#### `backend/tests/test_weibo_pagination.py`
+- 新增回归测试，确保：
+  - 点击翻页不再回退到 `tab.get()`
+  - 探测阶段 timeout 时会稳定标记 `CDP_DEAD`
+
+### 验证
+- `backend/.venv/bin/pytest -q tests/test_weibo_pagination.py tests/test_weibo_searcher_timeout_handling.py tests/test_weibo_segment_tab_reuse.py`
+- 结果：`7 passed`
+
+## [2026-04-11] 微博恢复链路补强：重建后恢复 eager + 避免恢复态跳页
+
+### 问题
+第一轮修复后，微博第 2~6 页点击翻页已经恢复正常，但新的运行日志表明仍存在两类问题：
+- Tab 因内存压力/CDP 死亡重建后，恢复链路长时间无新进度，watchdog 持续告警
+- 恢复态拉取目标页时，当前 tab 可能已经在目标页，searcher 却仍然继续点击“下一页”，导致页码直接跳到下一页
+
+### 根因
+- `_rebuild_weibo_tab()` 重建出的新 tab 没有恢复 `eager` 加载模式
+- searcher 在 `page > start_page` 时默认一定执行点击翻页，未先检查“当前 tab 是否已处于目标页”
+- 长重试链路没有持续发送 telemetry 心跳，UI/watchdog 会把活线程误判为“卡住”
+
+### 修复
+
+#### `backend/crawler/weibo/searcher.py`
+- `_rebuild_weibo_tab()` 在 Cookie 注入后恢复 `tab.set.load_mode.eager()`
+- 新增 `_try_reuse_current_search_page()`：当前 tab 已在目标页时直接复用当前 HTML
+- 新增 `_record_search_heartbeat()`：在 page start、点击翻页、URL 导航重试、Tab 重建后持续刷新 telemetry
+
+#### `backend/tests/test_weibo_searcher_recovery.py`
+- 新增恢复链路测试：
+  - 校验重建 tab 后会恢复 eager
+  - 校验目标页已在当前 tab 时不会误点下一页
+
+### 验证
+- `backend/.venv/bin/pytest -q tests/test_weibo_pagination.py tests/test_weibo_searcher_timeout_handling.py tests/test_weibo_segment_tab_reuse.py tests/test_weibo_searcher_recovery.py`
+- 结果：`10 passed`
+
+## [2026-04-11] 无图模式修复：移除图片 URL 级 block，避免微博请求风暴
+
+### 问题
+用户在 DevTools 里观察到：无图模式下，微博页面会反复产生被 block 的图片请求（如 `face_card_wb.png`），请求数持续累积到上万条，最终导致页面和爬虫一起卡住。
+
+### 根因
+项目中的“无图模式”同时启用了两层机制：
+- 浏览器级：`ChromiumOptions.no_imgs(True)`
+- tab 级：`tab.set.blocked_urls()` 对 `*.png/*.jpg/*.webp` 等图片 URL 做硬拦截
+
+第二层 URL 级图片拦截会把微博页面对某些图片/背景图的自动重试放大成 block 风暴，这与用户提供的 Network 截图一致。
+
+### 修复
+
+#### `backend/crawler/browser_resource_policy.py`
+- 保留浏览器级 `no_imgs(True)` 作为图片禁用主机制
+- 移除 tab 级图片 URL block
+- tab 级 `blocked_urls` 仅保留视频/流媒体资源拦截
+
+#### `backend/tests/test_browser_resource_policy.py`
+- 新增回归测试，确保 `browser_block_images=True` 时不再对 tab 配置图片 URL block
+
+### 验证
+- `backend/.venv/bin/pytest -q tests/test_browser_resource_policy.py tests/test_weibo_pagination.py tests/test_weibo_searcher_timeout_handling.py tests/test_weibo_segment_tab_reuse.py tests/test_weibo_searcher_recovery.py`
+- 结果：`14 passed`
+
 ## [2026-04-09] 微博翻页 V5：tab.get 超时恢复 + 跳页兜底
 
 ### 问题

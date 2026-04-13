@@ -16,7 +16,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlparse
 
 from .checkpoints import (
     build_date_split_checkpoint,
@@ -79,6 +79,63 @@ def _filter_posts_by_exclude_ids(posts: list, exclude_ids: Optional[set[str]] = 
     return filtered
 
 
+def _record_search_heartbeat(
+    task_id: Optional[str],
+    *,
+    page: Optional[int] = None,
+    stage: str,
+    meta: Optional[dict] = None,
+) -> None:
+    if not task_id:
+        return
+    try:
+        from crawler import telemetry as _telemetry
+
+        payload = {"stage": stage}
+        if meta:
+            payload.update(meta)
+        _telemetry.record_event(
+            task_id,
+            "weibo_page_attempt",
+            page=page,
+            meta=payload,
+        )
+    except Exception:
+        pass
+
+
+def _extract_page_num_from_url(url: str) -> Optional[int]:
+    if not url:
+        return None
+    try:
+        page_value = parse_qs(urlparse(url).query).get("page", [None])[0]
+        if page_value is None:
+            return None
+        return int(page_value)
+    except Exception:
+        return None
+
+
+def _try_reuse_current_search_page(tab, expected_page: int) -> tuple[Optional[str], Optional[str]]:
+    try:
+        current_url = tab.url or ""
+    except Exception as e:
+        return None, f"读取当前 URL 失败: {e}"
+
+    current_page = _extract_page_num_from_url(current_url)
+    if current_page != expected_page:
+        return None, f"当前页码不是目标页: current_page={current_page}, expected_page={expected_page}"
+
+    try:
+        html = tab.html or ""
+    except Exception as e:
+        return None, f"读取当前页面 HTML 失败: {e}"
+
+    if len(html) < 2000:
+        return None, "当前页面 HTML 过短，暂不复用"
+    return html, None
+
+
 def _check_anti_crawl(tab) -> Optional[str]:
     """
     检测页面是否触发了反爬拦截。
@@ -136,6 +193,10 @@ def _rebuild_weibo_tab(account_cookies: Optional[list[dict]] = None, browser_ins
         time.sleep(1)
         inject_cookies_to_tab(tab, cookies)
         time.sleep(1)
+    try:
+        tab.set.load_mode.eager()
+    except Exception as e:
+        logger.debug("重建微博 Tab 后设置 eager 失败（忽略）: %s", e)
     return tab
 
 
@@ -887,6 +948,12 @@ def search(
                 logger.info(f"微博搜索第 {page} 页: {url}")
                 if task_id:
                     update_task_phase(task_id, f"正在获取微博搜索第 {page} 页...")
+                _record_search_heartbeat(
+                    task_id,
+                    page=page,
+                    stage="page_start",
+                    meta={"url": url},
+                )
 
                 # ── 带重试的页面获取 ──────────────
                 html = None
@@ -898,49 +965,65 @@ def search(
                 _used_click_pagination = False
                 _click_attempted = False
                 if page > start_page:
-                    _click_attempted = True
-                    from .pagination import click_next_page
-                    click_html, click_error = click_next_page(
-                        tab, expected_page=page, timeout=15.0,
-                    )
-                    if click_html:
-                        html = click_html
-                        _used_click_pagination = True
-                        consecutive_timeouts = 0
-                        logger.debug("微博第 %d 页使用点击翻页成功", page)
+                    reused_html, reused_error = _try_reuse_current_search_page(tab, expected_page=page)
+                    if reused_html:
+                        html = reused_html
+                        logger.info("微博第 %d 页检测到当前 Tab 已在目标页，直接复用当前页面", page)
                     else:
-                        click_error_str = click_error or ""
-                        # CDP 连接死亡 → 必须重建 tab，不可能恢复
-                        if "CDP_DEAD" in click_error_str:
-                            logger.warning(
-                                "微博第 %d 页 CDP 连接已死，重建 Tab 并用 URL 导航...",
-                                page,
-                            )
-                            try:
-                                tab = _do_rebuild_tab(tab)
-                                logger.info("Tab 重建成功，将用 URL 导航第 %d 页", page)
-                            except RuntimeError:
-                                logger.error("Tab 重建次数超限，终止搜索")
-                                break
-                            except Exception as e:
-                                logger.error("Tab 重建失败: %s", e)
+                        _click_attempted = True
+                        from .pagination import click_next_page
+
+                        _record_search_heartbeat(
+                            task_id,
+                            page=page,
+                            stage="click_pagination_start",
+                        )
+                        click_html, click_error = click_next_page(
+                            tab, expected_page=page, timeout=15.0,
+                        )
+                        if click_html:
+                            html = click_html
+                            _used_click_pagination = True
+                            consecutive_timeouts = 0
+                            logger.debug("微博第 %d 页使用点击翻页成功", page)
                         else:
-                            logger.info(
-                                "微博第 %d 页点击翻页失败 (%s)，回退到 URL 导航",
-                                page, click_error,
-                            )
+                            click_error_str = click_error or ""
+                            # CDP 连接死亡 → 必须重建 tab，不可能恢复
+                            if "CDP_DEAD" in click_error_str:
+                                logger.warning(
+                                    "微博第 %d 页 CDP 连接已死，重建 Tab 并用 URL 导航...",
+                                    page,
+                                )
+                                try:
+                                    tab = _do_rebuild_tab(tab)
+                                    _record_search_heartbeat(
+                                        task_id,
+                                        page=page,
+                                        stage="tab_rebuilt_after_click_cdp_dead",
+                                    )
+                                    logger.info("Tab 重建成功，将用 URL 导航第 %d 页", page)
+                                except RuntimeError:
+                                    logger.error("Tab 重建次数超限，终止搜索")
+                                    break
+                                except Exception as e:
+                                    logger.error("Tab 重建失败: %s", e)
+                            else:
+                                logger.info(
+                                    "微博第 %d 页点击翻页失败 (%s)，回退到 URL 导航",
+                                    page, click_error,
+                                )
+
+                            if reused_error:
+                                logger.debug("微博第 %d 页未复用当前页: %s", page, reused_error)
 
                 # ── 回退路径：URL 导航（第 1 页、断点恢复、点击失败时使用）──
                 if not html:
                     for retry in range(MAX_PAGE_RETRIES + 1):
-                        # 每次取页前发送心跳，让 watchdog 知道任务仍在尝试获取数据
-                        # 避免在 tab.get() 或 JS 导航长时间阻塞时被误判为卡死
-                        from crawler import telemetry as _telemetry
-                        _telemetry.record_event(
+                        _record_search_heartbeat(
                             task_id,
-                            "weibo_page_attempt",
                             page=page,
-                            meta={"retry": retry, "url": url[:80]},
+                            stage="url_navigation_attempt",
+                            meta={"retry": retry},
                         )
                         html, page_error = _safe_get_html(tab, url)
                         if html:
@@ -954,14 +1037,27 @@ def search(
                             and "disconnect" not in error_lower
                             and "crashed" not in error_lower
                         )
-                        # 只有真正的 crash/disconnect 才算 tab 死亡
+                        
+                        # 严重的 CDP 底层超时，代表管道已堵死或浏览器卡死，不可恢复
+                        is_severe_cdp_timeout = "timeout" in error_lower and any(kw in error_lower for kw in (
+                            "target.gettargetinfo", 
+                            "dom.getouterhtml", 
+                            "page.stoploading",
+                            "浏览器卡了"
+                        ))
+                        
+                        if is_severe_cdp_timeout:
+                            is_timeout = False  # 不要走只 sleep 重试的路径
+                            logger.error("检测到严重的底层 CDP 超时，Tab 已实质性死亡。")
+
+                        # 只有真正的 crash/disconnect 或者底层 CDP 堵死才算 tab 死亡
                         is_tab_dead = (
                             any(kw in error_lower for kw in (
                                 "crashed", "连接已断开",
                                 "disconnected", "connection lost", "target closed",
                             ))
                             and not is_timeout
-                        )
+                        ) or is_severe_cdp_timeout
                         logger.warning(
                             f"获取微博搜索页失败 page={page} retry={retry}/{MAX_PAGE_RETRIES}: {page_error}"
                         )
@@ -988,6 +1084,12 @@ def search(
                                 )
                                 try:
                                     tab = _do_rebuild_tab(tab)
+                                    _record_search_heartbeat(
+                                        task_id,
+                                        page=page,
+                                        stage="tab_rebuilt_after_timeout",
+                                        meta={"retry": retry},
+                                    )
                                 except RuntimeError:
                                     logger.error("Tab 重建次数超限，终止搜索")
                                     break
@@ -1008,6 +1110,12 @@ def search(
                             logger.info("检测到 Tab 崩溃/断开连接，正在重建...")
                             try:
                                 tab = _do_rebuild_tab(tab)
+                                _record_search_heartbeat(
+                                    task_id,
+                                    page=page,
+                                    stage="tab_rebuilt_after_disconnect",
+                                    meta={"retry": retry},
+                                )
                             except RuntimeError:
                                 logger.error("Tab 重建次数超限，终止搜索")
                                 break
@@ -1025,6 +1133,12 @@ def search(
                             )
                             try:
                                 tab = _do_rebuild_tab(tab)
+                                _record_search_heartbeat(
+                                    task_id,
+                                    page=page,
+                                    stage="tab_rebuilt_after_http_418",
+                                    meta={"retry": retry},
+                                )
                             except RuntimeError:
                                 logger.error("Tab 重建次数超限，终止搜索")
                                 break

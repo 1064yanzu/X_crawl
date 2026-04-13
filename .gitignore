@@ -49,3 +49,14 @@ yarn-error.log*
 next-env.d.ts
 /backend/logs
 backend/api/routers/__pycache__
+.claude
+.ipo/ai-workspace
+.pytest_cache
+.ruff_cache
+run
+scripts
+1.py
+CHANGELOG.md
+CONCURRENT_CRAWL_PLAN.md
+CONCURRENT_IMPLEMENTATION_SUMMARY.md
+emails.txt

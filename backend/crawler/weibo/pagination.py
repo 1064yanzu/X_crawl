@@ -1,17 +1,20 @@
 """
-微博搜索翻页模块（V5）。
+微博搜索翻页模块。
 
-翻页策略：提取"下一页"链接的 href，然后用 tab.get(href) 导航。
+翻页策略：
+- 优先点击页面上的“下一页”链接，避免把翻页退化成 `tab.get()` 直接导航。
+- 点击后使用轻量轮询验证 URL 与 DOM 是否已切到目标页，尽量少走 CDP 重命令。
 
-关键处理：
-- tab.get() 超时后不放弃——页面很可能已加载好，只是 DrissionPage 内部的
-  Page.stopLoading 确认信号没通过拥堵的 CDP 管道。此时尝试读取 tab.html。
-- 使用 eager 加载模式，DOM 就绪即完成（不等资源加载），减少 CDP 管道压力。
+设计目标：
+- 避免 `Page.stopLoading` / `Page.getFrameTree` 一类 `tab.get()` 相关超时。
+- 更接近真实用户翻页路径，降低风控与卡死概率。
 """
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
 
@@ -23,103 +26,122 @@ def click_next_page(
     timeout: float = 15.0,
 ) -> tuple[Optional[str], Optional[str]]:
     """
-    通过提取"下一页"链接并用 tab.get() 导航到下一页。
+    通过真实点击“下一页”链接翻到目标页。
 
     Args:
         tab: DrissionPage 的 ChromiumTab 实例
         expected_page: 期望的目标页码
-        timeout: tab.get() 的加载超时时间
+        timeout: 点击后的等待超时时间
 
     Returns:
         (html, error) — 成功时 error 为 None，失败时 html 为 None
     """
     from .http_418_guard import detect_weibo_http_418
 
-    # ── 1. 找到"下一页"链接并提取 href ─────────────────────────────
-    next_href = None
+    # ── 1. 找到“下一页”按钮 ────────────────────────────────────────
+    next_btn = None
 
     try:
         next_btn = tab.ele("css:a.next", timeout=5)
-        if next_btn:
-            next_href = next_btn.attr("href")
     except Exception as e:
         logger.debug("查找 a.next 失败: %s", e)
 
-    if not next_href:
+    if not next_btn:
         try:
             next_btn = tab.ele("text:下一页", timeout=3)
-            if next_btn:
-                next_href = next_btn.attr("href")
         except Exception as e:
             logger.debug("查找 '下一页' 文字链接失败: %s", e)
 
-    if not next_href:
-        return None, "页面上未找到'下一页'链接或其 href 属性"
+    if not next_btn:
+        return None, "页面上未找到'下一页'链接"
 
-    # 补全 URL
+    next_href = ""
+    try:
+        next_href = next_btn.attr("href") or ""
+    except Exception as e:
+        logger.debug("读取下一页 href 失败（忽略，继续点击）: %s", e)
+
     if next_href.startswith("//"):
         next_href = "https:" + next_href
     elif next_href.startswith("/"):
         next_href = "https://s.weibo.com" + next_href
 
-    logger.debug("下一页链接: %s", next_href[:100])
+    if next_href:
+        logger.debug("下一页链接: %s", next_href[:100])
 
-
-
-    # ── 3. tab.get() 导航 ────────────────────────────────────────
-    nav_success = False
-    nav_error = None
+    # ── 2. 真实点击下一页 ──────────────────────────────────────────
     try:
-        nav_success = tab.get(next_href, retry=0, timeout=timeout)
+        next_btn.click()
     except Exception as e:
-        nav_error = str(e)
-        logger.debug("tab.get() 异常: %s", nav_error[:120])
+        return None, f"点击'下一页'失败: {e}"
 
+    # ── 3. 轮询验证页面是否已切到目标页 ────────────────────────────
+    deadline = time.monotonic() + max(3.0, timeout)
+    last_error = "点击后页面尚未就绪"
+    time.sleep(1.2)
+    while time.monotonic() < deadline:
+        html, read_error = _try_read_page(tab)
+        if html:
+            current_url = _safe_get_url(tab)
+            if _page_matches(current_url, expected_page, next_href=next_href):
+                anti_crawl = _check_anti_crawl(tab, html)
+                if anti_crawl:
+                    return None, anti_crawl
 
+                try:
+                    if detect_weibo_http_418(tab):
+                        return None, "微博 HTTP 418 错误页"
+                except Exception:
+                    pass
 
-    # ── 5. 验证页面（即使 tab.get 超时，页面可能已加载好）──────────
-    # tab.get() 超时通常是 Page.stopLoading CDP 命令拥堵，
-    # 不代表页面没加载——浏览器截图能看到页面内容。
-    html = _try_read_page(tab)
+                logger.info("通过点击'下一页'成功导航到第 %d 页", expected_page)
+                return html, None
 
-    if html:
-        # 反爬检测
-        anti_crawl = _check_anti_crawl(tab, html)
-        if anti_crawl:
-            return None, anti_crawl
-
-        try:
-            if detect_weibo_http_418(tab):
-                return None, "微博 HTTP 418 错误页"
-        except Exception:
-            pass
-
-        if nav_success:
-            logger.info("通过'下一页'链接成功导航到第 %d 页", expected_page)
-        else:
-            logger.info(
-                "tab.get() 报告失败但页面实际已加载，恢复第 %d 页成功",
-                expected_page,
+            last_error = (
+                f"页码尚未切换到目标页: current_url={current_url or '<empty>'}, "
+                f"expected_page={expected_page}"
             )
-        return html, None
+        else:
+            last_error = read_error or last_error
+        time.sleep(0.5)
 
-    # 页面确实没加载好
-    error_msg = f"tab.get() 导航失败: {nav_error}" if nav_error else "tab.get() 返回 False 且页面未加载"
-    return None, error_msg
+    if "超时" in last_error or "timeout" in last_error.lower():
+        return None, f"[CDP_DEAD] 点击翻页后读取验证失败: {last_error}"
+    return None, f"点击翻页后页面未就绪: {last_error}"
 
 
-def _try_read_page(tab) -> Optional[str]:
-    """尝试读取当前页面 HTML，失败返回 None。"""
+def _try_read_page(tab) -> tuple[Optional[str], Optional[str]]:
+    """尝试读取当前页面 HTML，返回值: (html, error_msg)"""
     try:
         url = tab.url or ""
         if "s.weibo.com" not in url:
-            return None
+            return None, "非搜索页面URL"
         html = tab.html or ""
         if len(html) < 2000:
-            return None
-        return html
+            return None, "页面HTML太短"
+        return html, None
+    except Exception as e:
+        return None, f"读取 tab 状态失败: {e}"
+
+
+def _safe_get_url(tab) -> str:
+    try:
+        return tab.url or ""
     except Exception:
-        return None
+        return ""
+
+
+def _page_matches(current_url: str, expected_page: int, *, next_href: str = "") -> bool:
+    for candidate in (current_url, next_href):
+        if not candidate:
+            continue
+        try:
+            page = parse_qs(urlparse(candidate).query).get("page", [None])[0]
+            if str(page or "") == str(expected_page):
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def _check_anti_crawl(tab, html: str) -> Optional[str]:

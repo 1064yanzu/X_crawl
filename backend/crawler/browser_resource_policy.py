@@ -23,26 +23,6 @@ _VIDEO_BLOCK_PATTERNS = [
     "*.mpd*",
 ]
 
-# 图片拦截模式（tab 级别，兼容接管模式）
-_IMAGE_BLOCK_PATTERNS = [
-    "*.jpg",
-    "*.jpeg",
-    "*.png",
-    "*.gif",
-    "*.webp",
-    "*.svg",
-    "*.ico",
-    "*.bmp",
-    "*pbs.twimg.com/profile_images/*",
-    "*pbs.twimg.com/media/*",
-    "*pbs.twimg.com/card_img/*",
-    "*twimg.com/*.jpg*",
-    "*twimg.com/*.png*",
-    "*twimg.com/*.gif*",
-    "*twimg.com/*.webp*",
-]
-
-
 def apply_browser_option_policies(co) -> None:
     """对 ChromiumOptions 应用资源策略（仅对独立启动模式有效）。"""
     co.no_imgs(bool(getattr(settings, "browser_block_images", False)))
@@ -51,11 +31,15 @@ def apply_browser_option_policies(co) -> None:
 def apply_tab_resource_policies(tab) -> None:
     """
     对新建标签页应用运行时资源拦截策略。
-    使用 DevTools Protocol blocked_urls，兼容接管模式与独立模式。
+    使用 DevTools Protocol blocked_urls，仅拦截视频/流媒体 URL。
+
+    说明：
+    - 图片禁用优先使用浏览器级 `no_imgs()`，由 Chromium 自身跳过图片加载。
+    - 不再对图片使用 `blocked_urls` 进行 URL 级硬拦截。
+      微博页面在无图模式下对某些 PNG 资源会反复重试；若同时做 URL 级 block，
+      会出现 Network 面板请求数持续膨胀，最终拖死标签页。
     """
     blocked_urls: list[str] = []
-    if bool(getattr(settings, "browser_block_images", False)):
-        blocked_urls.extend(_IMAGE_BLOCK_PATTERNS)
     if bool(getattr(settings, "browser_block_videos", False)):
         blocked_urls.extend(_VIDEO_BLOCK_PATTERNS)
 
@@ -63,7 +47,7 @@ def apply_tab_resource_policies(tab) -> None:
         tab.set.blocked_urls(blocked_urls or None)
         if blocked_urls:
             logger.debug(
-                "已对标签页应用资源拦截：图片=%s 视频=%s",
+                "已对标签页应用资源拦截：图片(browser级 no_imgs)=%s 视频(URL级)=%s",
                 bool(getattr(settings, "browser_block_images", False)),
                 bool(getattr(settings, "browser_block_videos", False)),
             )
