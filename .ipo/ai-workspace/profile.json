@@ -1,8 +1,0 @@
-{
-  "defaultBackend": "claude-code",
-  "defaultModel": "claude-sonnet-4-6",
-  "defaultApprovalMode": "acceptEdits",
-  "memoryPolicy": "always",
-  "lastOpenedAt": 1773418501878,
-  "updatedAt": 1773418501878
-}

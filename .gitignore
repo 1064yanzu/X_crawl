@@ -53,7 +53,7 @@ backend/api/routers/__pycache__
 .ipo/ai-workspace
 .pytest_cache
 .ruff_cache
-run
+/run
 scripts
 1.py
 CHANGELOG.md
