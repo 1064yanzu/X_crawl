@@ -70,6 +70,7 @@ from crawler.x_time_splitter import (
     serialize_segments,
 )
 import api.services.task_manager as _task_mgr
+from api.services.time_split_policy import resolve_task_time_split
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,9 @@ def _search_with_time_splits(
     slot_id: Optional[int] = None,
     exclude_ids: Optional[set[str]] = None,
     recrawl_mode: bool = False,
+    time_split_mode: str = "inherit",
+    time_split_window_days: Optional[int] = None,
+    time_split_max_segments: Optional[int] = None,
 ) -> SearchResult:
     shared_tab = (
         browser_instance.new_tab() if browser_instance is not None else get_new_tab()
@@ -269,16 +273,23 @@ def _search_with_time_splits(
             aggregated = checkpoint.get("aggregated_tweets", []) or []
             start_index = int(checkpoint.get("current_segment_index", 0))
         else:
+            split_config = resolve_task_time_split(
+                platform="x",
+                keyword=keyword,
+                start_date=None,
+                end_date=None,
+                time_split_mode=time_split_mode,
+                time_split_window_days=time_split_window_days,
+                time_split_max_segments=time_split_max_segments,
+            )
             plan = build_time_split_plan(
                 keyword,
-                enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=int(getattr(settings, "x_time_split_window_days", 7)),
-                unlimited_window_days=int(
-                    getattr(settings, "x_time_split_window_days_unlimited", 7)
-                ),
-                max_segments=int(getattr(settings, "x_time_split_max_segments", 600)),
-                force_window=False,
+                enabled=split_config.enabled,
+                trigger_days=split_config.trigger_days,
+                window_days=split_config.window_days,
+                unlimited_window_days=split_config.window_days,
+                max_segments=split_config.max_segments,
+                force_window=split_config.force_window,
             )
             if not plan.enabled:
                 raise RuntimeError("时间分割计划未启用，不能进入分段搜索")
@@ -338,6 +349,9 @@ def _search_with_time_splits(
                     "completed_segments": seg_idx,
                     "parent_tweets": aggregated,
                 },
+                time_split_mode=time_split_mode,
+                time_split_window_days=time_split_window_days,
+                time_split_max_segments=time_split_max_segments,
             )
 
             # ── 复爬段落级快跳：如果本段 0 条新增，说明已完全覆盖，跳到下段 ──
@@ -766,6 +780,9 @@ def search(
     exclude_ids: Optional[set[str]] = None,
     recrawl_mode: bool = False,
     seed_tweets: Optional[list[dict]] = None,
+    time_split_mode: str = "inherit",
+    time_split_window_days: Optional[int] = None,
+    time_split_max_segments: Optional[int] = None,
 ) -> SearchResult:
     """
     搜索 X 推文（含断点续爬 + 可选回复抓取 + 可暂停/可终止）
@@ -813,6 +830,15 @@ def search(
     _crawl_start_time = time.monotonic()
     _long_rest_done_at = 0.0  # 上次长休息时间戳
     ckpt: Optional[dict] = None
+    _split_config = resolve_task_time_split(
+        platform="x",
+        keyword=keyword,
+        start_date=None,
+        end_date=None,
+        time_split_mode=time_split_mode,
+        time_split_window_days=time_split_window_days,
+        time_split_max_segments=time_split_max_segments,
+    )
 
     time_split_active = bool(_time_split_context)
     segment_prefix = ""
@@ -897,9 +923,7 @@ def search(
         def _on_reply_done_pipeline(tweet_id_cb: str, replies_cb: list[dict]):
             """pipeline reply worker 每条完成后的落盘回调"""
             if task_id:
-                _task_mgr.update_task_replies_progress(
-                    task_id, tweet_id_cb, len(replies_cb)
-                )
+                _task_mgr.update_task_reply_snapshot(task_id, tweet_id_cb, replies_cb)
 
         _pipeline = CrawlPipeline(
             task_id=task_id,
@@ -946,14 +970,12 @@ def search(
         if _time_split_plan_cache is None:
             _time_split_plan_cache = build_time_split_plan(
                 keyword,
-                enabled=bool(getattr(settings, "x_auto_time_split_enabled", True)),
-                trigger_days=int(getattr(settings, "x_time_split_trigger_days", 30)),
-                window_days=int(getattr(settings, "x_time_split_window_days", 7)),
-                unlimited_window_days=int(
-                    getattr(settings, "x_time_split_window_days_unlimited", 7)
-                ),
-                max_segments=int(getattr(settings, "x_time_split_max_segments", 600)),
-                force_window=False,
+                enabled=_split_config.enabled,
+                trigger_days=_split_config.trigger_days,
+                window_days=_split_config.window_days,
+                unlimited_window_days=_split_config.window_days,
+                max_segments=_split_config.max_segments,
+                force_window=_split_config.force_window,
             )
         return _time_split_plan_cache
 
@@ -973,6 +995,9 @@ def search(
             slot_id=slot_id,
             exclude_ids=exclude_ids,
             recrawl_mode=_recrawl_mode,
+            time_split_mode=time_split_mode,
+            time_split_window_days=time_split_window_days,
+            time_split_max_segments=time_split_max_segments,
         )
 
     logger.info(
@@ -1014,6 +1039,9 @@ def search(
                 slot_id=slot_id,
                 exclude_ids=exclude_ids,
                 recrawl_mode=_recrawl_mode,
+                time_split_mode=time_split_mode,
+                time_split_window_days=time_split_window_days,
+                time_split_max_segments=time_split_max_segments,
             )
         
         # 情况 2：Recrawl 模式 + checkpoint keyword 不匹配 → 说明是时间分段任务，需要重新分段
@@ -1381,8 +1409,8 @@ def search(
                                 processed_tweet["replies"] = replies
                                 _dfs_processed.append(processed_tweet)
                             if task_id:
-                                _task_mgr.update_task_replies_progress(
-                                    task_id, tweet_id, len(replies)
+                                _task_mgr.update_task_reply_snapshot(
+                                    task_id, tweet_id, replies
                                 )
                                 interim_tweets = list(_dfs_all_tweets_ref) + list(
                                     _dfs_processed
@@ -1701,7 +1729,7 @@ def _fetch_replies_for_tweets(
 
     def on_progress(tweet_id: str, replies: list[dict]):
         if task_id:
-            _task_mgr.update_task_replies_progress(task_id, tweet_id, len(replies))
+            _task_mgr.update_task_reply_snapshot(task_id, tweet_id, replies)
         if progress_callback:
             progress_callback(tweet_id, replies)
 

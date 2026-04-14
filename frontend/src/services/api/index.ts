@@ -6,6 +6,7 @@ export type CrawlStrategy = "bfs" | "dfs";
 export type TaskKind = "search" | "comment_backfill" | "comment_backfill_group";
 export type RiskState = "none" | "challenge" | "rate_limited" | "login_required" | "search_blocked";
 export type QualityState = "complete" | "partial" | "interrupted";
+export type TimeSplitMode = "inherit" | "on" | "off";
 
 export interface SegmentProgress {
     enabled: boolean;
@@ -66,6 +67,9 @@ export interface TaskOut {
     platform?: Platform;
     start_date?: string | null;
     end_date?: string | null;
+    time_split_mode?: TimeSplitMode;
+    time_split_window_days?: number | null;
+    time_split_max_segments?: number | null;
     debug_screenshot?: string | null;
 }
 
@@ -92,6 +96,9 @@ export interface SearchRequest {
     platform?: Platform;
     start_date?: string;
     end_date?: string;
+    time_split_mode?: TimeSplitMode;
+    time_split_window_days?: number;
+    time_split_max_segments?: number;
 }
 
 export interface TaskQueueItemRequest {
@@ -104,6 +111,9 @@ export interface TaskQueueItemRequest {
     platform?: Platform;
     start_date?: string;
     end_date?: string;
+    time_split_mode?: TimeSplitMode;
+    time_split_window_days?: number;
+    time_split_max_segments?: number;
 }
 
 export interface TaskQueueCreateRequest {
@@ -233,6 +243,9 @@ export interface BatchImportTask {
     crawl_strategy: CrawlStrategy;
     start_date?: string | null;
     end_date?: string | null;
+    time_split_mode?: TimeSplitMode;
+    time_split_window_days?: number | null;
+    time_split_max_segments?: number | null;
 }
 
 export interface BatchImportParseResult {
@@ -1046,12 +1059,18 @@ export const api = {
             defaultPlatform?: Platform;
             defaultProduct?: string;
             defaultFetchReplies?: boolean;
+            defaultTimeSplitMode?: TimeSplitMode;
+            defaultTimeSplitWindowDays?: number;
+            defaultTimeSplitMaxSegments?: number;
         }) => {
             const formData = new FormData();
             formData.append("file", params.file);
             if (params.defaultPlatform) formData.append("default_platform", params.defaultPlatform);
             if (params.defaultProduct) formData.append("default_product", params.defaultProduct);
             if (params.defaultFetchReplies !== undefined) formData.append("default_fetch_replies", String(params.defaultFetchReplies));
+            if (params.defaultTimeSplitMode) formData.append("default_time_split_mode", params.defaultTimeSplitMode);
+            if (params.defaultTimeSplitWindowDays !== undefined) formData.append("default_time_split_window_days", String(params.defaultTimeSplitWindowDays));
+            if (params.defaultTimeSplitMaxSegments !== undefined) formData.append("default_time_split_max_segments", String(params.defaultTimeSplitMaxSegments));
             return fetchFormApi<BatchImportParseResult>("/api/v1/batch-import/parse", formData);
         },
     },

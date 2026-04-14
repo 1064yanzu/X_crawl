@@ -4,7 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
-from api.schemas.task import CrawlStrategy, TaskOut
+from api.schemas.task import CrawlStrategy, TaskOut, TimeSplitMode
 
 QueueStatus = Literal["running", "paused", "completed"]
 
@@ -19,6 +19,9 @@ class TaskQueueItemRequest(BaseModel):
     platform: Literal["x", "weibo"] = Field(default="x", description="目标平台")
     start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
     end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
+    time_split_mode: TimeSplitMode = Field(default="inherit", description="时间拆分策略：inherit/on/off")
+    time_split_window_days: Optional[int] = Field(default=None, ge=1, le=365, description="任务级时间拆分窗口天数")
+    time_split_max_segments: Optional[int] = Field(default=None, ge=1, le=2000, description="任务级时间拆分最大分段数")
 
 
 class TaskQueueCreateRequest(BaseModel):

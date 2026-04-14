@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 from urllib.parse import parse_qs, quote, urlparse
 
+from api.services.time_split_policy import resolve_task_time_split
+
 from .checkpoints import (
     build_date_split_checkpoint,
     build_page_checkpoint,
@@ -44,6 +46,25 @@ class WeiboSearchResult:
 
     posts: list = field(default_factory=list)
     resumed: bool = False
+
+
+def _build_segment_progress(
+    *,
+    enabled: bool,
+    total_segments: int,
+    completed_segments: int,
+    current_segment_index: int,
+    current_since: Optional[str],
+    current_until: Optional[str],
+) -> dict:
+    return {
+        "enabled": enabled,
+        "total_segments": total_segments,
+        "completed_segments": completed_segments,
+        "current_segment_index": current_segment_index,
+        "current_since": current_since,
+        "current_until": current_until,
+    }
 
 
 
@@ -554,6 +575,9 @@ def search(
     fetch_comments: bool = False,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    time_split_mode: str = "inherit",
+    time_split_window_days: Optional[int] = None,
+    time_split_max_segments: Optional[int] = None,
     _parent_accumulated: Optional[list] = None,
     _tab=None,
     _session_ready: bool = False,
@@ -569,7 +593,12 @@ def search(
     返回 WeiboSearchResult，其中 posts 是 WeiboPost.to_dict() 的列表。
     """
     from config import settings
-    from api.services.task_manager import update_preview_tweets, update_task_phase
+    from api.services.task_manager import (
+        update_preview_tweets,
+        update_task_phase,
+        update_task_segment_progress,
+        update_task_reply_snapshot,
+    )
     from crawler.utils import check_signal, StopSignal, jittered_sleep, interruptible_sleep
     from .html_parser import parse_search_page
     from .http_418_guard import wait_weibo_http_418_cooldown
@@ -663,6 +692,9 @@ def search(
                             fetch_comments=fetch_comments,
                             start_date=start_date,
                             end_date=end_date,
+                            time_split_mode=time_split_mode,
+                            time_split_window_days=time_split_window_days,
+                            time_split_max_segments=time_split_max_segments,
                             _tab=tab,
                             _session_ready=True,
                             _query_plan_resolved=True,
@@ -718,6 +750,15 @@ def search(
         all_posts_dicts: list[dict] = _merge_posts_by_id(seed_posts, checkpoint_posts(checkpoint))
         resumed = bool(checkpoint)
         ckpt_mode = checkpoint_mode(checkpoint)
+        split_config = resolve_task_time_split(
+            platform="weibo",
+            keyword=keyword,
+            start_date=start_date,
+            end_date=end_date,
+            time_split_mode=time_split_mode,
+            time_split_window_days=time_split_window_days,
+            time_split_max_segments=time_split_max_segments,
+        )
 
         max_pages: int = settings.weibo_max_pages
         page_interval: float = settings.weibo_search_page_interval
@@ -727,14 +768,18 @@ def search(
         if fetch_comments:
             from crawler.pipeline import WeiboCommentPipeline
             from crawler import telemetry as _telemetry
+            from api.services.reply_tree import count_reply_tree_nodes
 
             def _on_comment_done(mid: str, comments: list) -> None:
-                if task_id and comments:
-                    _telemetry.record_event(
-                        task_id,
-                        "weibo_comment_done",
-                        delta_replies=len(comments),
-                    )
+                if task_id:
+                    update_task_reply_snapshot(task_id, mid, comments)
+                    reply_total = count_reply_tree_nodes(comments)
+                    if reply_total > 0:
+                        _telemetry.record_event(
+                            task_id,
+                            "weibo_comment_done",
+                            delta_replies=reply_total,
+                        )
 
             _comment_pipeline = WeiboCommentPipeline(
                 task_id=task_id,
@@ -746,7 +791,7 @@ def search(
         # ── 日期范围分割（突破 50 页限制）────────────────────────
         # 注意：如果 _parent_accumulated 不为 None，说明当前调用已经是父级分段的子段，
         # 不应再次分割，否则会导致 43 个月 × 10 个子段 = 430 个切片的指数级膨胀
-        if start_date and end_date and _parent_accumulated is None:
+        if split_config.enabled and start_date and end_date and _parent_accumulated is None:
             from .date_splitter import split_date_range
 
             date_ranges = checkpoint_date_ranges(checkpoint) if ckpt_mode == "date_split" else []
@@ -755,8 +800,8 @@ def search(
                     start_date,
                     end_date,
                     max_pages=max_pages,
-                    window_days=int(getattr(settings, "weibo_time_split_window_days", 7)),
-                    max_segments=int(getattr(settings, "weibo_time_split_max_segments", 600)),
+                    window_days=split_config.window_days,
+                    max_segments=split_config.max_segments,
                 )
 
             should_use_date_split = len(date_ranges) > 1 and (
@@ -778,13 +823,27 @@ def search(
                 logger.info(
                     f"日期范围已分割为 {len(date_ranges)} 个子范围，将依次搜索"
                 )
+                # ⚠️ 必须先初始化 start_segment_index 和 all_results，
+                # 再调用 update_task_segment_progress，否则会触发 NameError
+                all_results: list[dict] = _merge_posts_by_id(seed_posts, checkpoint_posts(checkpoint))
+                start_segment_index = checkpoint_next_segment_index(checkpoint) if ckpt_mode == "date_split" else 0
+                if task_id:
+                    update_task_segment_progress(
+                        task_id,
+                        _build_segment_progress(
+                            enabled=True,
+                            total_segments=len(date_ranges),
+                            completed_segments=max(0, start_segment_index),
+                            current_segment_index=max(1, start_segment_index + 1),
+                            current_since=date_ranges[start_segment_index][0] if start_segment_index < len(date_ranges) else None,
+                            current_until=date_ranges[start_segment_index][1] if start_segment_index < len(date_ranges) else None,
+                        ),
+                    )
                 if task_id:
                     update_task_phase(
                         task_id,
                         f"日期范围已拆分为 {len(date_ranges)} 段，开始分段搜索..."
                     )
-                all_results: list[dict] = _merge_posts_by_id(seed_posts, checkpoint_posts(checkpoint))
-                start_segment_index = checkpoint_next_segment_index(checkpoint) if ckpt_mode == "date_split" else 0
                 if all_results and task_id:
                     update_preview_tweets(
                         task_id,
@@ -803,6 +862,17 @@ def search(
                             interruptible_sleep(seg_interval, task_id=task_id)
 
                         if task_id:
+                            update_task_segment_progress(
+                                task_id,
+                                _build_segment_progress(
+                                    enabled=True,
+                                    total_segments=len(date_ranges),
+                                    completed_segments=seg_idx,
+                                    current_segment_index=seg_idx + 1,
+                                    current_since=seg_start,
+                                    current_until=seg_end,
+                                ),
+                            )
                             update_task_phase(
                                 task_id,
                                 f"正在搜索第 {seg_idx + 1}/{len(date_ranges)} 段: "
@@ -823,10 +893,24 @@ def search(
                             comment_browser_instance=comment_browser_instance,
                             slot_id=slot_id,
                             exclude_ids=exclude_ids,
+                            time_split_mode=time_split_mode,
+                            time_split_window_days=time_split_window_days,
+                            time_split_max_segments=time_split_max_segments,
                         )
                         all_results = _merge_posts_by_id(all_results, seg_result.posts)
                         # 实时推送合并后的预览
                         if task_id:
+                            update_task_segment_progress(
+                                task_id,
+                                _build_segment_progress(
+                                    enabled=True,
+                                    total_segments=len(date_ranges),
+                                    completed_segments=seg_idx + 1,
+                                    current_segment_index=min(seg_idx + 2, len(date_ranges)),
+                                    current_since=date_ranges[seg_idx + 1][0] if seg_idx + 1 < len(date_ranges) else None,
+                                    current_until=date_ranges[seg_idx + 1][1] if seg_idx + 1 < len(date_ranges) else None,
+                                ),
+                            )
                             update_preview_tweets(
                                 task_id,
                                 current_page=seg_idx + 1,
@@ -851,6 +935,18 @@ def search(
                         len(date_ranges),
                         len(all_results),
                     )
+                    if task_id:
+                        update_task_segment_progress(
+                            task_id,
+                            _build_segment_progress(
+                                enabled=True,
+                                total_segments=len(date_ranges),
+                                completed_segments=len(date_ranges),
+                                current_segment_index=len(date_ranges),
+                                current_since=date_ranges[-1][0] if date_ranges else None,
+                                current_until=date_ranges[-1][1] if date_ranges else None,
+                            ),
+                        )
 
                 # ── 所有分片搜完后，统一抓评论（不在每段内部阻塞等待）──────────
                 if fetch_comments and all_results:
@@ -907,6 +1003,13 @@ def search(
                             new_dict = dict(post_dict)
                             new_dict["replies"] = [c.to_dict() if hasattr(c, "to_dict") else c for c in comment_result.comments]
                             new_dict["comment_stats"] = comment_stats.__dict__ if hasattr(comment_stats, "__dict__") else comment_stats
+                            if task_id:
+                                update_task_reply_snapshot(
+                                    task_id,
+                                    str(mid),
+                                    new_dict["replies"],
+                                    comment_stats=new_dict["comment_stats"],
+                                )
                             updated.append(new_dict)
                             if task_id and tree_stats.total_count > 0:
                                 _telemetry.record_event(

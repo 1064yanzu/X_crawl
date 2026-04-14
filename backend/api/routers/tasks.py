@@ -589,6 +589,9 @@ def _do_recrawl_task(task_id: str) -> tuple[str | None, int, str | None, bool]:
         platform=platform,
         start_date=source_task.get("start_date"),
         end_date=source_task.get("end_date"),
+        time_split_mode=source_task.get("time_split_mode", "inherit"),
+        time_split_window_days=source_task.get("time_split_window_days"),
+        time_split_max_segments=source_task.get("time_split_max_segments"),
         source_task_id=root_source_task_id,
         exclude_tweet_ids=exclude_ids,
     )

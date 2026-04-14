@@ -102,6 +102,10 @@ def init_db(db_path: str | Path) -> None:
                 segment_progress_json TEXT DEFAULT '{}',
                 tweets_json           TEXT DEFAULT '[]',
                 preview_json          TEXT DEFAULT '[]'
+                ,
+                time_split_mode       TEXT DEFAULT 'inherit',
+                time_split_window_days INTEGER,
+                time_split_max_segments INTEGER
             )
             """
         )
@@ -182,6 +186,9 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "platform", "TEXT DEFAULT 'x'")
         _ensure_column(conn, "tasks", "start_date", "TEXT")
         _ensure_column(conn, "tasks", "end_date", "TEXT")
+        _ensure_column(conn, "tasks", "time_split_mode", "TEXT DEFAULT 'inherit'")
+        _ensure_column(conn, "tasks", "time_split_window_days", "INTEGER")
+        _ensure_column(conn, "tasks", "time_split_max_segments", "INTEGER")
         _ensure_column(conn, "tasks", "reply_depth", "INTEGER DEFAULT 2")
         _ensure_column(conn, "tasks", "segment_progress_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "task_kind", "TEXT DEFAULT 'search'")
@@ -253,6 +260,9 @@ def _summary_params(task: dict) -> dict:
         "platform": task.get("platform", "x"),
         "start_date": task.get("start_date"),
         "end_date": task.get("end_date"),
+        "time_split_mode": task.get("time_split_mode", "inherit"),
+        "time_split_window_days": task.get("time_split_window_days"),
+        "time_split_max_segments": task.get("time_split_max_segments"),
     }
 
 
@@ -269,7 +279,8 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             task_kind, source_file_name, source_task_id, source_task_ids_json, concurrency, is_recrawl, exclude_count, queue_id, queue_name,
             queue_order, queue_total, comment_backfill_progress_json,
             segment_progress_json, preview_json,
-            platform, start_date, end_date
+            platform, start_date, end_date,
+            time_split_mode, time_split_window_days, time_split_max_segments
         ) VALUES (
             :task_id, :status, :keyword, :product, :max_count,
             :result_count, :current_page, :created_at, :finished_at,
@@ -279,7 +290,8 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             :task_kind, :source_file_name, :source_task_id, :source_task_ids_json, :concurrency, :is_recrawl, :exclude_count, :queue_id, :queue_name,
             :queue_order, :queue_total, :comment_backfill_progress_json,
             :segment_progress_json, :preview_json,
-            :platform, :start_date, :end_date
+            :platform, :start_date, :end_date,
+            :time_split_mode, :time_split_window_days, :time_split_max_segments
         )
         ON CONFLICT(task_id) DO UPDATE SET
             status = excluded.status,
@@ -319,7 +331,10 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             preview_json = excluded.preview_json,
             platform = excluded.platform,
             start_date = excluded.start_date,
-            end_date = excluded.end_date
+            end_date = excluded.end_date,
+            time_split_mode = excluded.time_split_mode,
+            time_split_window_days = excluded.time_split_window_days,
+            time_split_max_segments = excluded.time_split_max_segments
         """,
         params,
     )
@@ -479,7 +494,8 @@ def load_all_tasks() -> list[dict]:
                     reply_depth, crawl_strategy, replies_fetched, crawl_phase,
                     task_kind, source_file_name, source_task_id, source_task_ids_json, concurrency, is_recrawl, exclude_count, queue_id, queue_name,
                     queue_order, queue_total, comment_backfill_progress_json, segment_progress_json,
-                    preview_json, platform, start_date, end_date
+                    preview_json, platform, start_date, end_date,
+                    time_split_mode, time_split_window_days, time_split_max_segments
                 FROM tasks
                 ORDER BY created_at DESC
                 """
@@ -511,6 +527,9 @@ def load_all_tasks() -> list[dict]:
             d.setdefault("queue_order", None)
             d.setdefault("queue_total", None)
             d.setdefault("platform", "x")
+            d.setdefault("time_split_mode", "inherit")
+            d.setdefault("time_split_window_days", None)
+            d.setdefault("time_split_max_segments", None)
             tasks.append(d)
         logger.info(f"已从数据库加载 {len(tasks)} 条历史任务摘要")
         return tasks

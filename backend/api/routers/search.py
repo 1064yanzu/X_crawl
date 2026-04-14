@@ -36,6 +36,9 @@ async def create_search_task(
         platform=req.platform,
         start_date=req.start_date,
         end_date=req.end_date,
+        time_split_mode=req.time_split_mode,
+        time_split_window_days=req.time_split_window_days,
+        time_split_max_segments=req.time_split_max_segments,
     )
     task_data = task_manager.get_task_summary(task_id)
     if not task_data:

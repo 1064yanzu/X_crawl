@@ -23,7 +23,12 @@ function buildDraftSummary(task: TaskQueueItemRequest) {
     const dateLabel = task.platform === "weibo" && (task.start_date || task.end_date)
         ? ` · ${task.start_date ?? "--"} ~ ${task.end_date ?? "--"}`
         : "";
-    return `${platformLabel} · ${modeLabel} · ${replyLabel}${dateLabel}`;
+    const splitLabel = task.time_split_mode === "on"
+        ? ` · 拆分${task.time_split_window_days ?? "?"}天/段`
+        : task.time_split_mode === "off"
+            ? " · 不拆分"
+            : "";
+    return `${platformLabel} · ${modeLabel} · ${replyLabel}${dateLabel}${splitLabel}`;
 }
 
 export function useTaskQueueBuilder({
@@ -99,6 +104,9 @@ export function useTaskQueueBuilder({
                 platform: draft.platform,
                 start_date: draft.start_date,
                 end_date: draft.end_date,
+                time_split_mode: draft.time_split_mode,
+                time_split_window_days: draft.time_split_window_days,
+                time_split_max_segments: draft.time_split_max_segments,
             }));
             const queue = await api.taskQueues.create({
                 name: queueName.trim() || undefined,

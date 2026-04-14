@@ -113,6 +113,9 @@ def _default_task_state(*, task_id: str, keyword: str, product: str) -> dict:
         "platform": "x",
         "start_date": None,
         "end_date": None,
+        "time_split_mode": "inherit",
+        "time_split_window_days": None,
+        "time_split_max_segments": None,
         "debug_screenshot": None,
         "assigned_account_id": None,
         "account_alias": None,
@@ -362,6 +365,9 @@ def _ensure_db() -> None:
                 task.setdefault("platform", "x")
                 task.setdefault("start_date", None)
                 task.setdefault("end_date", None)
+                task.setdefault("time_split_mode", "inherit")
+                task.setdefault("time_split_window_days", None)
+                task.setdefault("time_split_max_segments", None)
                 task.setdefault("preview_tweets", [])
                 task.setdefault("replies_fetched", 0)
                 task.setdefault("reply_depth", 2)
@@ -583,6 +589,9 @@ def create_task(
     platform: str = "x",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    time_split_mode: str = "inherit",
+    time_split_window_days: Optional[int] = None,
+    time_split_max_segments: Optional[int] = None,
     task_kind: str = "search",
     source_file_name: Optional[str] = None,
     source_task_id: Optional[str] = None,
@@ -643,6 +652,9 @@ def create_task(
             "platform": platform,
             "start_date": start_date,
             "end_date": end_date,
+            "time_split_mode": time_split_mode or "inherit",
+            "time_split_window_days": time_split_window_days,
+            "time_split_max_segments": time_split_max_segments,
             "crawl_phase": "已加入调度队列，等待执行...",
             "exclude_tweet_ids": exclude_tweet_ids or [],
             "exclude_count": len(exclude_tweet_ids) if exclude_tweet_ids else 0,
@@ -686,6 +698,9 @@ def prepare_task_for_recrawl(
     platform: str = "x",
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    time_split_mode: str = "inherit",
+    time_split_window_days: Optional[int] = None,
+    time_split_max_segments: Optional[int] = None,
     source_task_id: Optional[str] = None,
     exclude_tweet_ids: Optional[list[str]] = None,
 ) -> bool:
@@ -724,6 +739,9 @@ def prepare_task_for_recrawl(
                 "platform": platform,
                 "start_date": start_date,
                 "end_date": end_date,
+                "time_split_mode": time_split_mode or "inherit",
+                "time_split_window_days": time_split_window_days,
+                "time_split_max_segments": time_split_max_segments,
                 "crawl_phase": "已加入调度队列，等待执行...",
                 "exclude_tweet_ids": exclude_tweet_ids or [],
                 "exclude_count": len(exclude_tweet_ids) if exclude_tweet_ids else 0,
@@ -1225,6 +1243,82 @@ def set_task_seed_tweets(task_id: str, tweets_for_preview: list[dict], *, curren
         meta={"seed_count": len(tweets_for_preview)},
     )
     _persist_force(task_id, full=True)
+
+
+def _normalize_task_post_id(tweet: dict) -> str:
+    return str(tweet.get("id") or tweet.get("mid") or "").strip()
+
+
+def update_task_reply_snapshot(
+    task_id: str,
+    tweet_id: str,
+    replies: list[dict],
+    *,
+    comment_stats: Optional[dict] = None,
+) -> bool:
+    """按帖子维度幂等回写评论树，避免二级评论重复累计。"""
+    from crawler import telemetry
+    from api.services.reply_tree import count_reply_tree_nodes
+
+    normalized_tweet_id = str(tweet_id or "").strip()
+    if not normalized_tweet_id:
+        return False
+
+    tweets_ref = _get_task_result_ref(task_id, load=True)
+    if not tweets_ref:
+        return False
+
+    old_count = 0
+    new_count = count_reply_tree_nodes(replies)
+    updated = False
+
+    for tweet in tweets_ref:
+        if not isinstance(tweet, dict):
+            continue
+        if _normalize_task_post_id(tweet) != normalized_tweet_id:
+            continue
+        old_count = count_reply_tree_nodes(tweet.get("replies"))
+        tweet["replies"] = replies
+        if comment_stats is not None:
+            tweet["comment_stats"] = comment_stats
+        updated = True
+        break
+
+    if not updated:
+        return False
+
+    replies_fetched, coverage = _summarize_tweets(tweets_ref)
+
+    with _tasks_lock:
+        task = _tasks.get(task_id)
+        if not task:
+            return False
+        task["replies_fetched"] = replies_fetched
+        task["preview_tweets"] = _make_preview(tweets_ref)
+        task["time_coverage"] = coverage
+        _touch(task)
+        phase = task.get("crawl_phase", "")
+        status = task.get("status")
+        risk_state = task.get("risk_state")
+        page = task.get("current_page")
+
+    delta_replies = max(0, new_count - old_count)
+    telemetry.record_event(
+        task_id,
+        "reply_tree_synced",
+        phase=phase,
+        page=page,
+        delta_replies=delta_replies,
+        status=status,
+        risk_state=risk_state,
+        meta={
+            "tweet_id": normalized_tweet_id,
+            "old_reply_count": old_count,
+            "new_reply_count": new_count,
+        },
+    )
+    _persist(task_id, full=True)
+    return True
 
 
 def update_task_replies_progress(task_id: str, tweet_id: str, reply_count: int) -> None:

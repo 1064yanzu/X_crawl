@@ -9,6 +9,7 @@ CrawlStrategy = Literal["bfs", "dfs"]
 RiskState = Literal["none", "challenge", "rate_limited", "login_required", "search_blocked"]
 QualityState = Literal["complete", "partial", "interrupted"]
 TaskKind = Literal["search", "comment_backfill", "comment_backfill_group"]
+TimeSplitMode = Literal["inherit", "on", "off"]
 
 
 class SearchRequest(BaseModel):
@@ -37,6 +38,9 @@ class SearchRequest(BaseModel):
     platform: Literal["x", "weibo"] = Field(default="x", description="爬虫平台：x 或 weibo")
     start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
     end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
+    time_split_mode: TimeSplitMode = Field(default="inherit", description="时间拆分策略：inherit/on/off")
+    time_split_window_days: Optional[int] = Field(default=None, ge=1, le=365, description="任务级时间拆分窗口天数")
+    time_split_max_segments: Optional[int] = Field(default=None, ge=1, le=2000, description="任务级时间拆分最大分段数")
 
 
 class CheckpointInfo(BaseModel):
@@ -116,6 +120,9 @@ class TaskOut(BaseModel):
     platform: Literal["x", "weibo"] = Field(default="x", description="爬虫平台：x 或 weibo")
     start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
     end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
+    time_split_mode: TimeSplitMode = Field(default="inherit", description="时间拆分策略：inherit/on/off")
+    time_split_window_days: Optional[int] = Field(default=None, description="任务级时间拆分窗口天数")
+    time_split_max_segments: Optional[int] = Field(default=None, description="任务级时间拆分最大分段数")
     debug_screenshot: Optional[str] = Field(default=None, description="错误诊断截图 URL")
 
 

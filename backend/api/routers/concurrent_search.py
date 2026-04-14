@@ -28,6 +28,9 @@ class ConcurrentSearchRequest(BaseModel):
     reply_depth: int = Field(default=2, description="回复深度")
     crawl_strategy: str = Field(default="dfs", description="爬取策略")
     platform: str = Field(default="x", description="平台")
+    time_split_mode: str = Field(default="inherit", description="时间拆分策略")
+    time_split_window_days: Optional[int] = Field(default=None, description="任务级时间拆分窗口天数")
+    time_split_max_segments: Optional[int] = Field(default=None, description="任务级时间拆分最大分段数")
 
 
 class ConcurrentSearchResponse(BaseModel):
@@ -62,6 +65,9 @@ async def create_concurrent_search(req: ConcurrentSearchRequest):
             reply_depth=req.reply_depth,
             crawl_strategy=req.crawl_strategy,
             platform=req.platform,
+            time_split_mode=req.time_split_mode,
+            time_split_window_days=req.time_split_window_days,
+            time_split_max_segments=req.time_split_max_segments,
         )
 
         account = dispatcher.assign_account(task_id)

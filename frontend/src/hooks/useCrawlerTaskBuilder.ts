@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { api, type CrawlStrategy, type Platform, type SearchRequest } from "@/services/api";
+import { api, type CrawlStrategy, type Platform, type SearchRequest, type TimeSplitMode } from "@/services/api";
 import { useToast } from "@/components/ui/toast";
 import { buildAdvancedQuery, DEFAULT_ADVANCED_PARAMS, type AdvancedSearchParams } from "@/lib/advanced-search";
 
@@ -22,12 +22,41 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
     const [startDate, setStartDate] = React.useState("");
     const [endDate, setEndDate] = React.useState("");
     const [splitTriggerDays, setSplitTriggerDays] = React.useState(30);
+    const [timeSplitMode, setTimeSplitMode] = React.useState<TimeSplitMode>("inherit");
+    const [timeSplitWindowDays, setTimeSplitWindowDays] = React.useState(7);
+    const [timeSplitMaxSegments, setTimeSplitMaxSegments] = React.useState(600);
+    const [xDefaultWindowDays, setXDefaultWindowDays] = React.useState(7);
+    const [xDefaultMaxSegments, setXDefaultMaxSegments] = React.useState(600);
+    const [weiboDefaultWindowDays, setWeiboDefaultWindowDays] = React.useState(7);
+    const [weiboDefaultMaxSegments, setWeiboDefaultMaxSegments] = React.useState(600);
 
     React.useEffect(() => {
         api.crawlerConfig.get()
-            .then((cfg) => setSplitTriggerDays(cfg.x_time_split_trigger_days ?? 30))
+            .then((cfg) => {
+                const resolvedXWindow = cfg.x_time_split_window_days_unlimited ?? 7;
+                const resolvedXMax = cfg.x_time_split_max_segments ?? 600;
+                const resolvedWeiboWindow = cfg.weibo_time_split_window_days ?? 7;
+                const resolvedWeiboMax = cfg.weibo_time_split_max_segments ?? 600;
+                setSplitTriggerDays(cfg.x_time_split_trigger_days ?? 30);
+                setXDefaultWindowDays(resolvedXWindow);
+                setXDefaultMaxSegments(resolvedXMax);
+                setWeiboDefaultWindowDays(resolvedWeiboWindow);
+                setWeiboDefaultMaxSegments(resolvedWeiboMax);
+                setTimeSplitWindowDays((prev) => (prev > 0 ? prev : resolvedXWindow));
+                setTimeSplitMaxSegments((prev) => (prev > 0 ? prev : resolvedXMax));
+            })
             .catch(() => undefined);
     }, []);
+
+    React.useEffect(() => {
+        if (platform === "x") {
+            setTimeSplitWindowDays(xDefaultWindowDays);
+            setTimeSplitMaxSegments(xDefaultMaxSegments);
+            return;
+        }
+        setTimeSplitWindowDays(weiboDefaultWindowDays);
+        setTimeSplitMaxSegments(weiboDefaultMaxSegments);
+    }, [platform, xDefaultMaxSegments, xDefaultWindowDays, weiboDefaultMaxSegments, weiboDefaultWindowDays]);
 
     const finalKeyword = React.useMemo(() => {
         let query = keyword.trim();
@@ -39,14 +68,22 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
     }, [advancedParams, keyword, platform]);
 
     const xSplitNotice = React.useMemo(() => {
-        if (platform !== "x" || !advancedParams.since || !advancedParams.until) return null;
+        if (platform !== "x" || !advancedParams.since || !advancedParams.until || timeSplitMode === "off") return null;
         const start = new Date(`${advancedParams.since}T00:00:00`);
         const end = new Date(`${advancedParams.until}T00:00:00`);
         if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
         const days = Math.floor((end.getTime() - start.getTime()) / 86400000);
+        if (timeSplitMode === "on") {
+            return `本任务会强制按 ${timeSplitWindowDays} 天窗口拆分，共享最大 ${timeSplitMaxSegments} 段限制。`;
+        }
         if (days < splitTriggerDays) return null;
-        return `检测到 ${days} 天跨度，将自动按固定 7 天窗口切片，提升覆盖率与恢复稳定性。`;
-    }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays]);
+        return `检测到 ${days} 天跨度，将按默认窗口 ${xDefaultWindowDays} 天自动切片，提升覆盖率与恢复稳定性。`;
+    }, [advancedParams.since, advancedParams.until, platform, splitTriggerDays, timeSplitMaxSegments, timeSplitMode, timeSplitWindowDays, xDefaultWindowDays]);
+
+    const hasTaskTimeRange = React.useMemo(() => {
+        if (platform === "weibo") return Boolean(startDate && endDate);
+        return Boolean(advancedParams.since && advancedParams.until);
+    }, [advancedParams.since, advancedParams.until, endDate, platform, startDate]);
 
     const buildPayload = React.useCallback((): SearchRequest => {
         if (!finalKeyword) {
@@ -67,8 +104,11 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
             platform,
             start_date: platform === "weibo" && startDate ? startDate : undefined,
             end_date: platform === "weibo" && endDate ? endDate : undefined,
+            time_split_mode: hasTaskTimeRange ? timeSplitMode : "inherit",
+            time_split_window_days: hasTaskTimeRange && timeSplitMode === "on" ? timeSplitWindowDays : undefined,
+            time_split_max_segments: hasTaskTimeRange && timeSplitMode === "on" ? timeSplitMaxSegments : undefined,
         };
-    }, [endDate, fetchReplies, finalKeyword, platform, product, replyDepth, startDate]);
+    }, [endDate, fetchReplies, finalKeyword, hasTaskTimeRange, platform, product, replyDepth, startDate, timeSplitMaxSegments, timeSplitMode, timeSplitWindowDays]);
 
     const resetDraft = React.useCallback(() => {
         setKeyword("");
@@ -79,7 +119,10 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         setProduct(productDefault);
         setStartDate("");
         setEndDate("");
-    }, [productDefault]);
+        setTimeSplitMode("inherit");
+        setTimeSplitWindowDays(platform === "weibo" ? weiboDefaultWindowDays : xDefaultWindowDays);
+        setTimeSplitMaxSegments(platform === "weibo" ? weiboDefaultMaxSegments : xDefaultMaxSegments);
+    }, [platform, productDefault, weiboDefaultMaxSegments, weiboDefaultWindowDays, xDefaultMaxSegments, xDefaultWindowDays]);
 
     const submit = React.useCallback(async () => {
         setLoading(true);
@@ -121,6 +164,17 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         setStartDate,
         endDate,
         setEndDate,
+        timeSplitMode,
+        setTimeSplitMode,
+        timeSplitWindowDays,
+        setTimeSplitWindowDays,
+        timeSplitMaxSegments,
+        setTimeSplitMaxSegments,
+        hasTaskTimeRange,
+        xDefaultWindowDays,
+        xDefaultMaxSegments,
+        weiboDefaultWindowDays,
+        weiboDefaultMaxSegments,
         finalKeyword,
         xSplitNotice,
         canSubmit: Boolean(finalKeyword),

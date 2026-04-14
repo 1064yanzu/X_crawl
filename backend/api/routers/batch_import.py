@@ -27,6 +27,9 @@ class ImportedTask(BaseModel):
     crawl_strategy: Literal["bfs", "dfs"] = "dfs"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    time_split_mode: Literal["inherit", "on", "off"] = "inherit"
+    time_split_window_days: Optional[int] = None
+    time_split_max_segments: Optional[int] = None
 
 
 class ParseResult(BaseModel):
@@ -58,6 +61,13 @@ def _coerce_int(value: str, default: int = 0) -> int:
         return default
 
 
+def _coerce_time_split_mode(value: str) -> Literal["inherit", "on", "off"]:
+    text = str(value).strip().lower()
+    if text in {"inherit", "on", "off"}:
+        return text  # type: ignore[return-value]
+    return "inherit"
+
+
 # ── 文件解析逻辑 ─────────────────────────────────────────────
 
 
@@ -66,6 +76,9 @@ def _build_task_from_row(
     default_platform: str,
     default_product: str,
     default_fetch_replies: bool,
+    default_time_split_mode: str,
+    default_time_split_window_days: Optional[int],
+    default_time_split_max_segments: Optional[int],
 ) -> ImportedTask:
     """从一行列名→值映射构建 ImportedTask"""
     return ImportedTask(
@@ -82,6 +95,15 @@ def _build_task_from_row(
         crawl_strategy="dfs",
         start_date=row_map.get("start_date") or None,
         end_date=row_map.get("end_date") or None,
+        time_split_mode=_coerce_time_split_mode(row_map.get("time_split_mode", default_time_split_mode)),
+        time_split_window_days=_coerce_int(
+            row_map.get("time_split_window_days", str(default_time_split_window_days or "")).strip(),
+            default_time_split_window_days or 0,
+        ) or None,
+        time_split_max_segments=_coerce_int(
+            row_map.get("time_split_max_segments", str(default_time_split_max_segments or "")).strip(),
+            default_time_split_max_segments or 0,
+        ) or None,
     )
 
 
@@ -90,6 +112,9 @@ def _make_simple_task(
     default_platform: str,
     default_product: str,
     default_fetch_replies: bool,
+    default_time_split_mode: str,
+    default_time_split_window_days: Optional[int],
+    default_time_split_max_segments: Optional[int],
 ) -> ImportedTask:
     """仅有关键词时，使用全局默认参数创建任务"""
     return ImportedTask(
@@ -97,6 +122,9 @@ def _make_simple_task(
         product=_coerce_product(default_product),
         platform=_coerce_platform(default_platform),
         fetch_replies=default_fetch_replies,
+        time_split_mode=_coerce_time_split_mode(default_time_split_mode),
+        time_split_window_days=default_time_split_window_days,
+        time_split_max_segments=default_time_split_max_segments,
     )
 
 
@@ -105,6 +133,9 @@ def _parse_csv_bytes(
     default_platform: str,
     default_product: str,
     default_fetch_replies: bool,
+    default_time_split_mode: str,
+    default_time_split_window_days: Optional[int],
+    default_time_split_max_segments: Optional[int],
 ) -> ParseResult:
     """解析 CSV / TXT 字节数据"""
     text: str | None = None
@@ -145,6 +176,9 @@ def _parse_csv_bytes(
                     default_platform,
                     default_product,
                     default_fetch_replies,
+                    default_time_split_mode,
+                    default_time_split_window_days,
+                    default_time_split_max_segments,
                 )
             )
     else:
@@ -159,6 +193,9 @@ def _parse_csv_bytes(
                     default_platform,
                     default_product,
                     default_fetch_replies,
+                    default_time_split_mode,
+                    default_time_split_window_days,
+                    default_time_split_max_segments,
                 )
             )
 
@@ -170,6 +207,9 @@ def _parse_excel_bytes(
     default_platform: str,
     default_product: str,
     default_fetch_replies: bool,
+    default_time_split_mode: str,
+    default_time_split_window_days: Optional[int],
+    default_time_split_max_segments: Optional[int],
 ) -> ParseResult:
     """解析 Excel 字节数据"""
     try:
@@ -218,6 +258,9 @@ def _parse_excel_bytes(
                     default_platform,
                     default_product,
                     default_fetch_replies,
+                    default_time_split_mode,
+                    default_time_split_window_days,
+                    default_time_split_max_segments,
                 )
             )
     else:
@@ -233,6 +276,9 @@ def _parse_excel_bytes(
                     default_platform,
                     default_product,
                     default_fetch_replies,
+                    default_time_split_mode,
+                    default_time_split_window_days,
+                    default_time_split_max_segments,
                 )
             )
 
@@ -256,7 +302,10 @@ def _parse_excel_bytes(
         "- `reply_depth`：评论深度 1-5（默认 2）\n"
         "- `max_replies_per_tweet`：每条推文最多评论数（默认 0=不限）\n"
         "- `start_date`：起始日期 YYYY-MM-DD（微博）\n"
-        "- `end_date`：结束日期 YYYY-MM-DD（微博）\n\n"
+        "- `end_date`：结束日期 YYYY-MM-DD（微博）\n"
+        "- `time_split_mode`：时间拆分策略 inherit/on/off（默认 inherit）\n"
+        "- `time_split_window_days`：时间拆分窗口天数\n"
+        "- `time_split_max_segments`：时间拆分最大分段数\n\n"
         "若无表头，则视每行第一列/字段为 keyword，其余参数使用全局默认值。"
     ),
 )
@@ -271,6 +320,15 @@ async def parse_import_file(
     default_fetch_replies: bool = Form(
         default=False, description="默认是否抓评论（文件中未指定时使用）"
     ),
+    default_time_split_mode: str = Form(
+        default="inherit", description="默认时间拆分策略（文件中未指定时使用）"
+    ),
+    default_time_split_window_days: Optional[int] = Form(
+        default=None, description="默认时间拆分窗口天数（文件中未指定时使用）"
+    ),
+    default_time_split_max_segments: Optional[int] = Form(
+        default=None, description="默认时间拆分最大分段数（文件中未指定时使用）"
+    ),
 ) -> ParseResult:
     if not file.filename:
         raise HTTPException(status_code=400, detail="未上传文件")
@@ -283,11 +341,23 @@ async def parse_import_file(
 
     if filename_lower.endswith((".csv", ".txt")):
         return _parse_csv_bytes(
-            data, default_platform, default_product, default_fetch_replies
+            data,
+            default_platform,
+            default_product,
+            default_fetch_replies,
+            default_time_split_mode,
+            default_time_split_window_days,
+            default_time_split_max_segments,
         )
     elif filename_lower.endswith((".xlsx", ".xls")):
         return _parse_excel_bytes(
-            data, default_platform, default_product, default_fetch_replies
+            data,
+            default_platform,
+            default_product,
+            default_fetch_replies,
+            default_time_split_mode,
+            default_time_split_window_days,
+            default_time_split_max_segments,
         )
     else:
         raise HTTPException(

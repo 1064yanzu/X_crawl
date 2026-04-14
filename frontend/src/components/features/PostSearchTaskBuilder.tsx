@@ -11,6 +11,7 @@ import { type AdvancedSearchParams } from "@/lib/advanced-search";
 import { cn } from "@/lib/utils";
 import { BuilderPanelSkeleton, PlatformButton, SectionTitle } from "@/components/features/task-builder/TaskBuilderSection";
 import { TaskQueuePanel } from "@/components/features/task-builder/TaskQueuePanel";
+import { TimeSplitControls } from "@/components/features/task-builder/TimeSplitControls";
 
 const AdvancedSearchPanel = dynamic(
     () => import("@/components/features/AdvancedSearchPanel").then((module) => ({ default: module.AdvancedSearchPanel })),
@@ -49,6 +50,17 @@ export function PostSearchTaskBuilder() {
         setStartDate,
         endDate,
         setEndDate,
+        timeSplitMode,
+        setTimeSplitMode,
+        timeSplitWindowDays,
+        setTimeSplitWindowDays,
+        timeSplitMaxSegments,
+        setTimeSplitMaxSegments,
+        hasTaskTimeRange,
+        xDefaultWindowDays,
+        xDefaultMaxSegments,
+        weiboDefaultWindowDays,
+        weiboDefaultMaxSegments,
         finalKeyword,
         xSplitNotice,
         canSubmit,
@@ -62,6 +74,7 @@ export function PostSearchTaskBuilder() {
         { label: "采集平台", value: platform === "x" ? "𝕏 Twitter" : "微博" },
         { label: "内容模式", value: selectedTab.label },
         { label: "评论抓取", value: fetchReplies ? `开启 · ${replyDepth} 层` : "关闭" },
+        { label: "时间拆分", value: !hasTaskTimeRange ? "无时间范围" : timeSplitMode === "on" ? `强制拆分 · ${timeSplitWindowDays} 天` : timeSplitMode === "off" ? "本次不拆分" : "跟随默认" },
     ];
     const {
         queueName,
@@ -175,6 +188,22 @@ export function PostSearchTaskBuilder() {
                         ) : null}
                     </section>
                 ) : null}
+
+                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+                    <SectionTitle title="时间拆分" description="把拆分策略放到任务层，由你决定本次任务是否切段、怎么切。" />
+                    <TimeSplitControls
+                        platform={platform}
+                        hasTimeRange={hasTaskTimeRange}
+                        mode={timeSplitMode}
+                        windowDays={timeSplitWindowDays}
+                        maxSegments={timeSplitMaxSegments}
+                        onModeChange={setTimeSplitMode}
+                        onWindowDaysChange={setTimeSplitWindowDays}
+                        onMaxSegmentsChange={setTimeSplitMaxSegments}
+                        defaultWindowDays={platform === "weibo" ? weiboDefaultWindowDays : xDefaultWindowDays}
+                        defaultMaxSegments={platform === "weibo" ? weiboDefaultMaxSegments : xDefaultMaxSegments}
+                    />
+                </section>
 
                 <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
                     <SectionTitle title="评论与扩展抓取" description="默认关闭，只有确实需要评论层级时再开启。" />

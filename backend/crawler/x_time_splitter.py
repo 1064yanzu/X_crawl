@@ -80,7 +80,11 @@ def build_time_split_plan(
     if span_days < max(1, trigger_days):
         return TimeSplitPlan(False, base_query, since, until, 0, ())
 
-    configured_window = max(1, int(unlimited_window_days))
+    configured_window = (
+        max(1, int(window_days))
+        if force_window
+        else max(1, int(unlimited_window_days))
+    )
     resolved_window = _resolve_window_days(span_days=span_days, configured_window=configured_window)
     resolved_max_segments = _resolve_max_segments(
         span_days=span_days,

@@ -10,12 +10,13 @@ export function TaskSegmentProgress({ task }: { task: TaskOut }) {
 
     const completed = Math.max(0, Math.min(progress.completed_segments, progress.total_segments));
     const pct = Math.min(100, Math.round((completed / progress.total_segments) * 100));
+    const platformLabel = task.platform === "weibo" ? "微博" : "X";
 
     return (
         <div className="rounded-xl border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                 <SplitSquareVertical className="h-4 w-4 text-primary" />
-                X 时间分段进度
+                {platformLabel} 时间分段进度
             </div>
             <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
