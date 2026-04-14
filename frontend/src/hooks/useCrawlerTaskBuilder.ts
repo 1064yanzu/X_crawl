@@ -114,15 +114,9 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
         setKeyword("");
         setAdvancedParams(DEFAULT_ADVANCED_PARAMS);
         setAdvancedOpen(false);
-        setFetchReplies(false);
-        setReplyDepth(2);
-        setProduct(productDefault);
-        setStartDate("");
-        setEndDate("");
-        setTimeSplitMode("inherit");
-        setTimeSplitWindowDays(platform === "weibo" ? weiboDefaultWindowDays : xDefaultWindowDays);
-        setTimeSplitMaxSegments(platform === "weibo" ? weiboDefaultMaxSegments : xDefaultMaxSegments);
-    }, [platform, productDefault, weiboDefaultMaxSegments, weiboDefaultWindowDays, xDefaultMaxSegments, xDefaultWindowDays]);
+        // 保留 platform、product、fetchReplies、replyDepth、日期范围、时间拆分等参数
+        // 方便用户批量添加队列任务时只需更换关键词
+    }, []);
 
     const submit = React.useCallback(async () => {
         setLoading(true);

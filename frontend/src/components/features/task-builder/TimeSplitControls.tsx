@@ -64,7 +64,7 @@ export function TimeSplitControls({
                             disabled={!hasTimeRange}
                             onClick={() => onModeChange(option.value)}
                             className={cn(
-                                "rounded-2xl border px-4 py-4 text-left transition-all duration-200",
+                                "flex h-full w-full flex-col items-start justify-start rounded-2xl border px-4 py-4 text-left transition-all duration-200",
                                 active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
                                 !hasTimeRange && "cursor-not-allowed opacity-55 hover:border-border/70 hover:bg-card",
                             )}

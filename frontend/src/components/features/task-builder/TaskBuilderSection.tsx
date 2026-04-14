@@ -27,7 +27,7 @@ export function PlatformButton({
             type="button"
             onClick={onClick}
             className={cn(
-                "min-w-[210px] rounded-2xl border px-4 py-3 text-left transition-all duration-200",
+                "min-w-[210px] w-full sm:w-auto flex flex-col items-start justify-start rounded-2xl border px-4 py-3 text-left transition-all duration-200",
                 active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
             )}
         >

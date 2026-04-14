@@ -146,7 +146,7 @@ export function PostSearchTaskBuilder() {
 
                 <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
                     <SectionTitle title="内容策略" description="选择最贴近业务目标的结果排序与内容类型。" />
-                    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-3 grid-cols-2 2xl:grid-cols-4">
                         {PRODUCT_TABS.map(({ value, label, desc, icon: Icon }) => {
                             const active = product === value;
                             return (
@@ -155,7 +155,7 @@ export function PostSearchTaskBuilder() {
                                     type="button"
                                     onClick={() => setProduct(value as ProductType)}
                                     className={cn(
-                                        "rounded-2xl border px-4 py-4 text-left transition-all duration-200",
+                                        "flex h-full w-full flex-col items-start justify-start rounded-2xl border px-4 py-4 text-left transition-all duration-200",
                                         active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
                                     )}
                                 >
@@ -225,7 +225,7 @@ export function PostSearchTaskBuilder() {
                                 aria-pressed={fetchReplies}
                                 onClick={() => setFetchReplies((value) => !value)}
                                 className={cn(
-                                    "inline-flex h-11 items-center rounded-full border px-4 text-sm font-medium transition-all",
+                                    "inline-flex h-11 shrink-0 whitespace-nowrap items-center rounded-full border px-4 text-sm font-medium transition-all",
                                     fetchReplies ? "border-primary/20 bg-primary text-primary-foreground" : "border-border/70 bg-background text-muted-foreground hover:text-foreground",
                                 )}
                             >

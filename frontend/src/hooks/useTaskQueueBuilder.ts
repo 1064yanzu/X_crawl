@@ -56,7 +56,7 @@ export function useTaskQueueBuilder({
             };
             setDrafts((prev) => [...prev, draft]);
             resetDraft();
-            push({ type: "success", title: "已加入任务队列", description: `当前已累计 ${drafts.length + 1} 个任务草稿。` });
+            push({ type: "success", title: "已加入任务队列", description: `累计 ${drafts.length + 1} 个草稿。其他参数已保留，直接输入下一个关键词即可。` });
             return true;
         } catch (error) {
             push({
