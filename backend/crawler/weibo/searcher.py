@@ -19,6 +19,7 @@ from typing import Optional
 from urllib.parse import parse_qs, quote, urlparse
 
 from api.services.time_split_policy import resolve_task_time_split
+from json_utils import normalize_json_value
 
 from .checkpoints import (
     build_date_split_checkpoint,
@@ -771,9 +772,10 @@ def search(
             from api.services.reply_tree import count_reply_tree_nodes
 
             def _on_comment_done(mid: str, comments: list) -> None:
+                normalized_comments = normalize_json_value(comments)
                 if task_id:
-                    update_task_reply_snapshot(task_id, mid, comments)
-                    reply_total = count_reply_tree_nodes(comments)
+                    update_task_reply_snapshot(task_id, mid, normalized_comments)
+                    reply_total = count_reply_tree_nodes(normalized_comments)
                     if reply_total > 0:
                         _telemetry.record_event(
                             task_id,

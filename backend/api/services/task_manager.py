@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from api.schemas.task import RiskState, TaskStatus
+from json_utils import normalize_json_value
 
 logger = logging.getLogger(__name__)
 
@@ -1264,12 +1265,17 @@ def update_task_reply_snapshot(
     if not normalized_tweet_id:
         return False
 
+    normalized_replies = normalize_json_value(replies)
+    if not isinstance(normalized_replies, list):
+        logger.warning("update_task_reply_snapshot 收到非列表 replies，已回退为空列表: task_id=%s", task_id)
+        normalized_replies = []
+
     tweets_ref = _get_task_result_ref(task_id, load=True)
     if not tweets_ref:
         return False
 
     old_count = 0
-    new_count = count_reply_tree_nodes(replies)
+    new_count = count_reply_tree_nodes(normalized_replies)
     updated = False
 
     for tweet in tweets_ref:
@@ -1278,9 +1284,9 @@ def update_task_reply_snapshot(
         if _normalize_task_post_id(tweet) != normalized_tweet_id:
             continue
         old_count = count_reply_tree_nodes(tweet.get("replies"))
-        tweet["replies"] = replies
+        tweet["replies"] = normalized_replies
         if comment_stats is not None:
-            tweet["comment_stats"] = comment_stats
+            tweet["comment_stats"] = normalize_json_value(comment_stats)
         updated = True
         break
 

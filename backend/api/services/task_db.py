@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from json_utils import dump_json
+
 logger = logging.getLogger(__name__)
 
 _DB_PATH: Path | None = None
@@ -256,7 +258,7 @@ def _summary_params(task: dict) -> dict:
             ensure_ascii=False,
         ),
         "segment_progress_json": json.dumps(task.get("segment_progress", {}), ensure_ascii=False),
-        "preview_json": json.dumps(task.get("preview_tweets", []), ensure_ascii=False),
+        "preview_json": dump_json(task.get("preview_tweets", []), ensure_ascii=False),
         "platform": task.get("platform", "x"),
         "start_date": task.get("start_date"),
         "end_date": task.get("end_date"),
@@ -390,7 +392,7 @@ def save_task_result(
                 tweets_json = excluded.tweets_json,
                 updated_at = excluded.updated_at
             """,
-            (task_id, json.dumps(tweets, ensure_ascii=False), _now_iso()),
+            (task_id, dump_json(tweets, ensure_ascii=False), _now_iso()),
         )
         if owns_conn:
             conn.commit()

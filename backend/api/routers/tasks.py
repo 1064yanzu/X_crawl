@@ -29,6 +29,7 @@ from api.schemas.task import (
 from api.services import task_manager, crawl_service, task_queue_manager
 from api.services import merge_service, task_reply_collection_service
 from config import settings
+from json_utils import dump_json
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["任务管理"])
 
@@ -112,7 +113,7 @@ async def stream_task(task_id: str, request: Request):
 
             now = time.monotonic()
             if now - last_snapshot_sent >= interval_ms / 1000.0:
-                payload = json.dumps(_stream_snapshot(task), ensure_ascii=False)
+                payload = dump_json(_stream_snapshot(task), ensure_ascii=False)
                 yield f"event: snapshot\ndata: {payload}\n\n"
                 last_snapshot_sent = now
 

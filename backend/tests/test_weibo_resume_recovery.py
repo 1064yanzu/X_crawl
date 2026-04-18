@@ -120,3 +120,33 @@ def test_run_weibo_task_forwards_resume_flag(monkeypatch):
     )
 
     assert captured["resume"] is False
+
+
+def test_weibo_checkpoint_save_normalizes_weibo_comment_objects(monkeypatch, tmp_path):
+    from crawler.weibo import checkpoints
+    from crawler.weibo.models import WeiboComment
+
+    task_id = "checkpoint-json-task"
+    reply = WeiboComment(
+        id="reply-1",
+        text="checkpoint-reply",
+        author_name="checkpoint-user",
+        author_id="user-1",
+        created_at="2026-03-10T03:00:00+00:00",
+    )
+
+    monkeypatch.setattr(checkpoints, "CHECKPOINTS_DIR", tmp_path)
+    checkpoints.save_checkpoint(
+        task_id,
+        {
+            "mode": "page",
+            "page": 2,
+            "keyword": "陈梦",
+            "posts": [{"id": "mid-1", "replies": [reply]}],
+            "start_date": "2024-08-01",
+            "end_date": "2024-08-07",
+        },
+    )
+
+    loaded = checkpoints.load_checkpoint(task_id)
+    assert loaded["posts"][0]["replies"][0]["id"] == "reply-1"

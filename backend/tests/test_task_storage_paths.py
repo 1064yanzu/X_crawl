@@ -213,6 +213,61 @@ def test_task_manager_set_task_seed_tweets_persists_full_result(task_manager_mod
     assert full["tweets"] == tweets
 
 
+def test_task_manager_reply_snapshot_normalizes_weibo_comment_objects(task_manager_module):
+    from api.services import task_db
+    from crawler.weibo.models import WeiboComment
+
+    manager = task_manager_module
+    task_id = manager.create_task("微博评论归一化", 1, "Top")
+    manager.set_task_seed_tweets(
+        task_id,
+        [
+            {
+                "id": "1001",
+                "mid": "1001",
+                "text": "seed",
+                "created_at": "2026-03-10T00:00:00+00:00",
+                "replies": [],
+            }
+        ],
+        current_page=0,
+    )
+
+    nested = WeiboComment(
+        id="r1-1",
+        text="nested",
+        author_name="nested-user",
+        author_id="u-2",
+        created_at="2026-03-10T01:05:00+00:00",
+    )
+    reply = WeiboComment(
+        id="r1",
+        text="root",
+        author_name="root-user",
+        author_id="u-1",
+        created_at="2026-03-10T01:00:00+00:00",
+        sub_comments=[nested],
+        sub_comments_count=1,
+    )
+
+    assert manager.update_task_reply_snapshot(task_id, "1001", [reply]) is True
+
+    summary = manager.get_task_summary(task_id)
+    full = manager.get_task_full(task_id)
+    manager._persist_force(task_id, full=True)
+    persisted = task_db.load_task_result(task_id)
+
+    summary_replies = summary["preview_tweets"][0]["replies"]
+    full_replies = full["tweets"][0]["replies"]
+    persisted_replies = persisted[0]["replies"]
+
+    for replies in (summary_replies, full_replies, persisted_replies):
+        assert replies[0]["id"] == "r1"
+        assert replies[0]["replies"][0]["id"] == "r1-1"
+
+    assert summary["replies_fetched"] == 2
+
+
 def test_task_manager_can_rebuild_recrawl_exclude_ids_from_source_task(task_manager_module):
     manager = task_manager_module
     source_task_id = manager.create_task("source", 100, "Top")
@@ -241,6 +296,37 @@ def test_task_manager_can_rebuild_recrawl_exclude_ids_from_source_task(task_mana
     assert summary is not None
     assert summary["is_recrawl"] is True
     assert summary["exclude_count"] == 3
+
+
+def test_task_db_save_task_normalizes_weibo_comment_objects(task_db_module):
+    from crawler.weibo.models import WeiboComment
+
+    task_db, _db_path = task_db_module
+    task = _base_task("weibo-comment-task")
+    reply = WeiboComment(
+        id="r-db",
+        text="db-reply",
+        author_name="db-user",
+        author_id="u-db",
+        created_at="2026-03-10T02:00:00+00:00",
+    )
+    task["preview_tweets"] = [{"id": "p1", "replies": [reply]}]
+    task["tweets"] = [
+        {
+            "id": "1",
+            "text": "first",
+            "created_at": "2026-03-09T00:00:00+00:00",
+            "replies": [reply],
+        }
+    ]
+
+    task_db.save_task(task)
+
+    summaries = task_db.load_all_tasks()
+    persisted = task_db.load_task_result(task["task_id"])
+
+    assert summaries[0]["preview_tweets"][0]["replies"][0]["id"] == "r-db"
+    assert persisted[0]["replies"][0]["id"] == "r-db"
 
 
 def test_search_route_uses_summary_path_for_lightweight_polling(monkeypatch):

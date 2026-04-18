@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from json_utils import dump_json
+
 
 CHECKPOINTS_DIR = Path(__file__).parent.parent.parent / "checkpoints"
 
@@ -30,7 +32,7 @@ def save_checkpoint(task_id: Optional[str], state: dict) -> None:
 
     CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
     path = CHECKPOINTS_DIR / f"weibo_{task_id}.json"
-    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    path.write_text(dump_json(state, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def build_page_checkpoint(
