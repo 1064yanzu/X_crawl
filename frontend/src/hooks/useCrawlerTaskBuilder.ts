@@ -2,11 +2,13 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { api, type CrawlStrategy, type Platform, type SearchRequest, type TimeSplitMode } from "@/services/api";
+import { api, type CrawlStrategy, type SearchRequest, type TimeSplitMode } from "@/services/api";
 import { useToast } from "@/components/ui/toast";
 import { buildAdvancedQuery, DEFAULT_ADVANCED_PARAMS, type AdvancedSearchParams } from "@/lib/advanced-search";
 
 const STRATEGY: CrawlStrategy = "dfs";
+
+type Platform = "x" | "weibo";
 
 export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos" | "Videos" = "Top") {
     const router = useRouter();
@@ -108,7 +110,19 @@ export function useCrawlerTaskBuilder(productDefault: "Top" | "Latest" | "Photos
             time_split_window_days: hasTaskTimeRange && timeSplitMode === "on" ? timeSplitWindowDays : undefined,
             time_split_max_segments: hasTaskTimeRange && timeSplitMode === "on" ? timeSplitMaxSegments : undefined,
         };
-    }, [endDate, fetchReplies, finalKeyword, hasTaskTimeRange, platform, product, replyDepth, startDate, timeSplitMaxSegments, timeSplitMode, timeSplitWindowDays]);
+    }, [
+        endDate,
+        fetchReplies,
+        finalKeyword,
+        hasTaskTimeRange,
+        platform,
+        product,
+        replyDepth,
+        startDate,
+        timeSplitMaxSegments,
+        timeSplitMode,
+        timeSplitWindowDays,
+    ]);
 
     const resetDraft = React.useCallback(() => {
         setKeyword("");

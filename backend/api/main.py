@@ -29,6 +29,7 @@ from api.routers import batch_import as batch_import_router
 from api.routers import concurrent_search as concurrent_search_router
 from api.routers import browser_pool as browser_pool_router
 from api.routers import analytics as analytics_router
+from api.routers import youtube_api_keys as youtube_api_keys_router
 from crawler.browser import close_browser, maybe_cleanup_stale_linux_browsers
 from crawler.browser_detector import detect_all
 from crawler.log_config import setup_logging
@@ -138,6 +139,7 @@ app.include_router(batch_import_router.router)
 app.include_router(concurrent_search_router.router)
 app.include_router(browser_pool_router.router)
 app.include_router(analytics_router.router)
+app.include_router(youtube_api_keys_router.router)
 
 
 @app.exception_handler(Exception)

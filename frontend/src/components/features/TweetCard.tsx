@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { VerifiedBadge } from "./VerifiedBadge";
+import { YouTubeVideoCard } from "./YouTubeVideoCard";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyRecord = Record<string, any>;
@@ -203,6 +204,10 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
     React.useEffect(() => {
         setShowFullText(!compact);
     }, [compact, tweet.id]);
+
+    if (tweet?.platform === "youtube" && !isReply) {
+        return <YouTubeVideoCard tweet={tweet} compact={compact} />;
+    }
 
     return (
         <div className={cn(

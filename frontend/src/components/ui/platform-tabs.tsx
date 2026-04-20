@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Twitter, Globe, Bot, Rss } from "lucide-react";
+import { Twitter, Globe, Bot, Rss, Youtube } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { PlatformMeta } from "@/lib/platformRegistry";
 
@@ -11,6 +11,7 @@ const ICON_MAP: Record<string, React.ElementType> = {
     globe: Globe,
     bot: Bot,
     rss: Rss,
+    youtube: Youtube,
 };
 
 interface PlatformTabsProps {

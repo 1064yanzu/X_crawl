@@ -324,6 +324,36 @@ class Settings(BaseSettings):
         default=600, description="X 时间分段安全上限（超出时显式报错）"
     )
 
+    # ─── YouTube 默认参数 ───────────────────────────────────────────────────
+    youtube_default_region: str = Field(
+        default="",
+        description="YouTube 搜索默认地区代码（ISO 3166-1，如 US / CN；留空表示不限制）",
+    )
+    youtube_default_language: str = Field(
+        default="",
+        description="YouTube 搜索默认相关语言（BCP-47 代码，如 en / zh；留空表示不限制）",
+    )
+    youtube_default_order: str = Field(
+        default="relevance",
+        description="YouTube 搜索默认排序：date/rating/relevance/title/viewCount",
+    )
+    youtube_max_videos_per_task: int = Field(
+        default=500,
+        description="单个 YouTube 任务最多抓取的视频数量安全上限",
+    )
+    youtube_comment_page_size: int = Field(
+        default=100,
+        description="YouTube commentThreads.list 分页尺寸（官方上限 100）",
+    )
+    youtube_request_timeout: float = Field(
+        default=20.0,
+        description="YouTube HTTP API 单次请求超时（秒）",
+    )
+    youtube_daily_quota_per_key: int = Field(
+        default=10000,
+        description="YouTube 每个 API Key 的默认每日配额（单位）",
+    )
+
 
 
     # ─── 并发爬取配置 ──────────────────────────────────────────────────────────

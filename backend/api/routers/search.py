@@ -25,6 +25,10 @@ router = APIRouter(prefix="/api/v1/search", tags=["搜索"])
 async def create_search_task(
     req: SearchRequest,
 ) -> TaskOut:
+    youtube_payload = None
+    if req.platform == "youtube" and req.youtube is not None:
+        youtube_payload = req.youtube.model_dump()
+
     task_id = task_manager.create_task(
         keyword=req.keyword,
         product=req.product,
@@ -39,6 +43,7 @@ async def create_search_task(
         time_split_mode=req.time_split_mode,
         time_split_window_days=req.time_split_window_days,
         time_split_max_segments=req.time_split_max_segments,
+        youtube=youtube_payload,
     )
     task_data = task_manager.get_task_summary(task_id)
     if not task_data:

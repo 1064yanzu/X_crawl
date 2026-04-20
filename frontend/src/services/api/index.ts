@@ -1,12 +1,83 @@
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "/xapi").replace(/\/$/, "");
 
 export type TaskStatus = "pending" | "running" | "done" | "failed" | "paused" | "stopped";
-export type Platform = "x" | "weibo";
+export type Platform = "x" | "weibo" | "youtube";
 export type CrawlStrategy = "bfs" | "dfs";
 export type TaskKind = "search" | "comment_backfill" | "comment_backfill_group";
 export type RiskState = "none" | "challenge" | "rate_limited" | "login_required" | "search_blocked";
 export type QualityState = "complete" | "partial" | "interrupted";
 export type TimeSplitMode = "inherit" | "on" | "off";
+
+// ── YouTube 专属类型 ─────────────────────────────────────────────────────
+export type YouTubeSource = "keyword" | "channel" | "video_urls";
+export type YouTubeOrder = "date" | "rating" | "relevance" | "title" | "viewCount";
+export type YouTubeVideoDuration = "any" | "short" | "medium" | "long";
+export type YouTubeVideoDefinition = "any" | "high" | "standard";
+export type YouTubeType = "video" | "channel" | "playlist";
+
+export interface YouTubeSearchParams {
+    source: YouTubeSource;
+    channel_input?: string | null;
+    /** 视频链接批量采集（source=video_urls）时的输入列表。支持 URL 或纯 11 位 video ID。 */
+    video_urls?: string[] | null;
+    type?: YouTubeType;
+    order?: YouTubeOrder;
+    region_code?: string | null;
+    relevance_language?: string | null;
+    video_duration?: YouTubeVideoDuration;
+    video_definition?: YouTubeVideoDefinition;
+    max_videos?: number;
+}
+
+export interface YouTubeApiKey {
+    key_id: string;
+    alias: string;
+    api_key_masked: string;
+    enabled: boolean;
+    daily_quota_limit: number;
+    quota_used_today: number;
+    quota_remaining: number;
+    quota_reset_at: string | null;
+    status: "active" | "exhausted" | "invalid" | string;
+    last_used_at: string | null;
+    last_validated_at: string | null;
+    fail_count: number;
+    last_error: string | null;
+    created_at: string | null;
+    updated_at: string | null;
+}
+
+export interface YouTubeQuotaSummary {
+    total_keys: number;
+    active_keys: number;
+    exhausted_keys: number;
+    invalid_keys: number;
+    total_daily_limit: number;
+    total_used_today: number;
+    total_remaining_today: number;
+    earliest_reset_at: string | null;
+    keys: YouTubeApiKey[];
+}
+
+export interface YouTubeAddKeyRequest {
+    alias: string;
+    api_key: string;
+    enabled?: boolean;
+}
+
+export interface YouTubeUpdateKeyRequest {
+    alias?: string;
+    enabled?: boolean;
+    daily_quota_limit?: number;
+}
+
+export interface YouTubeValidateResponse {
+    key_id: string;
+    ok: boolean;
+    status: number;
+    reason: string | null;
+    message: string;
+}
 
 export interface SegmentProgress {
     enabled: boolean;
@@ -71,6 +142,7 @@ export interface TaskOut {
     time_split_window_days?: number | null;
     time_split_max_segments?: number | null;
     debug_screenshot?: string | null;
+    youtube?: YouTubeSearchParams | null;
 }
 
 export interface CheckpointInfo {
@@ -99,6 +171,7 @@ export interface SearchRequest {
     time_split_mode?: TimeSplitMode;
     time_split_window_days?: number;
     time_split_max_segments?: number;
+    youtube?: YouTubeSearchParams | null;
 }
 
 export interface TaskQueueItemRequest {
@@ -1129,6 +1202,28 @@ export const api = {
             fetchApi<LiveRatesResponse>("/api/v1/analytics/live-rates"),
         crawlVolume: (hoursBack = 24) =>
             fetchApi<CrawlVolumeResponse>(`/api/v1/analytics/crawl-volume?hours_back=${hoursBack}`),
+    },
+    youtubeApiKeys: {
+        list: () => fetchApi<YouTubeApiKey[]>("/api/v1/youtube-api-keys"),
+        quota: () => fetchApi<YouTubeQuotaSummary>("/api/v1/youtube-api-keys/quota"),
+        add: (req: YouTubeAddKeyRequest) =>
+            fetchApi<YouTubeApiKey>("/api/v1/youtube-api-keys", {
+                method: "POST",
+                body: JSON.stringify(req),
+            }),
+        update: (keyId: string, req: YouTubeUpdateKeyRequest) =>
+            fetchApi<YouTubeApiKey>(`/api/v1/youtube-api-keys/${keyId}`, {
+                method: "PUT",
+                body: JSON.stringify(req),
+            }),
+        delete: (keyId: string) =>
+            fetchApi<{ message: string; key_id: string }>(`/api/v1/youtube-api-keys/${keyId}`, {
+                method: "DELETE",
+            }),
+        validate: (keyId: string) =>
+            fetchApi<YouTubeValidateResponse>(`/api/v1/youtube-api-keys/${keyId}/validate`, {
+                method: "POST",
+            }),
     },
 };
 

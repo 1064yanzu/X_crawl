@@ -205,6 +205,7 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "comment_backfill_progress_json", "TEXT DEFAULT '{}'")
         _ensure_column(conn, "tasks", "source_task_ids_json", "TEXT DEFAULT '[]'")
         _ensure_column(conn, "tasks", "concurrency", "INTEGER DEFAULT 1")
+        _ensure_column(conn, "tasks", "youtube_params_json", "TEXT")
 
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
@@ -219,6 +220,12 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str) 
 
 
 def _summary_params(task: dict) -> dict:
+    youtube_params = task.get("youtube")
+    youtube_json = (
+        json.dumps(youtube_params, ensure_ascii=False)
+        if isinstance(youtube_params, dict)
+        else None
+    )
     return {
         "task_id": task["task_id"],
         "status": task["status"],
@@ -265,6 +272,7 @@ def _summary_params(task: dict) -> dict:
         "time_split_mode": task.get("time_split_mode", "inherit"),
         "time_split_window_days": task.get("time_split_window_days"),
         "time_split_max_segments": task.get("time_split_max_segments"),
+        "youtube_params_json": youtube_json,
     }
 
 
@@ -282,7 +290,8 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             queue_order, queue_total, comment_backfill_progress_json,
             segment_progress_json, preview_json,
             platform, start_date, end_date,
-            time_split_mode, time_split_window_days, time_split_max_segments
+            time_split_mode, time_split_window_days, time_split_max_segments,
+            youtube_params_json
         ) VALUES (
             :task_id, :status, :keyword, :product, :max_count,
             :result_count, :current_page, :created_at, :finished_at,
@@ -293,7 +302,8 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             :queue_order, :queue_total, :comment_backfill_progress_json,
             :segment_progress_json, :preview_json,
             :platform, :start_date, :end_date,
-            :time_split_mode, :time_split_window_days, :time_split_max_segments
+            :time_split_mode, :time_split_window_days, :time_split_max_segments,
+            :youtube_params_json
         )
         ON CONFLICT(task_id) DO UPDATE SET
             status = excluded.status,
@@ -336,7 +346,8 @@ def _upsert_task_summary(conn: sqlite3.Connection, task: dict) -> None:
             end_date = excluded.end_date,
             time_split_mode = excluded.time_split_mode,
             time_split_window_days = excluded.time_split_window_days,
-            time_split_max_segments = excluded.time_split_max_segments
+            time_split_max_segments = excluded.time_split_max_segments,
+            youtube_params_json = excluded.youtube_params_json
         """,
         params,
     )
@@ -497,7 +508,8 @@ def load_all_tasks() -> list[dict]:
                     task_kind, source_file_name, source_task_id, source_task_ids_json, concurrency, is_recrawl, exclude_count, queue_id, queue_name,
                     queue_order, queue_total, comment_backfill_progress_json, segment_progress_json,
                     preview_json, platform, start_date, end_date,
-                    time_split_mode, time_split_window_days, time_split_max_segments
+                    time_split_mode, time_split_window_days, time_split_max_segments,
+                    youtube_params_json
                 FROM tasks
                 ORDER BY created_at DESC
                 """
@@ -532,6 +544,14 @@ def load_all_tasks() -> list[dict]:
             d.setdefault("time_split_mode", "inherit")
             d.setdefault("time_split_window_days", None)
             d.setdefault("time_split_max_segments", None)
+            youtube_raw = d.pop("youtube_params_json", None)
+            if youtube_raw:
+                try:
+                    d["youtube"] = json.loads(youtube_raw)
+                except (TypeError, json.JSONDecodeError):
+                    d["youtube"] = None
+            else:
+                d["youtube"] = None
             tasks.append(d)
         logger.info(f"已从数据库加载 {len(tasks)} 条历史任务摘要")
         return tasks

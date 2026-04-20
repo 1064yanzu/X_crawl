@@ -12,6 +12,38 @@ TaskKind = Literal["search", "comment_backfill", "comment_backfill_group"]
 TimeSplitMode = Literal["inherit", "on", "off"]
 
 
+YouTubeSource = Literal["keyword", "channel", "video_urls"]
+YouTubeOrder = Literal["date", "rating", "relevance", "title", "viewCount"]
+YouTubeVideoDuration = Literal["any", "short", "medium", "long"]
+YouTubeVideoDefinition = Literal["any", "high", "standard"]
+YouTubeType = Literal["video", "channel", "playlist"]
+
+
+class YouTubeSearchParams(BaseModel):
+    source: YouTubeSource = Field(default="keyword", description="采集来源：关键词搜索 / 频道视频列表 / 视频链接批量")
+    channel_input: Optional[str] = Field(
+        default=None,
+        description="频道采集时的标识：频道 URL、UC 开头的 ID、或 @handle",
+    )
+    video_urls: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "视频链接批量采集时的输入列表（source=video_urls 有效）。"
+            "支持 youtu.be / watch?v= / shorts/ / embed/ / m.youtube.com 等 URL 形态，也支持直接传 11 位 video ID。"
+            "后端会在入口处再次规范化并去重。"
+        ),
+    )
+    type: YouTubeType = Field(default="video", description="搜索资源类型（仅 source=keyword 有效）")
+    order: YouTubeOrder = Field(default="relevance", description="搜索排序")
+    region_code: Optional[str] = Field(default=None, description="ISO 3166-1 国家代码，如 US / CN")
+    relevance_language: Optional[str] = Field(
+        default=None, description="相关性语言 BCP-47 代码，如 zh / en"
+    )
+    video_duration: YouTubeVideoDuration = Field(default="any", description="视频时长筛选")
+    video_definition: YouTubeVideoDefinition = Field(default="any", description="视频清晰度筛选")
+    max_videos: int = Field(default=50, ge=0, le=500, description="本次任务最多抓取的视频数量；video_urls 模式下传 0 表示按传入列表全量抓取")
+
+
 class SearchRequest(BaseModel):
     keyword: str = Field(description="搜索关键词", min_length=1, max_length=200)
     product: Literal["Top", "Latest", "Photos", "Videos"] = Field(default="Latest")
@@ -35,12 +67,16 @@ class SearchRequest(BaseModel):
             "- dfs（深度优先）：每爬到一条推文，立即抓取其回复，再继续翻页"
         )
     )
-    platform: Literal["x", "weibo"] = Field(default="x", description="爬虫平台：x 或 weibo")
-    start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
-    end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
+    platform: Literal["x", "weibo", "youtube"] = Field(default="x", description="爬虫平台：x / weibo / youtube")
+    start_date: Optional[str] = Field(default=None, description="时间范围起始 YYYY-MM-DD（微博/YouTube）")
+    end_date: Optional[str] = Field(default=None, description="时间范围结束 YYYY-MM-DD（微博/YouTube）")
     time_split_mode: TimeSplitMode = Field(default="inherit", description="时间拆分策略：inherit/on/off")
     time_split_window_days: Optional[int] = Field(default=None, ge=1, le=365, description="任务级时间拆分窗口天数")
     time_split_max_segments: Optional[int] = Field(default=None, ge=1, le=2000, description="任务级时间拆分最大分段数")
+    youtube: Optional[YouTubeSearchParams] = Field(
+        default=None,
+        description="YouTube 专属参数（platform=youtube 时生效）",
+    )
 
 
 class CheckpointInfo(BaseModel):
@@ -117,13 +153,16 @@ class TaskOut(BaseModel):
     preview_tweets: list[dict] = Field(default_factory=list)
     # ── 爬虫实时阶段状态（空字符串代表尚未开始）──
     crawl_phase: str = Field(default="", description="爬虫当前阶段描述，如 '等待第 1 页数据'")
-    platform: Literal["x", "weibo"] = Field(default="x", description="爬虫平台：x 或 weibo")
-    start_date: Optional[str] = Field(default=None, description="微博时间范围起始 YYYY-MM-DD")
-    end_date: Optional[str] = Field(default=None, description="微博时间范围结束 YYYY-MM-DD")
+    platform: Literal["x", "weibo", "youtube"] = Field(default="x", description="爬虫平台：x / weibo / youtube")
+    start_date: Optional[str] = Field(default=None, description="时间范围起始 YYYY-MM-DD")
+    end_date: Optional[str] = Field(default=None, description="时间范围结束 YYYY-MM-DD")
     time_split_mode: TimeSplitMode = Field(default="inherit", description="时间拆分策略：inherit/on/off")
     time_split_window_days: Optional[int] = Field(default=None, description="任务级时间拆分窗口天数")
     time_split_max_segments: Optional[int] = Field(default=None, description="任务级时间拆分最大分段数")
     debug_screenshot: Optional[str] = Field(default=None, description="错误诊断截图 URL")
+    youtube: Optional[YouTubeSearchParams] = Field(
+        default=None, description="YouTube 专属参数（platform=youtube 时有值）"
+    )
 
 
 # ── 合并任务相关模型 ──

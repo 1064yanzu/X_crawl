@@ -70,11 +70,21 @@ export function PostSearchTaskBuilder() {
     } = useCrawlerTaskBuilder();
 
     const selectedTab = PRODUCT_TABS.find((item) => item.value === product) ?? PRODUCT_TABS[0];
+    const platformLabel = platform === "x" ? "𝕏 Twitter" : "微博";
     const summaryRows = [
-        { label: "采集平台", value: platform === "x" ? "𝕏 Twitter" : "微博" },
+        { label: "采集平台", value: platformLabel },
         { label: "内容模式", value: selectedTab.label },
         { label: "评论抓取", value: fetchReplies ? `开启 · ${replyDepth} 层` : "关闭" },
-        { label: "时间拆分", value: !hasTaskTimeRange ? "无时间范围" : timeSplitMode === "on" ? `强制拆分 · ${timeSplitWindowDays} 天` : timeSplitMode === "off" ? "本次不拆分" : "跟随默认" },
+        {
+            label: "时间拆分",
+            value: !hasTaskTimeRange
+                ? "无时间范围"
+                : timeSplitMode === "on"
+                  ? `强制拆分 · ${timeSplitWindowDays} 天`
+                  : timeSplitMode === "off"
+                    ? "本次不拆分"
+                    : "跟随默认",
+        },
     ];
     const {
         queueName,
@@ -279,7 +289,7 @@ export function PostSearchTaskBuilder() {
                     canSubmit={canSubmit}
                     finalKeyword={finalKeyword}
                     selectedTabLabel={selectedTab.label}
-                    platformLabel={platform === "x" ? "X 平台" : "微博平台"}
+                    platformLabel={platformLabel}
                     fetchReplies={fetchReplies}
                     loading={loading}
                     onSubmit={() => void submit()}

@@ -27,6 +27,8 @@ router = APIRouter(prefix="/api/v1/export", tags=["数据导出"])
 
 def _format_verified_status(author: dict, platform: str) -> str:
     """将认证字段格式化为可读的认证状态字符串。"""
+    if platform == "youtube":
+        return ""
     if platform == "weibo":
         verified = author.get("verified", False)
         v_type = author.get("verified_type", "")
@@ -55,6 +57,8 @@ def _format_verified_status(author: dict, platform: str) -> str:
 
 def _format_verified_type(author: dict, platform: str) -> str:
     """将认证类型格式化为可读字符串。"""
+    if platform == "youtube":
+        return ""
     if platform == "weibo":
         v_type_num = author.get("verified_type_num", author.get("verified_type", -1))
         # 数字类型

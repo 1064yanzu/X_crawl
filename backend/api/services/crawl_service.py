@@ -69,6 +69,7 @@ def _build_worker_payload(
         source_task_ids=list(task.get("source_task_ids") or []),
         is_recrawl=bool(task.get("is_recrawl", False)),
         exclude_tweet_ids=task.get("exclude_tweet_ids") or [],
+        youtube_params=task.get("youtube") if isinstance(task.get("youtube"), dict) else None,
     )
 
 
@@ -137,6 +138,7 @@ def run_search_task(
     is_recrawl: bool = False,
     account_id: Optional[str] = None,
     exclude_tweet_ids: Optional[list[str]] = None,
+    youtube_params: Optional[dict] = None,
 ) -> None:
     final_status = "failed"
     task_manager.update_task_status(task_id, "running")
@@ -184,8 +186,15 @@ def run_search_task(
             task_full = task_manager.get_task_full(task_id)
             _group_concurrency = int((task_full or {}).get("concurrency") or 1)
 
+        # YouTube 走 HTTP API，不需要浏览器/账号池，跳过所有相关初始化。
+        _skip_browser_and_account = platform == "youtube"
+
         # 账号分配（可能抛出 LoginRequiredPause，必须在 try 内确保 finally 清理）
-        if platform == "x" and bool(getattr(settings, "account_pool_enabled", True)):
+        if (
+            not _skip_browser_and_account
+            and platform == "x"
+            and bool(getattr(settings, "account_pool_enabled", True))
+        ):
             dispatcher = get_dispatcher()
 
             # ── 并发任务组：分配多个账号 ──
@@ -247,7 +256,7 @@ def run_search_task(
                     reserved_account_id = None
                     logger.warning("任务 %s 当前没有可用 X 账号，将回退默认登录态", task_id[:8])
 
-        if _pool_mode:
+        if _pool_mode and not _skip_browser_and_account:
             pool_obj = get_browser_pool()
             _browser_instance, _slot_id = pool_obj.acquire(task_id, platform=platform)
 
@@ -296,13 +305,13 @@ def run_search_task(
                         purpose="nested_reply",
                     )
 
-        if not _pool_mode:
+        if not _pool_mode and not _skip_browser_and_account:
             if force_new_browser:
                 reset_browser()
             ensure_browser_alive()
 
         # 单账号模式下注入 Cookie
-        if reserved_account_id and not _multi_account_mode:
+        if reserved_account_id and not _multi_account_mode and not _skip_browser_and_account:
             _inject_account_cookies(
                 task_id, reserved_account_id, browser_instance=_browser_instance
             )
@@ -420,6 +429,19 @@ def run_search_task(
                 result.progress.get("failed_posts", 0),
             )
             final_status = "done"
+        elif platform == "youtube":
+            final_status = _run_youtube_task(
+                task_id=task_id,
+                keyword=keyword,
+                resume=resume,
+                fetch_replies=fetch_replies,
+                max_replies_per_tweet=max_replies_per_tweet,
+                reply_depth=reply_depth,
+                start_date=start_date,
+                end_date=end_date,
+                youtube_params=youtube_params,
+                exclude_ids=effective_exclude_tweet_ids,
+            )
         elif platform == "weibo":
             result = _run_weibo_task(
                 task_id=task_id,
@@ -735,6 +757,192 @@ def _run_weibo_task(
         exclude_ids=set(exclude_tweet_ids) if exclude_tweet_ids else None,
         seed_posts=seed_tweets,
     )
+
+
+def _run_youtube_task(
+    *,
+    task_id: str,
+    keyword: str,
+    resume: bool = True,
+    fetch_replies: bool = False,
+    max_replies_per_tweet: int = 0,
+    reply_depth: int = 1,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    youtube_params: Optional[dict] = None,
+    exclude_ids: Optional[list[str]] = None,
+) -> str:
+    """
+    执行 YouTube 任务。
+    返回最终状态字符串（done / paused / stopped / failed），由外层 finally 负责清理。
+    """
+    from crawler.crawl_signals import StopSignal
+    from crawler.utils import check_signal
+    from crawler.youtube import api_client, searcher
+
+    yt_params = dict(youtube_params or {})
+    source = str(yt_params.get("source") or "keyword").strip().lower()
+    if source not in ("keyword", "channel", "video_urls"):
+        source = "keyword"
+
+    max_videos = int(yt_params.get("max_videos") or 50)
+    order = str(yt_params.get("order") or "relevance")
+    region_code = yt_params.get("region_code") or None
+    relevance_language = yt_params.get("relevance_language") or None
+    video_duration = str(yt_params.get("video_duration") or "any")
+    video_definition = str(yt_params.get("video_definition") or "any")
+    type_filter = str(yt_params.get("type") or "video")
+
+    exclude_id_set: Optional[set[str]] = set(exclude_ids) if exclude_ids else None
+
+    def _signal_checker(_task_id: Optional[str]) -> None:
+        check_signal(_task_id)
+
+    def _on_progress(phase: str, page: Optional[int], videos: list[dict]) -> None:
+        task_manager.update_task_phase(task_id, phase)
+        if videos:
+            task_manager.update_preview_tweets(
+                task_id,
+                current_page=page or 0,
+                tweets_for_preview=videos,
+            )
+
+    task_manager.update_task_phase(task_id, "[YouTube] 任务已启动，正在检查 API Key 池...")
+
+    try:
+        if source == "channel":
+            channel_input = str(yt_params.get("channel_input") or "").strip()
+            if not channel_input:
+                raise RuntimeError("YouTube 频道采集任务缺少 channel_input 参数")
+            result = searcher.crawl_channel(
+                channel_input=channel_input,
+                task_id=task_id,
+                resume=resume,
+                max_videos=max_videos,
+                fetch_replies=fetch_replies,
+                reply_depth=reply_depth,
+                max_replies_per_video=max_replies_per_tweet,
+                signal_checker=_signal_checker,
+                on_progress=_on_progress,
+                exclude_ids=exclude_id_set,
+            )
+        elif source == "video_urls":
+            video_urls_raw = yt_params.get("video_urls") or []
+            if isinstance(video_urls_raw, str):
+                video_urls_list: list[str] = [video_urls_raw]
+            else:
+                video_urls_list = [str(item) for item in video_urls_raw if str(item).strip()]
+            if not video_urls_list:
+                raise RuntimeError("YouTube 视频链接批量采集任务缺少 video_urls 参数")
+            result = searcher.crawl_by_video_ids(
+                video_urls=video_urls_list,
+                task_id=task_id,
+                resume=resume,
+                max_videos=max_videos,
+                fetch_replies=fetch_replies,
+                reply_depth=reply_depth,
+                max_replies_per_video=max_replies_per_tweet,
+                signal_checker=_signal_checker,
+                on_progress=_on_progress,
+                exclude_ids=exclude_id_set,
+            )
+        else:
+            result = searcher.search(
+                keyword=keyword,
+                task_id=task_id,
+                resume=resume,
+                max_videos=max_videos,
+                fetch_replies=fetch_replies,
+                reply_depth=reply_depth,
+                max_replies_per_video=max_replies_per_tweet,
+                order=order,
+                region_code=region_code,
+                relevance_language=relevance_language,
+                video_duration=video_duration,
+                video_definition=video_definition,
+                type_filter=type_filter,
+                published_after=start_date,
+                published_before=end_date,
+                signal_checker=_signal_checker,
+                on_progress=_on_progress,
+                exclude_ids=exclude_id_set,
+            )
+    except api_client.YouTubeKeyMissing as exc:
+        phase = str(exc) or "[YouTube] 未配置任何可用 API Key，任务已暂停等待补齐"
+        task_manager.update_task_risk_paused(
+            task_id,
+            "login_required",
+            phase,
+            runtime_metrics=get_metrics(task_id),
+        )
+        telemetry.record_event(
+            task_id,
+            "youtube_key_missing",
+            status="paused",
+            phase=phase,
+            risk_state="login_required",
+        )
+        return "paused"
+    except api_client.YouTubeQuotaExhausted as exc:
+        reset_at = getattr(exc, "reset_at", None)
+        phase = (
+            f"[YouTube] API 配额已耗尽，将于 {reset_at} 重置，任务已暂停"
+            if reset_at
+            else "[YouTube] API 配额已耗尽，任务已暂停等待手动恢复"
+        )
+        task_manager.update_task_risk_paused(
+            task_id,
+            "rate_limited",
+            phase,
+            runtime_metrics=get_metrics(task_id),
+        )
+        telemetry.record_event(
+            task_id,
+            "youtube_quota_exhausted",
+            status="paused",
+            phase=phase,
+            risk_state="rate_limited",
+            meta={"reset_at": reset_at},
+        )
+        return "paused"
+    except StopSignal:
+        raise
+    except Exception as exc:
+        logger.error("YouTube 任务异常 task_id=%s: %s", task_id, exc, exc_info=True)
+        raise
+
+    videos = result.videos
+    replies_fetched = result.replies_fetched
+    runtime_metrics = get_metrics(task_id)
+    quality_state = "partial" if result.quota_exhausted else "complete"
+    phase_text = (
+        f"[YouTube] 任务完成，共抓取 {len(videos)} 个视频"
+        + (f"，评论 {replies_fetched} 条" if replies_fetched else "")
+    )
+    task_manager.update_task_phase(task_id, phase_text)
+    task_manager.update_task_result(
+        task_id=task_id,
+        tweets=videos,
+        resumed=result.resumed,
+        replies_fetched=replies_fetched,
+        quality_state=quality_state,
+        runtime_metrics=runtime_metrics,
+    )
+    telemetry.record_event(
+        task_id,
+        "crawler_finished",
+        status="done",
+        phase=phase_text,
+        delta_tweets=len(videos),
+        delta_replies=replies_fetched,
+    )
+    logger.info(
+        "YouTube 任务完成: task_id=%s videos=%s replies=%s",
+        task_id,
+        len(videos),
+        replies_fetched,
+    )
+    return "done"
 
 
 def _persist_failed_records(task_id: str, failed_records: list[dict]) -> None:

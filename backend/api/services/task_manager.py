@@ -120,6 +120,7 @@ def _default_task_state(*, task_id: str, keyword: str, product: str) -> dict:
         "debug_screenshot": None,
         "assigned_account_id": None,
         "account_alias": None,
+        "youtube": None,
     }
 
 
@@ -605,6 +606,7 @@ def create_task(
     exclude_tweet_ids: Optional[list[str]] = None,
     source_task_ids: Optional[list[str]] = None,
     concurrency: int = 1,
+    youtube: Optional[dict] = None,
 ) -> str:
     _ensure_db()
     from crawler import telemetry
@@ -660,6 +662,7 @@ def create_task(
             "exclude_tweet_ids": exclude_tweet_ids or [],
             "exclude_count": len(exclude_tweet_ids) if exclude_tweet_ids else 0,
             "concurrency": concurrency,
+            "youtube": youtube if isinstance(youtube, dict) else None,
         }
     send_signal(tid, "run")
     telemetry.init_task(tid, status="pending", phase="已加入调度队列，等待执行...")

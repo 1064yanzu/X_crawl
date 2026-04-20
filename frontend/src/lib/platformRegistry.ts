@@ -13,7 +13,7 @@ export interface PlatformMeta {
   /** 简短描述 */
   description: string;
   /** Lucide 图标名称 (需在组件中映射) */
-  iconName: "twitter" | "globe" | "bot" | "rss";
+  iconName: "twitter" | "globe" | "bot" | "rss" | "youtube";
   /** 主题色 Tailwind class */
   color: string;
   /** 背景色 class (浅色) */
@@ -50,6 +50,18 @@ export const PLATFORMS: PlatformMeta[] = [
     badgeClass:
       "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
     barClass: "bg-orange-500",
+  },
+  {
+    id: "youtube",
+    label: "YouTube",
+    description: "YouTube 官方 API（Data API v3）",
+    iconName: "youtube",
+    color: "red",
+    bgLight: "bg-red-500/10",
+    textClass: "text-red-600 dark:text-red-400",
+    badgeClass:
+      "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+    barClass: "bg-red-500",
   },
 ];
 

@@ -2,20 +2,22 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { FileUp, MessageSquareText, Settings, TerminalSquare } from "lucide-react";
+import { FileUp, MessageSquareText, Settings, TerminalSquare, Youtube } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { PostSearchTaskBuilder } from "@/components/features/PostSearchTaskBuilder";
 import { CommentBackfillBuilder } from "@/components/features/CommentBackfillBuilder";
 import { BatchImportBuilder } from "@/components/features/BatchImportBuilder";
+import { YouTubeTaskBuilder } from "@/components/features/YouTubeTaskBuilder";
 
-type BuilderMode = "search" | "comment_backfill" | "batch_import";
+type BuilderMode = "search" | "comment_backfill" | "batch_import" | "youtube";
 
 const MODE_ICONS: Record<BuilderMode, React.ElementType> = {
     search: TerminalSquare,
     comment_backfill: MessageSquareText,
     batch_import: FileUp,
+    youtube: Youtube,
 };
 
 const MODE_OPTIONS: Array<{
@@ -26,7 +28,7 @@ const MODE_OPTIONS: Array<{
     {
         value: "search",
         label: "帖子采集",
-        description: "常规关键词采集入口，可选直接抓评论。",
+        description: "X / 微博 的关键词与时间范围采集。",
     },
     {
         value: "comment_backfill",
@@ -37,6 +39,11 @@ const MODE_OPTIONS: Array<{
         value: "batch_import",
         label: "批量导入",
         description: "文本或文件批量导入多个关键词，创建队列顺序执行。",
+    },
+    {
+        value: "youtube",
+        label: "YouTube 采集",
+        description: "官方 API · 关键词 / 频道 / 视频链接 三种模式。",
     },
 ];
 
@@ -54,7 +61,7 @@ export function CrawlerTaskBuilder() {
                         </div>
                         <CardTitle className="text-2xl">新建采集任务</CardTitle>
                         <CardDescription className="mt-2 max-w-2xl leading-6">
-                            先抓帖子，再按需要补评论。把一次性重任务拆成两条路径，降低主采集时的风险和等待成本。
+                            按平台与用途选择入口：X / 微博 聚焦关键词与时间范围；YouTube 走官方 API；评论补采与批量导入服务历史数据复用。
                         </CardDescription>
                     </div>
                     <Link href="/settings" className="shrink-0">
@@ -65,7 +72,7 @@ export function CrawlerTaskBuilder() {
                     </Link>
                 </div>
 
-                <div className="mt-5 grid gap-2 rounded-[1.25rem] border border-border/60 bg-background/60 p-2 sm:grid-cols-3">
+                <div className="mt-5 grid gap-2 rounded-[1.25rem] border border-border/60 bg-background/60 p-2 sm:grid-cols-2 xl:grid-cols-4">
                     {MODE_OPTIONS.map((option) => {
                         const active = mode === option.value;
                         const Icon = MODE_ICONS[option.value];
@@ -80,7 +87,7 @@ export function CrawlerTaskBuilder() {
                                 )}
                             >
                                 <div className="flex items-center gap-2">
-                                    <Icon className="h-4 w-4 text-primary" />
+                                    <Icon className={cn("h-4 w-4", option.value === "youtube" ? "text-red-600 dark:text-red-400" : "text-primary")} />
                                     <span className="font-medium">{option.label}</span>
                                 </div>
                                 <p className="mt-2 text-xs leading-5 text-muted-foreground">{option.description}</p>
@@ -94,6 +101,7 @@ export function CrawlerTaskBuilder() {
                 {mode === "search" && <PostSearchTaskBuilder />}
                 {mode === "comment_backfill" && <CommentBackfillBuilder />}
                 {mode === "batch_import" && <BatchImportBuilder />}
+                {mode === "youtube" && <YouTubeTaskBuilder />}
             </CardContent>
         </Card>
     );

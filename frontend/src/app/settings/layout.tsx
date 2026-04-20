@@ -2,7 +2,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Globe, Settings, Twitter, Wrench } from "lucide-react";
+import { ArrowLeft, Globe, Settings, Twitter, Wrench, Youtube } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
@@ -42,11 +42,20 @@ const SETTINGS_TABS: SettingsTab[] = [
         desc: "微博凭证与平台专属配置",
         color: "text-orange-500 dark:text-orange-400",
     },
+    {
+        id: "youtube",
+        label: "YouTube",
+        href: "/settings/youtube",
+        icon: Youtube,
+        desc: "YouTube API Key 池与配额监控",
+        color: "text-red-600 dark:text-red-400",
+    },
 ];
 
 function getActiveTab(pathname: string): SettingsTab {
     if (pathname === "/settings/x") return SETTINGS_TABS[1];
     if (pathname === "/settings/weibo") return SETTINGS_TABS[2];
+    if (pathname === "/settings/youtube") return SETTINGS_TABS[3];
     return SETTINGS_TABS[0];
 }
 
