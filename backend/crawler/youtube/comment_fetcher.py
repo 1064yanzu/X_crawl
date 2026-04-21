@@ -32,6 +32,7 @@ def fetch_comments_for_video(
     order: str = "time",
     signal_checker: Optional[Callable[[Optional[str]], None]] = None,
     on_page: Optional[Callable[[dict], None]] = None,
+    on_partial: Optional[Callable[[list[dict], dict], None]] = None,
 ) -> dict:
     """
     抓取单个视频的评论树。
@@ -49,6 +50,9 @@ def fetch_comments_for_video(
           - has_next: bool                   顶层评论是否还有下一页
           - current_thread_id: Optional[str] 当前正在处理/刚完成的顶层评论 id（仅 stage=sub）
           - sub_fetched_this_thread: Optional[int] 本次抓取楼中楼的累计条数（仅 stage=sub）
+    :param on_partial: 每翻完一页顶层评论后触发一次，调用方可据此把已抓 replies 立即回写 video，
+        即使任务中途被 StopSignal/异常打断，也能保证已抓数据不丢失。
+        回调签名：`(replies_so_far: list[dict], stats: dict)`。
     :return: {
         "replies": [reply_dict],
         "fetched_top_level_count": int,
@@ -84,6 +88,21 @@ def fetch_comments_for_video(
         except Exception:
             logger.debug("comment on_page 回调异常", exc_info=True)
 
+    def _emit_partial() -> None:
+        """每页顶层评论抓完就触发一次，调用方可据此立刻把已抓 replies 落库/写回 video。"""
+        if on_partial is None:
+            return
+        try:
+            on_partial(list(replies), {
+                "fetched_top_level_count": len(replies),
+                "fetched_total_count": total_count,
+                "pages_fetched": pages,
+                "disabled": False,
+                "phase": "running",
+            })
+        except Exception:
+            logger.debug("comment on_partial 回调异常", exc_info=True)
+
     try:
         while True:
             if signal_checker:
@@ -100,7 +119,24 @@ def fetch_comments_for_video(
                 params["pageToken"] = next_token
 
             try:
-                payload = api_client.call_list("commentThreads.list", params)
+                payload = api_client.call_list(
+                    "commentThreads.list",
+                    params,
+                    task_id=task_id,
+                    archive_context=f"video_{video_id}",
+                    archive_page=pages + 1,
+                )
+            except api_client.YouTubeQuotaExhausted as exc:
+                # 配额耗尽前已经拉到的 replies 必须回传给调用方，避免数据丢失。
+                # 把部分结果附到异常上，由 _fetch_comment_phase 写回 video["replies"]。
+                exc.partial_replies = list(replies)
+                exc.partial_stats = {
+                    "fetched_top_level_count": len(replies),
+                    "fetched_total_count": total_count,
+                    "pages_fetched": pages,
+                    "disabled": False,
+                }
+                raise
             except api_client.YouTubeApiError as exc:
                 if exc.reason == "commentsDisabled":
                     logger.info("视频 %s 评论已关闭，跳过", video_id)
@@ -152,11 +188,29 @@ def fetch_comments_for_video(
                                 top_id,
                                 already_loaded=len(embedded),
                                 task_id=task_id,
+                                video_id=video_id,
                                 signal_checker=signal_checker,
                                 on_sub_page=_on_sub_page,
                             )
                             if full:
                                 reply["replies"] = full
+                        except api_client.YouTubeQuotaExhausted as exc:
+                            # 楼中楼抓到一半配额耗尽：保留已抓部分到 reply，然后把当前 reply 也
+                            # 先 append 进 replies，再把 partial 附到异常上，让上层 _fetch_comment_phase
+                            # 能完整回写到 video["replies"]。
+                            partial_sub = getattr(exc, "partial_sub_replies", None)
+                            if isinstance(partial_sub, list) and partial_sub:
+                                reply["replies"] = partial_sub
+                            replies.append(reply)
+                            total_count += 1 + len(reply.get("replies") or [])
+                            exc.partial_replies = list(replies)
+                            exc.partial_stats = {
+                                "fetched_top_level_count": len(replies),
+                                "fetched_total_count": total_count,
+                                "pages_fetched": pages,
+                                "disabled": False,
+                            }
+                            raise
                         except api_client.YouTubeApiError as exc:
                             logger.warning(
                                 "拉取楼中楼失败 video=%s comment=%s: %s",
@@ -170,6 +224,7 @@ def fetch_comments_for_video(
 
                 if max_comments and len(replies) >= int(max_comments):
                     _emit_page(has_next=False)
+                    _emit_partial()
                     return {
                         "replies": replies,
                         "fetched_top_level_count": len(replies),
@@ -180,9 +235,26 @@ def fetch_comments_for_video(
 
             next_token = payload.get("nextPageToken")
             _emit_page(has_next=bool(next_token))
+            # 每抓完一页顶层评论，立即把已累积的 replies 推给上层写回 video，
+            # 这样即使任务被 StopSignal / 异常中断，已抓数据都是落地安全的。
+            _emit_partial()
             if not next_token:
                 break
+    except api_client.YouTubeQuotaExhausted:
+        # YouTubeQuotaExhausted 已经在上游 except 分支里挂了 partial_replies/partial_stats
+        raise
     except api_client.YouTubeApiError:
+        raise
+    except BaseException as exc:
+        # StopSignal / KeyboardInterrupt / 其它中断：把已抓数据挂到异常上再 raise，
+        # 上层能以同一套回写流程保住数据。
+        setattr(exc, "partial_replies", list(replies))
+        setattr(exc, "partial_stats", {
+            "fetched_top_level_count": len(replies),
+            "fetched_total_count": total_count,
+            "pages_fetched": pages,
+            "disabled": False,
+        })
         raise
 
     return {
@@ -199,37 +271,59 @@ def _fetch_all_sub_comments(
     *,
     already_loaded: int = 0,
     task_id: Optional[str] = None,
+    video_id: Optional[str] = None,
     signal_checker: Optional[Callable[[Optional[str]], None]] = None,
     on_sub_page: Optional[Callable[[int], None]] = None,
 ) -> list[dict]:
     """按 parentId 分页取所有二级评论，合并为 reply dict 列表。"""
     collected: list[dict] = []
     next_token: Optional[str] = None
-    while True:
-        if signal_checker:
-            signal_checker(task_id)
-        params: dict = {
-            "part": "snippet",
-            "parentId": parent_id,
-            "maxResults": DEFAULT_PAGE_SIZE,
-            "textFormat": "plainText",
-        }
-        if next_token:
-            params["pageToken"] = next_token
+    page_idx = 0
+    try:
+        while True:
+            if signal_checker:
+                signal_checker(task_id)
+            params: dict = {
+                "part": "snippet",
+                "parentId": parent_id,
+                "maxResults": DEFAULT_PAGE_SIZE,
+                "textFormat": "plainText",
+            }
+            if next_token:
+                params["pageToken"] = next_token
 
-        payload = api_client.call_list("comments.list", params)
-        for comment in payload.get("items") or []:
-            collected.append(parser.comment_resource_to_reply(comment))
+            page_idx += 1
+            archive_context = (
+                f"video_{video_id}/parent_{parent_id}"
+                if video_id else f"parent_{parent_id}"
+            )
+            payload = api_client.call_list(
+                "comments.list",
+                params,
+                task_id=task_id,
+                archive_context=archive_context,
+                archive_page=page_idx,
+            )
+            for comment in payload.get("items") or []:
+                collected.append(parser.comment_resource_to_reply(comment))
 
-        if on_sub_page is not None:
-            try:
-                on_sub_page(len(collected))
-            except Exception:
-                logger.debug("on_sub_page 回调异常", exc_info=True)
+            if on_sub_page is not None:
+                try:
+                    on_sub_page(len(collected))
+                except Exception:
+                    logger.debug("on_sub_page 回调异常", exc_info=True)
 
-        next_token = payload.get("nextPageToken")
-        if not next_token:
-            break
+            next_token = payload.get("nextPageToken")
+            if not next_token:
+                break
+    except api_client.YouTubeQuotaExhausted as exc:
+        # 把已抓到的楼中楼附到异常上，供调用方在异常捕获时恢复数据
+        exc.partial_sub_replies = list(collected)
+        raise
+    except BaseException as exc:
+        # StopSignal 等同样处理
+        setattr(exc, "partial_sub_replies", list(collected))
+        raise
     # 若 commentThreads.replies 已有部分数据，这里是完整列表，直接替换即可
     _ = already_loaded
     return collected

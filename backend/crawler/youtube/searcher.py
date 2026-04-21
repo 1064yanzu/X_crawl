@@ -149,6 +149,47 @@ def _fetch_comment_phase(
             )
             on_progress(phase_text, pending_done, videos)
 
+        def _on_partial(partial_replies: list, partial_stats: dict) -> None:
+            """每翻完一页顶层评论立即把已抓 replies 写回 video，确保中断时数据不丢。"""
+            video["replies"] = list(partial_replies)
+            live_stats["pages_fetched"] = int(partial_stats.get("pages_fetched", live_stats.get("pages_fetched", 0)))
+            live_stats["fetched_top_level_count"] = int(
+                partial_stats.get("fetched_top_level_count", live_stats.get("fetched_top_level_count", 0))
+            )
+            live_stats["fetched_total_count"] = int(
+                partial_stats.get("fetched_total_count", live_stats.get("fetched_total_count", 0))
+            )
+            # phase 字段保持 running；进度回调交给 _on_page 节流
+            state["videos"] = videos
+            checkpoint.save_checkpoint(task_id, state)
+
+        def _absorb_exc_partial(exc: BaseException, phase_label: str) -> int:
+            """把异常上挂的 partial_replies / partial_stats 吸收回 video，返回新增评论数。"""
+            partial_replies = getattr(exc, "partial_replies", None)
+            partial_stats = getattr(exc, "partial_stats", None) or {}
+            delta = 0
+            if isinstance(partial_replies, list) and partial_replies:
+                video["replies"] = partial_replies
+                delta = int(partial_stats.get("fetched_total_count") or 0)
+            live_stats["phase"] = phase_label
+            for key in ("pages_fetched", "fetched_top_level_count", "fetched_total_count"):
+                if key in partial_stats:
+                    live_stats[key] = int(partial_stats.get(key) or 0)
+            video["platform_extra"]["comment_stats"] = live_stats
+            state["videos"] = videos
+            checkpoint.save_checkpoint(task_id, state)
+            # 强制上推 videos 到 task_manager，保证 DB 里有最新数据（即使 on_progress 节流窗口没开）
+            try:
+                on_progress(
+                    f"[YouTube] 评论抓取 {pending_done}/{pending_total}：{short_title} · "
+                    f"{phase_label} · 已保留 {live_stats['fetched_total_count']} 条评论",
+                    pending_done,
+                    videos,
+                )
+            except Exception:
+                logger.debug("on_progress 兜底推送异常", exc_info=True)
+            return delta
+
         try:
             result = comment_fetcher.fetch_comments_for_video(
                 vid,
@@ -157,17 +198,31 @@ def _fetch_comment_phase(
                 depth=reply_depth,
                 signal_checker=signal_checker,
                 on_page=_on_page,
+                on_partial=_on_partial,
             )
-        except api_client.YouTubeQuotaExhausted:
-            live_stats["phase"] = "quota_exhausted"
+        except api_client.YouTubeQuotaExhausted as exc:
+            # 配额耗尽前已抓取的评论必须回写到 video，避免用户看到 4000+ 条进度却无法查看/导出评论。
+            total_added += _absorb_exc_partial(exc, "quota_exhausted")
             return total_added, True
         except api_client.YouTubeApiError as exc:
             logger.warning("YouTube 视频 %s 评论抓取失败: %s", vid, exc)
             video.setdefault("platform_extra", {})
             video["platform_extra"]["comment_error"] = f"{exc.reason or exc.status}: {exc}"
-            live_stats["phase"] = "error"
+            # 即使解析层报错，若 fetch_comments_for_video 已经抓到部分 replies，也要落库
+            partial = getattr(exc, "partial_replies", None)
+            if isinstance(partial, list) and partial:
+                total_added += _absorb_exc_partial(exc, "error")
+            else:
+                live_stats["phase"] = "error"
             completed.add(vid)
+            state["videos"] = videos
+            checkpoint.save_checkpoint(task_id, state)
             continue
+        except BaseException as exc:
+            # StopSignal / KeyboardInterrupt / 其它中断：把已抓数据回写后再 raise，
+            # 让上层 crawl_service 的 except StopSignal 分支把任务标记为 stopped/paused。
+            _absorb_exc_partial(exc, "interrupted")
+            raise
 
         replies = result.get("replies") or []
         video["replies"] = replies
@@ -303,7 +358,12 @@ def search(
                 if next_page_token:
                     params["pageToken"] = next_page_token
 
-                payload = api_client.call_list("search.list", params)
+                payload = api_client.call_list(
+                    "search.list",
+                    params,
+                    task_id=task_id,
+                    archive_page=pages_fetched + 1,
+                )
                 pages_fetched += 1
                 items = payload.get("items") or []
                 if not items:
@@ -356,7 +416,7 @@ def search(
         signal_checker(task_id)
         on_progress(f"[YouTube] 正在补充 {len(videos)} 个视频的详情...", None, videos)
         try:
-            details = video_fetcher.fetch_video_details([v["id"] for v in videos])
+            details = video_fetcher.fetch_video_details([v["id"] for v in videos], task_id=task_id)
             for idx, video in enumerate(videos):
                 vid = video.get("id")
                 if vid and vid in details:
@@ -422,7 +482,7 @@ def crawl_channel(
         if loaded and str(loaded.get("mode") or "") == "channel_uploads":
             preload_state = loaded  # 先保留，下面解析完 channel_id 再校验
 
-    resolved = channel_fetcher.resolve_uploads_playlist(channel_input)
+    resolved = channel_fetcher.resolve_uploads_playlist(channel_input, task_id=task_id)
     channel_id = resolved["channel_id"]
     uploads_playlist_id = resolved["uploads_playlist_id"]
 
@@ -448,13 +508,14 @@ def crawl_channel(
                 uploads_playlist_id,
                 max_videos=remaining,
                 start_page_token=next_token,
+                task_id=task_id,
             ):
                 signal_checker(task_id)
                 pages_fetched += 1
                 # 立即按页补齐详情：把 videos.list 的完整数据拿到手再入库/预览
                 # 这样用户在实时预览里看到的就是真·标题/封面/作者，而不是占位符
                 try:
-                    details_map = video_fetcher.fetch_video_details(video_ids)
+                    details_map = video_fetcher.fetch_video_details(video_ids, task_id=task_id)
                 except api_client.YouTubeQuotaExhausted:
                     quota_exhausted = True
                     break
@@ -511,7 +572,7 @@ def crawl_channel(
         if missing_detail_ids:
             on_progress(f"[YouTube] 正在补充 {len(missing_detail_ids)} 个视频的详情...", None, videos)
             try:
-                details = video_fetcher.fetch_video_details(missing_detail_ids)
+                details = video_fetcher.fetch_video_details(missing_detail_ids, task_id=task_id)
                 for idx, video in enumerate(videos):
                     vid = video.get("id")
                     if vid and vid in details:
@@ -637,7 +698,7 @@ def crawl_by_video_ids(
     try:
         signal_checker(task_id)
         if need_detail_ids:
-            details = video_fetcher.fetch_video_details(need_detail_ids)
+            details = video_fetcher.fetch_video_details(need_detail_ids, task_id=task_id)
             for idx, video in enumerate(merged_videos):
                 vid = video.get("id")
                 if vid and vid in details:

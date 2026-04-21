@@ -76,6 +76,9 @@ def call_list(
     *,
     timeout: float = DEFAULT_TIMEOUT,
     extra_cost: int = 0,
+    task_id: Optional[str] = None,
+    archive_context: Optional[str] = None,
+    archive_page: Optional[int] = None,
 ) -> dict:
     """
     调用 YouTube list 类端点，返回解析后的 JSON。
@@ -83,6 +86,9 @@ def call_list(
     :param endpoint: 点号风格，如 "videos.list" / "commentThreads.list"
     :param params: 查询参数（不含 key）
     :param extra_cost: 若该端点有多 part 组合等特殊成本，可附加单位
+    :param task_id: 若提供，本次响应会落盘到 raw_responses/{task_id}/youtube/...
+    :param archive_context: 存档路径中的二级分组（如 "video_{vid}"、"video_{vid}/parent_{pid}"）
+    :param archive_page: 可选的页码，写进文件名方便排序
     :raises YouTubeApiError / YouTubeQuotaExhausted / YouTubeKeyMissing
     """
     pool = api_key_pool.get_pool()
@@ -134,6 +140,23 @@ def call_list(
                 _backoff(attempt)
                 continue
             pool.record_usage(key.key_id, cost=cost)
+            # 所有任务都落盘原始响应——即使任务之后被中断/挂掉/重启，
+            # 仍能从 raw_responses 完整重建 tweets 与 replies。
+            if task_id:
+                try:
+                    from crawler.response_saver import save_youtube_response
+                    save_youtube_response(
+                        task_id,
+                        endpoint,
+                        payload,
+                        context=archive_context,
+                        page_num=archive_page,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "保存 YouTube 原始响应失败（忽略，不影响主流程）task=%s endpoint=%s: %s",
+                        task_id, endpoint, exc,
+                    )
             return payload
 
         # 非 200：解析错误原因

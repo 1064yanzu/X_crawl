@@ -8,7 +8,7 @@ search.list / playlistItems.list 返回的数据只有 snippet，缺少 statisti
 from __future__ import annotations
 
 import logging
-from typing import Iterable
+from typing import Iterable, Optional
 
 from . import api_client, parser
 
@@ -23,10 +23,13 @@ def fetch_video_details(
     video_ids: Iterable[str],
     *,
     part: str = VIDEO_PART,
+    task_id: Optional[str] = None,
 ) -> dict[str, dict]:
     """
     按批取视频详情，返回 {video_id: tweet_dict}。
     对任何 API 错误返回部分结果并记录日志，但不吞掉配额异常。
+
+    :param task_id: 若提供，原始响应会落盘到 raw_responses/{task_id}/youtube/videos_list/
     """
     id_list: list[str] = []
     seen: set[str] = set()
@@ -40,14 +43,19 @@ def fetch_video_details(
     if not id_list:
         return result
 
-    for start in range(0, len(id_list), BATCH_SIZE):
+    for batch_idx, start in enumerate(range(0, len(id_list), BATCH_SIZE), start=1):
         batch = id_list[start : start + BATCH_SIZE]
         params = {
             "part": part,
             "id": ",".join(batch),
             "maxResults": BATCH_SIZE,
         }
-        payload = api_client.call_list("videos.list", params)
+        payload = api_client.call_list(
+            "videos.list",
+            params,
+            task_id=task_id,
+            archive_page=batch_idx,
+        )
         for item in payload.get("items") or []:
             tweet = parser.video_to_tweet(item)
             if tweet and tweet.get("id"):

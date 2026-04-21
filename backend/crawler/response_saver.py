@@ -210,3 +210,107 @@ def list_reply_responses(task_id: str, tweet_id: str) -> list[dict]:
             "saved_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
         })
     return result
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  YouTube 原始响应存储
+# ═══════════════════════════════════════════════════════════════════
+
+# endpoint 名 → 子目录名（点号不能进路径，另外显式命名方便排查）
+_YT_ENDPOINT_DIRS = {
+    "search.list":          "search_list",
+    "videos.list":          "videos_list",
+    "channels.list":        "channels_list",
+    "playlistItems.list":   "playlist_items",
+    "commentThreads.list":  "comment_threads",
+    "comments.list":        "comments_list",
+    "i18nRegions.list":     "i18n_regions",
+}
+
+
+def _sanitize_path_segment(segment: str) -> str:
+    """把 video_id / parent_id 等用户数据清洗成安全的路径片段。"""
+    cleaned = "".join(c if (c.isalnum() or c in "-_") else "_" for c in str(segment or ""))
+    return cleaned[:64] or "unknown"
+
+
+def save_youtube_response(
+    task_id: Optional[str],
+    endpoint: str,
+    payload: dict,
+    *,
+    context: Optional[str] = None,
+    page_num: Optional[int] = None,
+) -> Optional[str]:
+    """
+    保存 YouTube API 响应 JSON 到磁盘。
+
+    存储路径：
+        {raw_responses_dir}/{task_id}/youtube/{endpoint_dir}/[{context}/]page_{n}_{ts}.json
+
+    其中 context 用于区分同 endpoint 下的子对象，例如：
+      - commentThreads.list 按 videoId 区分 → context="video_{vid}"
+      - comments.list 按 parentId 区分   → context="video_{vid}/parent_{pid}"
+
+    Args:
+        task_id:   任务 ID；为空时返回 None（不保存）
+        endpoint:  形如 "commentThreads.list"
+        payload:   响应 body（dict）
+        context:   可选的二级路径片段；内部自动 sanitize
+        page_num:  可选的页码，写入文件名方便排序；不提供时使用递增计数器
+
+    Returns:
+        保存的文件路径；未开启保存或失败时返回 None
+    """
+    if not task_id or not settings.save_raw_responses:
+        return None
+
+    endpoint_dir = _YT_ENDPOINT_DIRS.get(endpoint) or endpoint.replace(".", "_")
+
+    try:
+        base = Path(settings.raw_responses_dir) / task_id / "youtube" / endpoint_dir
+        if context:
+            # context 支持 "a/b" 多级拆分
+            for seg in str(context).split("/"):
+                base = base / _sanitize_path_segment(seg)
+        base.mkdir(parents=True, exist_ok=True)
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+        # page_num 给文件名排序；缺省时直接用时间戳
+        if page_num is not None:
+            filename = f"page_{int(page_num):03d}_{ts}.json"
+        else:
+            filename = f"page_{ts}.json"
+        file_path = base / filename
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, separators=(",", ":"))
+        return str(file_path)
+    except Exception as e:
+        logger.warning(
+            f"保存 YouTube 原始响应失败 task_id={task_id} endpoint={endpoint} context={context}: {e}"
+        )
+        return None
+
+
+def iter_youtube_responses(
+    task_id: str,
+    endpoint: str,
+    *,
+    context: Optional[str] = None,
+):
+    """遍历某任务某 endpoint（+context）下所有原始响应，按文件名排序。yield (path, payload dict)。"""
+    endpoint_dir = _YT_ENDPOINT_DIRS.get(endpoint) or endpoint.replace(".", "_")
+    base = Path(settings.raw_responses_dir) / task_id / "youtube" / endpoint_dir
+    if context:
+        for seg in str(context).split("/"):
+            base = base / _sanitize_path_segment(seg)
+    if not base.exists():
+        return
+    for f in sorted(base.glob("page_*.json")):
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+            yield str(f), payload
+        except Exception as e:
+            logger.warning(f"读取 YouTube 原始响应失败 {f}: {e}")

@@ -58,7 +58,7 @@ def normalize_channel_input(raw: str) -> dict:
     return {"kind": "username", "value": text}
 
 
-def resolve_uploads_playlist(channel_input: str) -> dict:
+def resolve_uploads_playlist(channel_input: str, *, task_id: Optional[str] = None) -> dict:
     """
     把用户输入解析为 channel_id + uploads_playlist_id。
     返回 {"channel_id": ..., "uploads_playlist_id": ..., "channel_title": ..., "channel_info": {...}}
@@ -72,7 +72,7 @@ def resolve_uploads_playlist(channel_input: str) -> dict:
     else:
         params["forUsername"] = descriptor["value"]
 
-    payload = api_client.call_list("channels.list", params)
+    payload = api_client.call_list("channels.list", params, task_id=task_id)
     items = payload.get("items") or []
     if not items:
         raise ValueError(f"未找到频道: {channel_input}")
@@ -97,10 +97,13 @@ def iter_playlist_video_ids(
     *,
     max_videos: int,
     start_page_token: Optional[str] = None,
+    task_id: Optional[str] = None,
 ):
     """
     生成 (page_index, video_ids_this_page, next_page_token, raw_items)
     直到满足 max_videos 或没有下一页。
+
+    :param task_id: 若提供，每页的 playlistItems.list 响应会落盘到 raw_responses/{task_id}/youtube/playlist_items/
     """
     collected = 0
     next_token = start_page_token
@@ -117,7 +120,13 @@ def iter_playlist_video_ids(
         if next_token:
             params["pageToken"] = next_token
 
-        payload = api_client.call_list("playlistItems.list", params)
+        payload = api_client.call_list(
+            "playlistItems.list",
+            params,
+            task_id=task_id,
+            archive_context=f"playlist_{uploads_playlist_id}",
+            archive_page=page_index + 1,
+        )
         items = payload.get("items") or []
         video_ids: list[str] = []
         for item in items:

@@ -223,34 +223,47 @@ def video_to_tweet(video: dict) -> dict:
 
 def merge_video_detail(existing: dict, detailed: dict) -> dict:
     """
-    使用 videos.list 的完整数据更新 search.list 返回的轻量快照。
+    使用 videos.list 的完整数据更新 search.list / playlistItems.list / 占位 dict。
+
+    合并策略：
+    - 以 detailed 的完整 parser.video_to_tweet 结构为基底（保留 replies/reply_to/urls/
+      user_mentions/is_retweet/is_quote 等完整字段集合，避免后续评论/导出逻辑因缺键失效）
+    - existing 里的字段作为兜底填补 detailed 中的缺失/空值（例如评论阶段已写入的 replies 必须保留）
+    - metrics / platform_extra 做深合并，保留 existing 的业务态字段（如 comment_stats）
     """
     if not existing:
         return detailed
     if not detailed:
         return existing
 
-    merged = dict(existing)
-    merged["text"] = detailed.get("text") or merged.get("text", "")
-    merged["lang"] = detailed.get("lang") or merged.get("lang", "")
-    merged["created_at"] = detailed.get("created_at") or merged.get("created_at", "")
+    merged = {**existing, **detailed}
 
-    if detailed.get("metrics"):
-        merged.setdefault("metrics", {})
-        merged["metrics"] = {**merged["metrics"], **detailed["metrics"]}
+    # 深合并 metrics：detailed 覆盖 existing，但保留 existing 里 detailed 没有的键
+    merged_metrics = {**(existing.get("metrics") or {}), **(detailed.get("metrics") or {})}
+    if merged_metrics:
+        merged["metrics"] = merged_metrics
 
-    if detailed.get("media"):
-        merged["media"] = detailed["media"]
-    if detailed.get("author"):
-        merged["author"] = detailed["author"]
-    if detailed.get("hashtags"):
-        merged["hashtags"] = detailed["hashtags"]
-    if detailed.get("platform_extra"):
-        merged.setdefault("platform_extra", {})
-        merged["platform_extra"] = {
-            **merged.get("platform_extra", {}),
-            **detailed.get("platform_extra", {}),
-        }
+    # 深合并 platform_extra：保留评论抓取阶段写入的 comment_stats / comment_error
+    merged_extra = {
+        **(existing.get("platform_extra") or {}),
+        **(detailed.get("platform_extra") or {}),
+    }
+    if merged_extra:
+        merged["platform_extra"] = merged_extra
+
+    # existing.replies 非空（评论已抓取）必须保留；detailed.replies 默认是 [] 不应覆盖
+    existing_replies = existing.get("replies")
+    if isinstance(existing_replies, list) and existing_replies:
+        merged["replies"] = existing_replies
+
+    # hashtags / media / author：detailed 非空时覆盖，否则回退 existing
+    for key in ("author", "media", "hashtags"):
+        detailed_val = detailed.get(key)
+        if detailed_val:
+            merged[key] = detailed_val
+        elif existing.get(key) is not None:
+            merged[key] = existing[key]
+
     return merged
 
 

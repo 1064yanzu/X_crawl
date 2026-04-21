@@ -144,7 +144,10 @@ def _flatten_tweet(tweet: dict) -> dict:
     flat = {}
     for field, _ in EXPORT_FIELDS:
         value = tweet.get(field)
-        if value is not None:
+        # 只有"标量"字段才能直接走短路；list/dict 必须走下面的派生逻辑做字符串化，
+        # 否则 hashtags 这类 list 直接流进 CSV/Excel 会导致 openpyxl 抛
+        # "Cannot convert [...] to Excel"，或 CSV 输出 "['a','b']" 这种不可读内容。
+        if value is not None and not isinstance(value, (list, dict)):
             flat[field] = value
             continue
 
@@ -383,6 +386,34 @@ def _hydrate_tweets_for_export(task: dict, tweets: list[dict]) -> list[dict]:
     cached_reply_map = task_db.load_cached_replies_map(missing_ids) if platform == "x" else {}
     raw_reply_map = _load_raw_reply_map(str(task.get("task_id") or ""), missing_ids) if platform == "x" else {}
 
+    # YouTube：把 raw_responses 里的原始评论响应重新解析成 replies，补给缺失的视频
+    youtube_reply_map: dict[str, list[dict]] = {}
+    if platform == "youtube":
+        task_id_str = str(task.get("task_id") or "")
+        # 对 YouTube 任务：replies 为 None 或空 list 都尝试 replay（让 _choose_richer_replies 选更多的版本）
+        youtube_replay_ids = [
+            str(tweet.get("id") or "").strip()
+            for tweet in tweets
+            if isinstance(tweet, dict)
+            and not (isinstance(tweet.get("replies"), list) and len(tweet["replies"]) > 0)
+        ]
+        youtube_replay_ids = [vid for vid in youtube_replay_ids if vid]
+        if task_id_str and youtube_replay_ids:
+            try:
+                from crawler.youtube import replay as yt_replay
+                if yt_replay.has_raw_responses(task_id_str):
+                    for vid in youtube_replay_ids:
+                        rebuilt = yt_replay.rebuild_replies_for_video(task_id_str, vid)
+                        if rebuilt:
+                            youtube_reply_map[vid] = rebuilt
+                    if youtube_reply_map:
+                        logger.info(
+                            "导出时从原始响应重建 YouTube 评论: task=%s videos=%s",
+                            task_id_str, len(youtube_reply_map),
+                        )
+            except Exception as exc:
+                logger.warning("YouTube 原始响应 replay 失败 task=%s: %s", task_id_str, exc)
+
     hydrated: list[dict] = []
     changed = False
     for tweet in tweets:
@@ -397,6 +428,7 @@ def _hydrate_tweets_for_export(task: dict, tweets: list[dict]) -> list[dict]:
             raw_reply_map.get(tweet_id),
             source_reply_map.get(tweet_id),
             cached_reply_map.get(tweet_id),
+            youtube_reply_map.get(tweet_id),
         )
         if candidate_replies is current_replies or candidate_replies is None:
             hydrated.append(tweet)
@@ -564,7 +596,18 @@ def _build_csv(tweets: list[dict]) -> bytes:
     writer.writeheader()
     for tweet in tweets:
         flat = _flatten_tweet(tweet)
-        writer.writerow({label: flat[field] for field, label in EXPORT_FIELDS})
+        row = {}
+        for field, label in EXPORT_FIELDS:
+            raw_value = flat[field]
+            # CSV 兼容：list/dict 统一 JSON 字符串化，避免 csv 输出 Python repr（"['a', 'b']"）
+            if isinstance(raw_value, (list, dict, set, tuple)):
+                try:
+                    row[label] = json.dumps(raw_value, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    row[label] = str(raw_value)
+            else:
+                row[label] = raw_value
+        writer.writerow(row)
     # UTF-8 BOM，兼容 Windows Excel 直接打开
     return "\ufeff".encode("utf-8") + buf.getvalue().encode("utf-8")
 
@@ -622,7 +665,17 @@ def _build_excel(tweets: list[dict]) -> bytes:
     for row_idx, tweet in enumerate(tweets, 2):
         flat = _flatten_tweet(tweet)
         for col_idx, (field, _) in enumerate(EXPORT_FIELDS, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=flat.get(field, ""))
+            raw_value = flat.get(field, "")
+            # 防御性转换：openpyxl 不接受 list/dict/set，遇到这类值一律 JSON 字符串化，
+            # 避免任何新增字段/坏数据导致整个导出流程崩溃。
+            if isinstance(raw_value, (list, dict, set, tuple)):
+                try:
+                    cell_value = json.dumps(raw_value, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    cell_value = str(raw_value)
+            else:
+                cell_value = raw_value
+            cell = ws.cell(row=row_idx, column=col_idx, value=cell_value)
             cell.alignment = Alignment(wrap_text=False, vertical="top")
 
     # 自动列宽（与 EXPORT_FIELDS 一一对应）
