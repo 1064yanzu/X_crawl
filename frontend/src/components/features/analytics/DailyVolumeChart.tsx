@@ -39,7 +39,7 @@ const CustomTooltip = ({ active, payload, label }: {
 }) => {
     if (!active || !payload?.length) return null;
     return (
-        <div className="rounded-xl border border-border/60 bg-card/95 backdrop-blur-sm px-3 py-2 shadow-lg text-xs">
+        <div className="rounded-md border border-border bg-card px-3 py-2 shadow-lg text-xs">
             <p className="font-semibold text-foreground mb-1">{label}</p>
             {payload.map((p) => (
                 <div key={p.name} className="flex items-center gap-2 text-muted-foreground">

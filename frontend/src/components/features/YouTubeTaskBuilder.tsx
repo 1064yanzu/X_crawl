@@ -71,7 +71,7 @@ export function YouTubeTaskBuilder() {
     return (
         <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_320px]">
             <div className="space-y-6 p-6 sm:p-7">
-                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+                <section className="space-y-4 rounded-lg border border-border bg-background p-5 shadow-sm">
                     <div className="flex items-start justify-between gap-3">
                         <SectionTitle
                             title="YouTube 采集"
@@ -90,7 +90,7 @@ export function YouTubeTaskBuilder() {
                         配置至少一个 API Key，再创建任务。
                     </p>
 
-                    <div className="grid grid-cols-1 gap-2 rounded-2xl border border-border/60 bg-muted/20 p-1 sm:grid-cols-3">
+                    <div className="grid grid-cols-1 gap-2 rounded-md border border-border bg-muted/20 p-1 sm:grid-cols-3">
                         {SOURCE_TABS.map((tab) => {
                             const Icon = tab.icon;
                             const active = builder.source === tab.value;
@@ -100,10 +100,10 @@ export function YouTubeTaskBuilder() {
                                     type="button"
                                     onClick={() => builder.setSource(tab.value)}
                                     className={cn(
-                                        "rounded-xl px-4 py-3 text-left transition-all",
+ "rounded-md px-4 py-3 text-left transition-all",
                                         active
                                             ? "bg-background text-foreground shadow-sm ring-1 ring-primary/20"
-                                            : "hover:bg-background/60",
+                                            : "hover:bg-background",
                                     )}
                                 >
                                     <div className="flex items-center gap-2 text-sm font-medium">
@@ -159,7 +159,7 @@ export function YouTubeTaskBuilder() {
                 )}
 
                 {builder.source !== "video_urls" && (
-                    <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+                    <section className="space-y-4 rounded-lg border border-border bg-background p-5 shadow-sm">
                         <SectionTitle
                             title="采集规模"
                             description="每 50 个视频消耗 1 次 search.list（100 单位）+ 1 次 videos.list（1 单位）。"
@@ -174,7 +174,7 @@ export function YouTubeTaskBuilder() {
                                 onChange={(event) =>
                                     builder.setMaxVideos(Number(event.target.value) || 0)
                                 }
-                                className="h-11 rounded-xl"
+                                className="h-11 rounded-md"
                             />
                             <span className="text-xs text-muted-foreground">
                                 抓评论会额外消耗 <code>1 + 评论分页数</code> 个配额/视频。
@@ -183,15 +183,15 @@ export function YouTubeTaskBuilder() {
                     </section>
                 )}
 
-                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+                <section className="space-y-4 rounded-lg border border-border bg-background p-5 shadow-sm">
                     <SectionTitle
                         title="评论抓取"
                         description="默认关闭。YouTube 评论需要独立 commentThreads.list 分页，会按视频数量翻倍消耗配额。"
                     />
-                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
+                    <div className="rounded-md border border-border bg-muted/20 p-4">
                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                             <div className="flex gap-3">
-                                <div className="rounded-xl bg-primary/10 p-2 text-primary">
+                                <div className="rounded-md bg-primary/10 p-2 text-primary">
                                     <MessageSquare className="h-4 w-4" />
                                 </div>
                                 <div>
@@ -206,10 +206,10 @@ export function YouTubeTaskBuilder() {
                                 aria-pressed={builder.fetchReplies}
                                 onClick={() => builder.setFetchReplies(!builder.fetchReplies)}
                                 className={cn(
-                                    "inline-flex h-11 shrink-0 whitespace-nowrap items-center rounded-full border px-4 text-sm font-medium transition-all",
+ "inline-flex h-11 shrink-0 whitespace-nowrap items-center rounded-full border px-4 text-sm font-medium transition-all",
                                     builder.fetchReplies
                                         ? "border-primary/20 bg-primary text-primary-foreground"
-                                        : "border-border/70 bg-background text-muted-foreground hover:text-foreground",
+                                        : "border-border bg-background text-muted-foreground hover:text-foreground",
                                 )}
                             >
                                 {builder.fetchReplies ? "已开启" : "保持关闭"}
@@ -217,7 +217,7 @@ export function YouTubeTaskBuilder() {
                         </div>
 
                         {builder.fetchReplies && (
-                            <div className="mt-4 grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
+                            <div className="mt-4 grid gap-3 border-t border-border pt-4 md:grid-cols-2">
                                 {[
                                     { value: 1, title: "一级评论", description: "仅抓顶层评论。最快。" },
                                     { value: 2, title: "二级评论", description: "含每条评论的子回复，适合讨论网络分析。" },
@@ -229,10 +229,10 @@ export function YouTubeTaskBuilder() {
                                             type="button"
                                             onClick={() => builder.setReplyDepth(option.value)}
                                             className={cn(
-                                                "rounded-2xl border px-4 py-4 text-left transition-all",
+ "rounded-md border px-4 py-4 text-left transition-all",
                                                 active
                                                     ? "border-primary/30 bg-primary/8 text-foreground shadow-sm"
-                                                    : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
+                                                    : "border-border bg-card hover:border-primary/20 hover:bg-muted/30",
                                             )}
                                         >
                                             <p className="font-medium">{option.title}</p>
@@ -248,7 +248,7 @@ export function YouTubeTaskBuilder() {
                 </section>
             </div>
 
-            <aside className="border-t border-border/50 bg-muted/15 p-6 xl:border-l xl:border-t-0 xl:p-7">
+            <aside className="border-t border-border bg-muted/15 p-6 xl:border-l xl:border-t-0 xl:p-7">
                 <CrawlerTaskSummary
                     summaryRows={summaryRows}
                     canSubmit={builder.canSubmit}

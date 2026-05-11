@@ -67,7 +67,7 @@ function YouTubeCommentCard({ reply }: ReplyProps) {
     const [expanded, setExpanded] = React.useState(false);
 
     return (
-        <div className="border-b border-border/30 py-3 last:border-0">
+        <div className="border-b border-border py-3 last:border-0">
             <div className="flex gap-2.5">
                 {author.avatar_url ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
@@ -111,7 +111,7 @@ function YouTubeCommentCard({ reply }: ReplyProps) {
                     </div>
 
                     {expanded && childReplies.length > 0 && (
-                        <div className="mt-3 space-y-2 border-l-2 border-border/40 pl-3">
+                        <div className="mt-3 space-y-2 border-l-2 border-border pl-3">
                             {childReplies.map((child: AnyRecord, idx: number) => (
                                 <YouTubeCommentCard key={child.id ? `${child.id}-${idx}` : `child-${idx}`} reply={child} />
                             ))}
@@ -156,7 +156,7 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
     return (
         <div
             className={cn(
-                "group relative overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm transition-shadow hover:shadow-md",
+ "group relative overflow-hidden rounded-md border border-border bg-card shadow-sm transition-shadow hover:shadow-md",
                 compact ? "p-3" : "p-4",
             )}
         >
@@ -166,7 +166,7 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
-                        "group/thumb relative block aspect-video overflow-hidden rounded-xl bg-muted",
+ "group/thumb relative block aspect-video overflow-hidden rounded-md bg-muted",
                     )}
                     title={title}
                 >
@@ -209,7 +209,7 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
                             target="_blank"
                             rel="noreferrer"
                             className={cn(
-                                "font-semibold leading-snug text-foreground transition-colors hover:text-red-600 line-clamp-2 dark:hover:text-red-400",
+ "font-semibold leading-snug text-foreground transition-colors hover:text-red-600 line-clamp-2 dark:hover:text-red-400",
                                 compact ? "text-[15px]" : "text-lg",
                             )}
                             title={title}
@@ -278,7 +278,7 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
                         <div className="mt-3">
                             <p
                                 className={cn(
-                                    "whitespace-pre-wrap text-sm leading-relaxed text-foreground/80",
+ "whitespace-pre-wrap text-sm leading-relaxed text-foreground/80",
                                     !showDescription && "line-clamp-3",
                                 )}
                             >
@@ -312,10 +312,10 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
             </div>
 
             {(commentPhase || replies.length > 0 || commentsDisabled || commentError) && (
-                <div className="mt-4 border-t border-border/40 pt-3">
+                <div className="mt-4 border-t border-border pt-3">
                     {/* 实时评论抓取进度 */}
                     {(commentPhase === "running" || commentPhase === "quota_exhausted") && !commentsDisabled && (
-                        <div className="mb-3 rounded-xl border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+                        <div className="mb-3 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2.5">
                             <div className="flex items-center gap-2 text-xs font-medium">
                                 {commentPhase === "running" ? (
                                     <Loader2 className="h-3.5 w-3.5 animate-spin text-red-500" />
@@ -363,12 +363,12 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
                         </div>
                     )}
                     {commentsDisabled && (
-                        <div className="mb-3 rounded-xl border border-muted bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
+                        <div className="mb-3 rounded-md border border-muted bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
                             该视频已关闭评论
                         </div>
                     )}
                     {commentError && (
-                        <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-600 dark:text-red-400">
+                        <div className="mb-3 rounded-md border border-red-500/30 bg-red-500/5 px-3 py-2 text-[11px] text-red-600 dark:text-red-400">
                             评论抓取失败：{commentError}
                         </div>
                     )}
@@ -385,7 +385,7 @@ export function YouTubeVideoCard({ tweet, compact = false }: Props) {
                                 {showReplies ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                             </button>
                             {showReplies && (
-                                <div className="mt-2 rounded-xl border border-border/40 bg-muted/10 px-3">
+                                <div className="mt-2 rounded-md border border-border bg-muted/10 px-3">
                                     {replies.map((reply: AnyRecord, idx: number) => (
                                         <YouTubeCommentCard key={reply.id ? `${reply.id}-${idx}` : `reply-${idx}`} reply={reply} />
                                     ))}

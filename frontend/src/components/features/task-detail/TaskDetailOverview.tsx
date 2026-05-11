@@ -27,12 +27,12 @@ export function TaskDetailOverview({
     return (
         <>
             <div className="grid gap-4 md:grid-cols-3">
-                <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                <div className="rounded-md border bg-card p-5 shadow-sm">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">当前状态</p>
                     <TaskStatusBadge status={task.status} riskState={task.risk_state} />
                 </div>
 
-                <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                <div className="rounded-md border bg-card p-5 shadow-sm">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">采集进度</p>
                     <div className="mb-2 flex items-baseline gap-2">
                         <span className="font-mono text-3xl font-semibold">{task.result_count}</span>

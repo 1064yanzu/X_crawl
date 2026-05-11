@@ -91,7 +91,7 @@ export function RawResponseStorageCard() {
     };
 
     return (
-        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+        <Card className="rounded-lg border-border bg-card ">
             <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-xl"><DatabaseBackup className="h-5 w-5 text-green-600" /> 原始响应存储</CardTitle>
                 <CardDescription>管理搜索与回复原始 JSON 的本地归档配置、容量占用和历史清理。</CardDescription>
@@ -103,7 +103,7 @@ export function RawResponseStorageCard() {
                     </div>
                 ) : storage ? (
                     <>
-                        <div className="space-y-4 rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+                        <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4 shadow-sm">
                             <ToggleSetting
                                 label="保存原始响应"
                                 description="关闭后不再写入新的 raw JSON，只保留已有归档。"
@@ -111,7 +111,7 @@ export function RawResponseStorageCard() {
                                 onChange={setSaveEnabled}
                             />
 
-                            <div className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                            <div className="flex flex-col gap-3 rounded-md border border-border bg-background p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                                 <div>
                                     <p className="text-sm font-medium text-foreground">每任务最大保存页数</p>
                                     <p className="mt-1 text-xs leading-5 text-muted-foreground">输入 0 表示不限制；建议仅在排查问题时拉高该值。</p>
@@ -123,14 +123,14 @@ export function RawResponseStorageCard() {
                                         step={1}
                                         value={maxPages}
                                         onChange={(e) => setMaxPages(Math.max(0, Number(e.target.value) || 0))}
-                                        className="h-11 w-28 rounded-xl border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="h-11 w-28 rounded-md border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                     />
                                     <span className="text-xs text-muted-foreground">页</span>
                                 </div>
                             </div>
 
-                            <div className="flex justify-end rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
-                                <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig || !isConfigDirty} className="rounded-xl">
+                            <div className="flex justify-end rounded-lg border border-border bg-background p-4 shadow-sm">
+                                <Button size="sm" onClick={handleSaveConfig} disabled={savingConfig || !isConfigDirty} className="rounded-md">
                                     {savingConfig ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                                     保存归档配置
                                 </Button>
@@ -144,7 +144,7 @@ export function RawResponseStorageCard() {
                             <StatItem label="页数上限" value={maxPages === 0 ? "不限制" : `${maxPages} 页`} />
                         </div>
 
-                        <div className="flex items-start gap-3 rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+                        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/20 p-4 shadow-sm">
                             <HardDrive className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                             <div className="space-y-1">
                                 <p className="text-xs text-muted-foreground">存储目录</p>
@@ -153,7 +153,7 @@ export function RawResponseStorageCard() {
                         </div>
 
                         {storage.tasks.length > 0 ? (
-                            <div className="space-y-3 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                            <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
                                         <FileText className="h-4 w-4 text-muted-foreground" /> 已归档任务 ({storage.tasks.length})
@@ -161,7 +161,7 @@ export function RawResponseStorageCard() {
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        className="rounded-xl text-red-600"
+                                        className="rounded-md text-red-600"
                                         onClick={() => setConfirmClearAll(true)}
                                         disabled={clearingAll}
                                     >
@@ -169,7 +169,7 @@ export function RawResponseStorageCard() {
                                         清理全部
                                     </Button>
                                 </div>
-                                <div className="max-h-56 divide-y overflow-y-auto rounded-2xl border border-border/60 bg-card/80">
+                                <div className="max-h-56 divide-y overflow-y-auto rounded-md border border-border bg-card">
                                     {storage.tasks.map((task) => (
                                         <div key={task.task_id} className="flex items-center justify-between gap-3 px-4 py-3 text-xs transition-colors hover:bg-muted/20">
                                             <div className="min-w-0">
@@ -179,7 +179,7 @@ export function RawResponseStorageCard() {
                                             <Button
                                                 variant="ghost"
                                                 size="sm"
-                                                className="rounded-xl text-red-600"
+                                                className="rounded-md text-red-600"
                                                 disabled={deletingTaskId === task.task_id}
                                                 onClick={() => setConfirmDeleteTaskId(task.task_id)}
                                             >
@@ -192,7 +192,7 @@ export function RawResponseStorageCard() {
                         ) : null}
                     </>
                 ) : (
-                    <div className="rounded-2xl border border-dashed border-border/80 bg-muted/20 p-4 text-sm text-muted-foreground">
+                    <div className="rounded-md border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                         无法连接后端服务，请确认服务已启动。
                     </div>
                 )}
@@ -239,7 +239,7 @@ function ToggleSetting({
     onChange: (checked: boolean) => void;
 }) {
     return (
-        <label className="flex items-start justify-between gap-3 rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm">
+        <label className="flex items-start justify-between gap-3 rounded-md border border-border bg-background p-4 shadow-sm">
             <div>
                 <p className="text-sm font-medium text-foreground">{label}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
@@ -255,7 +255,7 @@ function ToggleSetting({
 
 function StatItem({ label, value, accent }: { label: string; value: string; accent?: string }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-muted/20 p-4 shadow-sm">
+        <div className="rounded-md border border-border bg-muted/20 p-4 shadow-sm">
             <p className="text-xs text-muted-foreground">{label}</p>
             <p className={`mt-1 text-sm font-semibold ${accent ?? "text-foreground"}`}>{value}</p>
         </div>

@@ -76,7 +76,7 @@ export function CookieManager() {
             applyResponse(response);
             setRawInput("");
             showToast(
-                "success",
+ "success",
                 response.has_login ? "登录态已保存" : "Cookie 已保存",
                 response.has_login ? "后续抓取会自动注入登录态。" : `已保存 ${response.count} 条 Cookie，但登录态仍不完整。`,
             );
@@ -137,7 +137,7 @@ export function CookieManager() {
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 p-4 shadow-sm">
                 <div className="flex items-center gap-3">
                     {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : statusIcon}
                     <div>
@@ -150,11 +150,11 @@ export function CookieManager() {
                     </div>
                 </div>
                 <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => void fetchCookies()} disabled={loading} className="rounded-xl">
+                    <Button variant="ghost" size="sm" onClick={() => void fetchCookies()} disabled={loading} className="rounded-md">
                         <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
                     </Button>
                     {hasAnyCookie ? (
-                        <Button variant="ghost" size="sm" onClick={() => setConfirmClear(true)} className="rounded-xl text-red-500 hover:text-red-600">
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmClear(true)} className="rounded-md text-red-500 hover:text-red-600">
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                     ) : null}
@@ -166,7 +166,7 @@ export function CookieManager() {
                     {accounts.map((account) => {
                         const isExpanded = expandedAccount === account.user_id;
                         return (
-                            <div key={account.user_id} className="overflow-hidden rounded-[1.25rem] border border-border/60 bg-background/70 shadow-sm">
+                            <div key={account.user_id} className="overflow-hidden rounded-lg border border-border bg-background shadow-sm">
                                 <div className="flex items-center justify-between px-4 py-3">
                                     <button
                                         type="button"
@@ -197,10 +197,10 @@ export function CookieManager() {
                                 </div>
 
                                 {isExpanded ? (
-                                    <div className="border-t border-border/50 bg-muted/10 px-4 py-4">
+                                    <div className="border-t border-border bg-muted/10 px-4 py-4">
                                         <div className="grid gap-2">
                                             {account.cookies.map((cookie) => (
-                                                <div key={`${account.user_id}-${cookie.name}-${cookie.domain}`} className="rounded-xl border border-border/60 bg-background px-3 py-3 shadow-sm">
+                                                <div key={`${account.user_id}-${cookie.name}-${cookie.domain}`} className="rounded-md border border-border bg-background px-3 py-3 shadow-sm">
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         <span className="font-mono text-sm font-medium text-foreground">{cookie.name}</span>
                                                         <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", cookie.category === "auth" ? "bg-blue-500/10 text-blue-600" : cookie.category === "session" ? "bg-violet-500/10 text-violet-600" : "bg-muted text-muted-foreground")}>
@@ -221,23 +221,23 @@ export function CookieManager() {
                 </div>
             ) : null}
 
-            <div className="rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+            <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <p className="text-sm font-medium text-foreground">从浏览器自动获取 Cookie</p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">若已在浏览器中登录 X，可一键采集并保存当前 Cookie。</p>
                     </div>
-                    <Button variant="outline" size="sm" className="rounded-xl border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/20" onClick={() => void handleCapture()} disabled={capturing}>
+                    <Button variant="outline" size="sm" className="rounded-md border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:hover:bg-blue-950/20" onClick={() => void handleCapture()} disabled={capturing}>
                         {capturing ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Globe className="mr-2 h-3.5 w-3.5" />}
                         {capturing ? "采集中..." : "从浏览器采集"}
                     </Button>
                 </div>
             </div>
 
-            <div className="space-y-3 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+            <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <p className="text-sm font-medium text-foreground">手动录入 Cookie</p>
-                    <div className="flex items-center gap-1 overflow-hidden rounded-xl border border-border/60 bg-muted/20 p-1 text-xs">
+                    <div className="flex items-center gap-1 overflow-hidden rounded-md border border-border bg-muted/20 p-1 text-xs">
                         {(["string", "json"] as const).map((mode) => (
                             <button
                                 key={mode}
@@ -257,23 +257,23 @@ export function CookieManager() {
                     value={rawInput}
                     onChange={(e) => setRawInput(e.target.value)}
                     placeholder={inputMode === "string" ? "auth_token=...; twid=...; ct0=..." : '[{"name":"auth_token","value":"xxx","domain":".x.com"}]'}
-                    className="h-28 w-full resize-none rounded-xl border border-input bg-muted/20 px-3 py-3 font-mono text-xs shadow-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="h-28 w-full resize-none rounded-md border border-input bg-muted/20 px-3 py-3 font-mono text-xs shadow-sm placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary"
                 />
                 <p className="text-xs text-muted-foreground">
                     {inputMode === "string" ? "从浏览器开发者工具复制 Cookie，粘贴为 name=value; name=value 格式。" : "JSON 数组格式，每项需包含 name、value、domain。"}
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <Button size="sm" onClick={() => void handleSave()} disabled={saving || !rawInput.trim()} className="rounded-xl">
+                    <Button size="sm" onClick={() => void handleSave()} disabled={saving || !rawInput.trim()} className="rounded-md">
                         {saving ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <Cookie className="mr-2 h-3.5 w-3.5" />}
                         {saving ? "保存中..." : "保存 Cookie"}
                     </Button>
                     {hasAnyCookie ? (
                         <div className="flex items-center gap-2">
-                            <Button variant="outline" size="sm" className="rounded-xl" onClick={() => void handleExport("json")} disabled={exporting}>
+                            <Button variant="outline" size="sm" className="rounded-md" onClick={() => void handleExport("json")} disabled={exporting}>
                                 {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
                                 导出 JSON
                             </Button>
-                            <Button variant="outline" size="sm" className="rounded-xl" onClick={() => void handleExport("string")} disabled={exporting}>
+                            <Button variant="outline" size="sm" className="rounded-md" onClick={() => void handleExport("string")} disabled={exporting}>
                                 {exporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
                                 导出文本
                             </Button>

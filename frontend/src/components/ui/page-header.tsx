@@ -12,6 +12,10 @@ interface PageHeaderProps {
     className?: string;
 }
 
+/**
+ * 编辑感 PageHeader — 不再是「大圆角玻璃卡」，
+ * 而是杂志页头：印刷红短线 + 章节小字 + 衬线大标题 + 描述 + 细线收尾。
+ */
 export function PageHeader({
     title,
     description,
@@ -22,40 +26,47 @@ export function PageHeader({
     className,
 }: PageHeaderProps) {
     return (
-        <div
-            className={cn(
-                "rounded-[1.75rem] border border-border/60 bg-card/85 p-6 shadow-sm backdrop-blur-sm sm:p-8",
-                className,
-            )}
-        >
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-                <div className="space-y-3">
+        <header className={cn("relative pt-2", className)}>
+            <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+                <div className="max-w-3xl space-y-5">
                     {eyebrow ? (
-                        <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                            {eyebrow}
-                        </p>
+                        <div className="flex items-center gap-3">
+                            <span
+                                aria-hidden
+                                className="block h-[2px] w-7 bg-[var(--accent)]"
+                            />
+                            <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-[color:var(--fg-muted)]">
+                                {eyebrow}
+                            </p>
+                        </div>
                     ) : null}
-                    <div className="flex items-start gap-3">
+
+                    <div className="flex items-start gap-4">
                         {Icon ? (
-                            <div className="mt-0.5 rounded-2xl border border-primary/15 bg-primary/10 p-3 text-primary shadow-sm">
-                                <Icon className="h-6 w-6" />
-                            </div>
+                            <Icon
+                                aria-hidden
+                                className="mt-2 h-5 w-5 shrink-0 text-[var(--accent)]"
+                            />
                         ) : null}
-                        <div className="space-y-2">
-                            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                        <div className="space-y-3">
+                            <h1 className="font-serif text-[2.4rem] font-medium leading-[1.08] tracking-[-0.02em] text-foreground sm:text-[3rem]">
                                 {title}
                             </h1>
-                            <p className="max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
+                            <p className="max-w-2xl text-[15px] leading-7 text-[color:var(--fg-muted)]">
                                 {description}
                             </p>
                         </div>
                     </div>
                 </div>
 
-                {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+                {actions ? (
+                    <div className="flex shrink-0 items-center gap-2 lg:pb-1">{actions}</div>
+                ) : null}
             </div>
 
-            {children ? <div className="mt-6">{children}</div> : null}
-        </div>
+            {children ? <div className="mt-8">{children}</div> : null}
+
+            <hr className="rule-editorial mt-8" />
+        </header>
     );
 }

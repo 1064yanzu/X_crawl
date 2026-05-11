@@ -92,7 +92,7 @@ function TriStateFilter({
     return (
         <div className="space-y-1.5">
             <span className="text-xs font-medium text-foreground/80">{label}</span>
-            <div className="flex gap-1 rounded-lg border border-border/30 bg-muted/50 p-0.5">
+            <div className="flex gap-1 rounded-lg border border-border bg-muted/50 p-0.5">
                 {options.map((option) => (
                     <button
                         key={option.value}
@@ -100,7 +100,7 @@ function TriStateFilter({
                         onClick={() => onChange(option.value)}
                         className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-all duration-200 ${
                             value === option.value
-                                ? "border border-border/60 bg-background text-foreground shadow-sm"
+                                ? "border border-border bg-background text-foreground shadow-sm"
                                 : "text-muted-foreground hover:text-foreground"
                         }`}
                     >
@@ -137,7 +137,7 @@ export function WordsSection({ params, update }: { params: AdvancedSearchParams;
 
 export function AccountsSection({ params, update }: { params: AdvancedSearchParams; update: UpdateFn }) {
     return (
-        <div className="space-y-3 border-t border-border/50 pt-3">
+        <div className="space-y-3 border-t border-border pt-3">
             <SectionHeader icon={AtSign} title="账号" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <FieldInput id="fromAccounts" label="来自这些账号" placeholder="@elonmusk" hint="由这些账号发出的推文" value={params.fromAccounts} onChange={(event) => update("fromAccounts", event.target.value)} />
@@ -158,7 +158,7 @@ export function FilterSection({
     onLinkChange: (value: TriStateValue) => void;
 }) {
     return (
-        <div className="space-y-3 border-t border-border/50 pt-3">
+        <div className="space-y-3 border-t border-border pt-3">
             <SectionHeader icon={Filter} title="筛选条件" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <TriStateFilter label="回复 (Replies)" value={params.replyFilter} onChange={onReplyChange} />
@@ -170,7 +170,7 @@ export function FilterSection({
 
 export function EngagementSection({ params, update }: { params: AdvancedSearchParams; update: UpdateFn }) {
     return (
-        <div className="space-y-3 border-t border-border/50 pt-3">
+        <div className="space-y-3 border-t border-border pt-3">
             <SectionHeader icon={BarChart3} title="互动量" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <FieldInput id="minReplies" label="最低回复数" type="number" min={0} placeholder="如 280" hint="至少获得这么多回复" value={params.minReplies} onChange={(event) => update("minReplies", event.target.value)} />
@@ -183,7 +183,7 @@ export function EngagementSection({ params, update }: { params: AdvancedSearchPa
 
 export function DatesSection({ params, update }: { params: AdvancedSearchParams; update: UpdateFn }) {
     return (
-        <div className="space-y-3 border-t border-border/50 pt-3">
+        <div className="space-y-3 border-t border-border pt-3">
             <SectionHeader icon={Calendar} title="时间范围" />
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <FieldInput id="since" label="起始日期 (Since)" type="date" value={params.since} onChange={(event) => update("since", event.target.value)} />

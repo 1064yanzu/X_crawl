@@ -1,26 +1,47 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono, Noto_Sans_SC } from "next/font/google";
+import { Fraunces, Manrope, JetBrains_Mono, Noto_Sans_SC, Noto_Serif_SC } from "next/font/google";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppProviders } from "@/components/providers/AppProviders";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
-const appSans = Noto_Sans_SC({
-  variable: "--font-geist-sans",
+const appSerif = Fraunces({
+  variable: "--font-app-serif",
+  subsets: ["latin"],
+  axes: ["opsz", "SOFT"],
+  display: "swap",
+});
+
+const appSans = Manrope({
+  variable: "--font-app-sans",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const appCnSerif = Noto_Serif_SC({
+  variable: "--font-cn-serif",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const appCnSans = Noto_Sans_SC({
+  variable: "--font-cn-sans",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   display: "swap",
 });
 
 const appMono = JetBrains_Mono({
-  variable: "--font-geist-mono",
+  variable: "--font-app-mono",
   subsets: ["latin"],
   display: "swap",
 });
 
 export const metadata: Metadata = {
-  title: "X_crawl Console",
-  description: "Advanced web scraper for X (Twitter) with checkpoint resume.",
+  title: "X_crawl · 编辑室",
+  description: "多平台采集控制台 — X / 微博 / YouTube，节奏化采集与可恢复任务流。",
 };
 
 export default function RootLayout({
@@ -29,7 +50,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${appSans.variable} ${appMono.variable} antialiased`} suppressHydrationWarning>
+    <html
+      lang="zh-CN"
+      className={`${appSerif.variable} ${appSans.variable} ${appCnSerif.variable} ${appCnSans.variable} ${appMono.variable} antialiased`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>

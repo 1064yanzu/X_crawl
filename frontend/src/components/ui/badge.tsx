@@ -7,20 +7,27 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
 
 function Badge({ className, variant = "default", ...props }: BadgeProps) {
     const variants = {
-        default: "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
-        secondary: "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        destructive: "border-transparent bg-red-500 text-white hover:bg-red-500/80",
-        outline: "text-foreground",
-        success: "border-transparent bg-green-500/15 text-green-700 dark:text-green-400 hover:bg-green-500/25",
-        warning: "border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-400 hover:bg-amber-500/25",
+        default:
+ "border-[var(--accent)] bg-[var(--accent-tint)] text-[color:var(--accent-strong)]",
+        secondary:
+ "border-[var(--line-strong)] bg-[var(--surface-2)] text-foreground",
+        destructive:
+ "border-[var(--danger)] bg-[var(--danger-tint)] text-[color:var(--danger)]",
+        outline:
+ "border-[var(--line-strong)] text-[color:var(--fg-muted)]",
+        success:
+ "border-[var(--ok)] bg-[var(--ok-tint)] text-[color:var(--ok)]",
+        warning:
+ "border-[var(--warn)] bg-[var(--warn-tint)] text-[color:var(--warn)]",
     }
 
     return (
         <div
             className={cn(
-                "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+ "inline-flex items-center gap-1 border px-2 py-[2px] text-[10.5px] font-medium uppercase tracking-[0.14em] transition-colors",
+ "[font-variant-numeric:tabular-nums]",
                 variants[variant],
-                className
+                className,
             )}
             {...props}
         />

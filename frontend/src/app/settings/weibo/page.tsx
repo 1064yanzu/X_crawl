@@ -7,7 +7,7 @@ import { WeiboAccountPoolCard } from "@/components/features/WeiboAccountPoolCard
 export default function WeiboSettingsPage() {
     return (
         <div className="grid gap-6 animate-in fade-in duration-300">
-            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card ">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Globe className="h-5 w-5 text-orange-500" /> 微博 Cookie 管理
@@ -21,7 +21,7 @@ export default function WeiboSettingsPage() {
                 </CardContent>
             </Card>
 
-            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card ">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Users className="h-5 w-5 text-orange-500" /> 微博多账号池

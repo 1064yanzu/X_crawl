@@ -62,15 +62,15 @@ export function TaskLiveTimeline({ events }: { events: TaskStreamEvent[] }) {
 
     if (events.length === 0) {
         return (
-            <div className="rounded-2xl border border-dashed border-border/80 bg-muted/20 p-4 text-sm text-muted-foreground">
+            <div className="rounded-md border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                 实时通道已建立，等待第一条动作事件。
             </div>
         );
     }
 
     return (
-        <div className="rounded-2xl border bg-card shadow-sm">
-            <div className="border-b border-border/60 px-4 py-4">
+        <div className="rounded-md border bg-card shadow-sm">
+            <div className="border-b border-border px-4 py-4">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                         <ListChecks className="h-4 w-4 text-primary" />
@@ -86,7 +86,7 @@ export function TaskLiveTimeline({ events }: { events: TaskStreamEvent[] }) {
                             value={query}
                             onChange={(event) => setQuery(event.target.value)}
                             placeholder="搜索阶段、类型、状态或风控"
-                            className="h-10 w-full rounded-xl border border-input bg-background pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                            className="h-10 w-full rounded-md border border-input bg-background pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                         />
                     </div>
                 </div>
@@ -118,7 +118,7 @@ export function TaskLiveTimeline({ events }: { events: TaskStreamEvent[] }) {
                         const riskLabel = hasRisk ? getRiskStateLabel(event.risk_state) : "";
 
                         return (
-                            <div key={`${event.id ?? index}-${event.ts ?? ""}`} className="border-b border-border/50 px-4 py-3 last:border-b-0">
+                            <div key={`${event.id ?? index}-${event.ts ?? ""}`} className="border-b border-border px-4 py-3 last:border-b-0">
                                 <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
                                     <span className="font-medium text-foreground">{event.phase || event.type}</span>
                                     <span className="font-mono text-muted-foreground">
@@ -127,7 +127,7 @@ export function TaskLiveTimeline({ events }: { events: TaskStreamEvent[] }) {
                                 </div>
                                 <p className="mt-1 text-sm text-muted-foreground">{describeEvent(event)}</p>
                                 {hasRisk ? (
-                                    <p className="mt-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                                    <p className="mt-2 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                                         当前事件命中风险状态：{riskLabel}。
                                     </p>
                                 ) : null}

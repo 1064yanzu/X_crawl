@@ -146,7 +146,7 @@ function TaskListCardComfortable({
         <Card
             id={`task-card-${task.task_id}`}
             className={cn(
-                "overflow-hidden rounded-[1.5rem] border-border/60 bg-card/90 shadow-sm transition-all",
+ "overflow-hidden rounded-lg border-border bg-card shadow-sm transition-all",
                 selected && "border-primary/50 ring-2 ring-primary/10",
                 focused && "border-sky-400/60 ring-2 ring-sky-500/15",
             )}
@@ -209,9 +209,9 @@ function TaskListCardComfortable({
                     </div>
                 </Link>
 
-                <div className="border-t border-border/50 bg-muted/15 p-4 lg:w-[236px] lg:border-l lg:border-t-0">
+                <div className="border-t border-border bg-muted/15 p-4 lg:w-[236px] lg:border-l lg:border-t-0">
                     <div className="flex h-full flex-col gap-3">
-                        <label className="inline-flex items-center gap-2 self-start rounded-full border border-border/60 bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
+                        <label className="inline-flex items-center gap-2 self-start rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm">
                             <input
                                 type="checkbox"
                                 checked={selected}
@@ -221,14 +221,14 @@ function TaskListCardComfortable({
                             选中此任务
                         </label>
 
-                        <div className="w-full rounded-2xl border border-border/60 bg-card px-3 py-3 text-xs text-muted-foreground shadow-sm">
+                        <div className="w-full rounded-md border border-border bg-card px-3 py-3 text-xs text-muted-foreground shadow-sm">
                             <p className="font-semibold uppercase tracking-[0.16em]">任务信息</p>
                             <p className="mt-2">创建于 {formatDateTime(task.created_at)}</p>
                             {task.finished_at ? <p className="mt-1">结束于 {formatDateTime(task.finished_at)}</p> : null}
                         </div>
 
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                            <Button variant="outline" size="sm" className="justify-start rounded-xl" onClick={() => onPreview(task.task_id)}>
+                            <Button variant="outline" size="sm" className="justify-start rounded-md" onClick={() => onPreview(task.task_id)}>
                                 <Eye className="mr-1.5 h-3.5 w-3.5" />
                                 快速预览
                             </Button>
@@ -237,7 +237,7 @@ function TaskListCardComfortable({
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="justify-start rounded-xl"
+                                    className="justify-start rounded-md"
                                     disabled={busyAction !== null}
                                     onClick={() => onCommentBackfill(task.task_id)}
                                 >
@@ -257,7 +257,7 @@ function TaskListCardComfortable({
                                                     key={n}
                                                     type="button"
                                                     className={cn(
-                                                        "flex h-6 w-7 items-center justify-center rounded-md border text-[11px] font-medium transition-colors",
+ "flex h-6 w-7 items-center justify-center rounded-md border text-[11px] font-medium transition-colors",
                                                         groupConcurrency === n
                                                             ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
                                                             : "border-border bg-background text-muted-foreground hover:border-violet-500/50",
@@ -273,7 +273,7 @@ function TaskListCardComfortable({
                                     <Button
                                         variant="outline"
                                         size="sm"
-                                        className="w-full justify-start rounded-xl"
+                                        className="w-full justify-start rounded-md"
                                         disabled={resumingId === task.task_id || busyAction !== null}
                                         onClick={() => onResume(task.task_id, { concurrency: groupConcurrency })}
                                     >
@@ -285,7 +285,7 @@ function TaskListCardComfortable({
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="justify-start rounded-xl"
+                                    className="justify-start rounded-md"
                                     disabled={resumingId === task.task_id || busyAction !== null}
                                     onClick={() => onResume(task.task_id)}
                                 >
@@ -298,7 +298,7 @@ function TaskListCardComfortable({
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="justify-start rounded-xl"
+                                    className="justify-start rounded-md"
                                     disabled={recrawlingId === task.task_id || busyAction !== null}
                                     onClick={() => onRecrawl(task.task_id)}
                                 >
@@ -310,7 +310,7 @@ function TaskListCardComfortable({
 
                         <div className="mt-auto flex gap-2 lg:justify-end">
                             <Link href={`/tasks/${task.task_id}`} className="flex-1 lg:flex-none">
-                                <Button variant="ghost" size="sm" className="w-full rounded-xl text-muted-foreground">
+                                <Button variant="ghost" size="sm" className="w-full rounded-md text-muted-foreground">
                                     <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
                                     详情
                                 </Button>
@@ -318,7 +318,7 @@ function TaskListCardComfortable({
                             <Button
                                 variant="ghost"
                                 size="sm"
-                                className="rounded-xl text-muted-foreground hover:text-red-600"
+                                className="rounded-md text-muted-foreground hover:text-red-600"
                                 onClick={() => onDelete(task.task_id)}
                                 disabled={busyAction !== null}
                             >
@@ -365,7 +365,7 @@ function TaskListCardCompact({
         <Card
             id={`task-card-${task.task_id}`}
             className={cn(
-                "group relative overflow-hidden rounded-2xl border-border/60 bg-card/90 shadow-sm transition-all hover:shadow-md",
+ "group relative overflow-hidden rounded-md border-border bg-card shadow-sm transition-all hover:shadow-md",
                 selected && "border-primary/50 ring-2 ring-primary/10",
                 focused && "border-sky-400/60 ring-2 ring-sky-500/15",
             )}
@@ -438,7 +438,7 @@ function TaskListCardCompact({
 
                 {/* 操作按钮（hover 时显示） */}
                 <div className={cn(
-                    "flex shrink-0 items-center gap-1 transition-opacity duration-150",
+ "flex shrink-0 items-center gap-1 transition-opacity duration-150",
                     hovered ? "opacity-100" : "pointer-events-none opacity-0",
                 )}>
                     <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={() => onPreview(task.task_id)} title="快速预览">
@@ -524,7 +524,7 @@ function TaskListCardMini({
         <div
             id={`task-card-${task.task_id}`}
             className={cn(
-                "group flex items-center gap-2.5 rounded-xl border border-transparent px-3 py-2 text-sm transition-all hover:bg-muted/40",
+ "group flex items-center gap-2.5 rounded-md border border-transparent px-3 py-2 text-sm transition-all hover:bg-muted/40",
                 selected && "border-primary/40 bg-primary/5",
                 focused && "border-sky-400/50 bg-sky-500/5",
             )}
@@ -560,7 +560,7 @@ function TaskListCardMini({
 
             {/* hover 操作 */}
             <div className={cn(
-                "flex shrink-0 items-center gap-0.5 transition-opacity duration-100",
+ "flex shrink-0 items-center gap-0.5 transition-opacity duration-100",
                 hovered ? "opacity-100" : "pointer-events-none opacity-0",
             )}>
                 <Button variant="ghost" size="icon" className="h-6 w-6 rounded-md" onClick={() => onPreview(task.task_id)} title="预览">

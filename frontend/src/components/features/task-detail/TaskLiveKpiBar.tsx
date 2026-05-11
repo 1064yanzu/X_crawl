@@ -33,7 +33,7 @@ export function TaskLiveKpiBar({ task, connected }: { task: TaskOut; connected: 
 
 function KpiItem({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
     return (
-        <div className="rounded-2xl border bg-card px-4 py-3 shadow-sm">
+        <div className="rounded-md border bg-card px-4 py-3 shadow-sm">
             <div className="mb-1 flex items-center gap-1.5 text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
                 {icon}
                 <span>{label}</span>

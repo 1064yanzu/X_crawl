@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 
 function PreviewStat({ label, value, hint }: { label: string; value: string; hint: string }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-background/70 px-4 py-4 shadow-sm">
+        <div className="rounded-md border border-border bg-background px-4 py-4 shadow-sm">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
             <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
             <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
@@ -72,7 +72,7 @@ function TaskPreviewBody({
                         <p className="mt-2 text-sm leading-6 text-muted-foreground">{phase}</p>
                     </div>
 
-                    <div className="rounded-2xl border border-border/60 bg-background/70 px-4 py-3 text-sm text-muted-foreground shadow-sm">
+                    <div className="rounded-md border border-border bg-background px-4 py-3 text-sm text-muted-foreground shadow-sm">
                         <p>任务 ID：<span className="font-mono text-foreground">{task.task_id}</span></p>
                         <p className="mt-1">最近更新：{formatDateTime(getTaskLastUpdated(task))}</p>
                     </div>
@@ -89,7 +89,7 @@ function TaskPreviewBody({
                         hint="持续抓取直到数据耗尽或被终止"
                     />
                     {task.task_kind === "comment_backfill" ? (
-                        <div className="rounded-2xl border border-border/60 bg-background/70 px-4 py-4 shadow-sm">
+                        <div className="rounded-md border border-border bg-background px-4 py-4 shadow-sm">
                             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">补采进度</p>
                             <div className="mt-2 flex items-center gap-2">
                                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
@@ -110,7 +110,7 @@ function TaskPreviewBody({
                     <PreviewStat label="风控状态" value={getRiskStateLabel(task.risk_state)} hint={task.status === "done" ? "任务已完成" : active ? getRiskStateHint(task.risk_state) : "可在详情页复盘"} />
                 </div>
 
-                <div className="rounded-[1.25rem] border border-border/60 bg-card/90 p-4 shadow-sm">
+                <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">快速判断</p>
                     <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                         <span className="rounded-full bg-muted px-2.5 py-1">平台 {platformMeta.label}</span>
@@ -127,10 +127,10 @@ function TaskPreviewBody({
                 </div>
             </div>
 
-            <div className="border-t border-border/60 px-5 py-4 sm:px-6">
+            <div className="border-t border-border px-5 py-4 sm:px-6">
                 <div className="flex flex-col gap-2 sm:flex-row">
                     <Link href={`/tasks/${task.task_id}`} className="flex-1">
-                        <Button className="w-full rounded-xl">
+                        <Button className="w-full rounded-md">
                             <ExternalLink className="mr-1.5 h-4 w-4" />
                             打开完整详情
                         </Button>
@@ -146,7 +146,7 @@ function TaskPreviewBody({
                                         key={n}
                                         type="button"
                                         className={cn(
-                                            "flex h-6 w-7 items-center justify-center rounded-md border text-[11px] font-medium transition-colors",
+ "flex h-6 w-7 items-center justify-center rounded-md border text-[11px] font-medium transition-colors",
                                             groupConcurrency === n
                                                 ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
                                                 : "border-border bg-background text-muted-foreground hover:border-violet-500/50",
@@ -160,7 +160,7 @@ function TaskPreviewBody({
                             </div>
                             <Button
                                 variant="outline"
-                                className="w-full rounded-xl"
+                                className="w-full rounded-md"
                                 disabled={resumingId === task.task_id}
                                 onClick={() => onResume(task.task_id, { concurrency: groupConcurrency })}
                             >
@@ -171,7 +171,7 @@ function TaskPreviewBody({
                     ) : canResume ? (
                         <Button
                             variant="outline"
-                            className="rounded-xl"
+                            className="rounded-md"
                             disabled={resumingId === task.task_id}
                             onClick={() => onResume(task.task_id)}
                         >
@@ -183,7 +183,7 @@ function TaskPreviewBody({
                     {canBackfill ? (
                         <TaskCommentBackfillButton
                             variant="outline"
-                            className="rounded-xl"
+                            className="rounded-md"
                             loading={backfillingId === task.task_id}
                             onClick={() => onCommentBackfill(task.task_id)}
                         />
@@ -192,7 +192,7 @@ function TaskPreviewBody({
                     {canRecrawl ? (
                         <Button
                             variant="outline"
-                            className="rounded-xl"
+                            className="rounded-md"
                             disabled={recrawlingId === task.task_id}
                             onClick={() => onRecrawl(task.task_id)}
                         >
@@ -201,7 +201,7 @@ function TaskPreviewBody({
                         </Button>
                     ) : null}
 
-                    <Button variant="outline" className="rounded-xl text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10" onClick={() => onDelete(task.task_id)}>
+                    <Button variant="outline" className="rounded-md text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-500/10" onClick={() => onDelete(task.task_id)}>
                         <Trash2 className="mr-1.5 h-4 w-4" />
                         删除
                     </Button>
@@ -232,14 +232,14 @@ export function TaskPreviewPanel({
 }) {
     if (!task) {
         return (
-            <Card className="rounded-[1.75rem] border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card p-5 shadow-sm ">
                 <div className="space-y-4">
                     <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Live Preview</p>
                         <h2 className="mt-1 text-xl font-semibold text-foreground">右侧任务预览</h2>
                         <p className="mt-1 text-sm leading-6 text-muted-foreground">选择任务后会在这里显示预览。</p>
                     </div>
-                    <div className="rounded-[1.25rem] border border-dashed border-border/70 bg-background/60 p-4 text-sm leading-6 text-muted-foreground">
+                    <div className="rounded-lg border border-dashed border-border bg-background p-4 text-sm leading-6 text-muted-foreground">
                         当前没有可预览的任务。你可以先调整平台筛选、搜索条件，或返回控制台创建新的采集任务。
                     </div>
                 </div>
@@ -248,8 +248,8 @@ export function TaskPreviewPanel({
     }
 
     return (
-        <Card className="overflow-hidden rounded-[1.75rem] border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
-            <div className="border-b border-border/60 px-5 py-4">
+        <Card className="overflow-hidden rounded-lg border-border bg-card shadow-sm ">
+            <div className="border-b border-border px-5 py-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Live Preview</p>
                 <h2 className="mt-1 text-xl font-semibold text-foreground">右侧任务预览</h2>
                 <p className="mt-1 text-sm text-muted-foreground">当前任务概览。</p>
@@ -283,14 +283,14 @@ export function TaskPreviewDrawer({
     if (!task) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-0 backdrop-blur-sm xl:hidden">
-            <div className="max-h-[92vh] w-full overflow-hidden rounded-t-[2rem] border border-border/60 bg-card shadow-2xl">
-                <div className="flex items-center justify-between border-b border-border/60 px-5 py-4">
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/45 p-0 xl:hidden">
+            <div className="max-h-[92vh] w-full overflow-hidden rounded-t-[2rem] border border-border bg-card shadow-2xl">
+                <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
                         <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Live Preview</p>
                         <h2 className="mt-1 text-lg font-semibold text-foreground">任务快速预览</h2>
                     </div>
-                    <Button variant="ghost" size="icon" className="rounded-xl" onClick={onClose} aria-label="关闭任务预览">
+                    <Button variant="ghost" size="icon" className="rounded-md" onClick={onClose} aria-label="关闭任务预览">
                         <X className="h-4 w-4" />
                     </Button>
                 </div>

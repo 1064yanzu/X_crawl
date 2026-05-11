@@ -10,6 +10,10 @@ interface EmptyStateProps {
     className?: string;
 }
 
+/**
+ * 编辑感空状态 — 不再是「虚线圆角小卡 + 圆角小图标 + 灰底」，
+ * 而是杂志专题页的「空白栏」：左上一道印刷红短线，下面叙事文本。
+ */
 export function EmptyState({
     icon: Icon,
     title,
@@ -20,16 +24,26 @@ export function EmptyState({
     return (
         <div
             className={cn(
-                "flex flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border/80 bg-muted/20 px-6 py-16 text-center shadow-sm",
+ "relative flex flex-col items-start gap-5 px-2 py-16 sm:px-6",
                 className,
             )}
         >
-            <div className="mb-4 rounded-2xl border border-border/60 bg-background/80 p-4 text-muted-foreground shadow-sm">
-                <Icon className="h-8 w-8" />
+            <span aria-hidden className="block h-[2px] w-10 bg-[var(--accent)]" />
+            <div className="flex items-start gap-4">
+                <Icon
+                    aria-hidden
+                    className="mt-1 h-5 w-5 text-[color:var(--fg-subtle)]"
+                />
+                <div className="max-w-lg space-y-3">
+                    <h3 className="font-serif text-[1.5rem] font-medium leading-tight text-foreground">
+                        {title}
+                    </h3>
+                    <p className="text-[14px] leading-7 text-[color:var(--fg-muted)]">
+                        {description}
+                    </p>
+                </div>
             </div>
-            <h3 className="text-lg font-semibold text-foreground">{title}</h3>
-            <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">{description}</p>
-            {action ? <div className="mt-6">{action}</div> : null}
+            {action ? <div className="pl-9">{action}</div> : null}
         </div>
     );
 }

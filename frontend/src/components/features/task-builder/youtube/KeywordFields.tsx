@@ -62,7 +62,7 @@ interface Props {
 
 export function YouTubeKeywordFields(props: Props) {
     return (
-        <section className="space-y-5 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+        <section className="space-y-5 rounded-lg border border-border bg-background p-5 shadow-sm">
             <SectionTitle
                 title="关键词搜索"
                 description="走官方 search.list，配额 100 单位/次。建议配合时间范围和最大视频数控制消耗。"
@@ -78,7 +78,7 @@ export function YouTubeKeywordFields(props: Props) {
                         value={props.keyword}
                         onChange={(event) => props.onKeywordChange(event.target.value)}
                         placeholder="例如：claude code / machine learning / 机器学习"
-                        className="h-11 rounded-xl pl-10"
+                        className="h-11 rounded-md pl-10"
                     />
                 </div>
             </label>
@@ -116,7 +116,7 @@ export function YouTubeKeywordFields(props: Props) {
                             props.onRegionCodeChange(event.target.value.toUpperCase().slice(0, 2))
                         }
                         placeholder="ISO 3166-1，如 US / CN / JP"
-                        className="h-11 rounded-xl"
+                        className="h-11 rounded-md"
                     />
                 </label>
                 <label className="flex flex-col gap-1.5 text-sm">
@@ -127,12 +127,12 @@ export function YouTubeKeywordFields(props: Props) {
                             props.onRelevanceLanguageChange(event.target.value.toLowerCase().slice(0, 5))
                         }
                         placeholder="BCP-47，如 zh / en / ja"
-                        className="h-11 rounded-xl"
+                        className="h-11 rounded-md"
                     />
                 </label>
             </div>
 
-            <div className="grid gap-3 rounded-2xl border border-border/60 bg-muted/20 p-4 md:grid-cols-2">
+            <div className="grid gap-3 rounded-md border border-border bg-muted/20 p-4 md:grid-cols-2">
                 <div className="space-y-2">
                     <label className="flex items-center gap-2 text-sm font-medium">
                         <CalendarRange className="h-4 w-4 text-primary" /> 发布日期 起
@@ -141,7 +141,7 @@ export function YouTubeKeywordFields(props: Props) {
                         type="date"
                         value={props.startDate}
                         onChange={(event) => props.onStartDateChange(event.target.value)}
-                        className="h-11 rounded-xl bg-background"
+                        className="h-11 rounded-md bg-background"
                     />
                 </div>
                 <div className="space-y-2">
@@ -152,7 +152,7 @@ export function YouTubeKeywordFields(props: Props) {
                         type="date"
                         value={props.endDate}
                         onChange={(event) => props.onEndDateChange(event.target.value)}
-                        className="h-11 rounded-xl bg-background"
+                        className="h-11 rounded-md bg-background"
                     />
                 </div>
                 <p className="text-xs text-muted-foreground md:col-span-2">

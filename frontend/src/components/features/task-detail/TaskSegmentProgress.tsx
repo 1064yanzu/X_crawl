@@ -13,7 +13,7 @@ export function TaskSegmentProgress({ task }: { task: TaskOut }) {
     const platformLabel = task.platform === "weibo" ? "微博" : "X";
 
     return (
-        <div className="rounded-xl border bg-card p-4 shadow-sm">
+        <div className="rounded-md border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                 <SplitSquareVertical className="h-4 w-4 text-primary" />
                 {platformLabel} 时间分段进度

@@ -123,7 +123,7 @@ function LiveStatusBanner({
     return (
         <div
             className={cn(
-                "flex items-start gap-3 px-4 py-3 rounded-xl border text-sm mb-4",
+ "flex items-start gap-3 px-4 py-3 rounded-md border text-sm mb-4",
                 isRunning
                     ? "bg-blue-500/5 border-blue-500/20 text-blue-700 dark:text-blue-400"
                     : "bg-amber-500/5 border-amber-500/20 text-amber-700 dark:text-amber-400"

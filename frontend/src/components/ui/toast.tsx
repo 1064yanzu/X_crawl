@@ -20,11 +20,11 @@ const ToastContext = React.createContext<ToastContextValue | null>(null);
 
 const TOAST_TTL = 3000;
 
-function typeIcon(type: ToastType) {
-    if (type === "success") return <CheckCircle2 className="h-4 w-4 text-emerald-600" />;
-    if (type === "error") return <AlertTriangle className="h-4 w-4 text-red-600" />;
-    return <Info className="h-4 w-4 text-blue-600" />;
-}
+const typeMeta: Record<ToastType, { icon: React.ReactNode; rule: string }> = {
+    success: { icon: <CheckCircle2 className="h-3.5 w-3.5 text-[var(--ok)]" />, rule: "bg-[var(--ok)]" },
+    error:   { icon: <AlertTriangle className="h-3.5 w-3.5 text-[var(--danger)]" />, rule: "bg-[var(--danger)]" },
+    info:    { icon: <Info className="h-3.5 w-3.5 text-[var(--accent)]" />, rule: "bg-[var(--accent)]" },
+};
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
     const [toasts, setToasts] = React.useState<ToastItem[]>([]);
@@ -42,33 +42,43 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     return (
         <ToastContext.Provider value={{ push }}>
             {children}
-            <div aria-live="polite" className="pointer-events-none fixed right-4 top-4 z-[100] flex w-[min(92vw,24rem)] flex-col gap-2">
-                {toasts.map((toast) => (
-                    <div
-                        key={toast.id}
-                        className={cn(
-                            "pointer-events-auto rounded-xl border bg-card/95 p-3 shadow-lg backdrop-blur supports-[backdrop-filter]:bg-card/80",
-                            "animate-in slide-in-from-top-2 fade-in duration-200",
-                        )}
-                        role="status"
-                    >
-                        <div className="flex items-start gap-2">
-                            <div className="mt-0.5 shrink-0">{typeIcon(toast.type)}</div>
-                            <div className="min-w-0 flex-1">
-                                <p className="text-sm font-semibold">{toast.title}</p>
-                                {toast.description && <p className="mt-0.5 text-xs text-muted-foreground">{toast.description}</p>}
+            <div
+                aria-live="polite"
+                className="pointer-events-none fixed right-6 top-6 z-[100] flex w-[min(92vw,22rem)] flex-col gap-3"
+            >
+                {toasts.map((toast) => {
+                    const meta = typeMeta[toast.type];
+                    return (
+                        <div
+                            key={toast.id}
+                            className={cn(
+                                "pointer-events-auto relative border border-[var(--line)] bg-[var(--surface)] px-4 py-3",
+                                "[box-shadow:0_12px_32px_-12px_oklch(0.15_0.02_60/0.18)]",
+                                "animate-in slide-in-from-top-2 fade-in duration-300",
+                            )}
+                            role="status"
+                        >
+                            <span aria-hidden className={cn("absolute left-0 top-0 h-full w-[2px]", meta.rule)} />
+                            <div className="flex items-start gap-3 pl-2">
+                                <div className="mt-0.5 shrink-0">{meta.icon}</div>
+                                <div className="min-w-0 flex-1 space-y-1">
+                                    <p className="font-serif text-[14px] leading-snug text-foreground">{toast.title}</p>
+                                    {toast.description ? (
+                                        <p className="text-[12px] leading-5 text-[color:var(--fg-muted)]">{toast.description}</p>
+                                    ) : null}
+                                </div>
+                                <button
+                                    type="button"
+                                    className="rounded p-1 text-[color:var(--fg-subtle)] transition-colors hover:text-foreground"
+                                    onClick={() => remove(toast.id)}
+                                    aria-label="关闭提示"
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
                             </div>
-                            <button
-                                type="button"
-                                className="rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                                onClick={() => remove(toast.id)}
-                                aria-label="关闭提示"
-                            >
-                                <X className="h-3.5 w-3.5" />
-                            </button>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </ToastContext.Provider>
     );
@@ -79,4 +89,3 @@ export function useToast() {
     if (!ctx) throw new Error("useToast must be used within ToastProvider");
     return ctx;
 }
-

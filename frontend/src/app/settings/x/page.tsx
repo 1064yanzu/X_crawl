@@ -7,7 +7,7 @@ import { AccountPoolCard } from "@/components/features/AccountPoolCard";
 export default function XSettingsPage() {
     return (
         <div className="grid gap-6 animate-in fade-in duration-300">
-            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card ">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Twitter className="h-5 w-5 text-blue-500" /> X / Twitter Cookie 管理
@@ -21,7 +21,7 @@ export default function XSettingsPage() {
                 </CardContent>
             </Card>
 
-            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card ">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Users className="h-5 w-5 text-violet-500" /> X 多账号池

@@ -35,7 +35,7 @@ export function PlatformDistribution({
 
     if (chartData.length === 0) {
         return (
-            <Card className="rounded-2xl border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
+            <Card className="rounded-md border-border bg-card shadow-sm ">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-lg">平台分布</CardTitle>
                 </CardHeader>
@@ -47,7 +47,7 @@ export function PlatformDistribution({
     }
 
     return (
-        <Card className="rounded-2xl border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
+        <Card className="rounded-md border-border bg-card shadow-sm ">
             <CardHeader className="pb-3">
                 <CardTitle className="text-lg">平台分布</CardTitle>
                 <p className="text-xs text-muted-foreground">各平台推文与评论采集量</p>

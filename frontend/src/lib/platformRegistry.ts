@@ -36,7 +36,7 @@ export const PLATFORMS: PlatformMeta[] = [
     bgLight: "bg-blue-500/10",
     textClass: "text-blue-600 dark:text-blue-400",
     badgeClass:
-      "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+ "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
     barClass: "bg-blue-500",
   },
   {
@@ -48,7 +48,7 @@ export const PLATFORMS: PlatformMeta[] = [
     bgLight: "bg-orange-500/10",
     textClass: "text-orange-600 dark:text-orange-400",
     badgeClass:
-      "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+ "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
     barClass: "bg-orange-500",
   },
   {
@@ -60,7 +60,7 @@ export const PLATFORMS: PlatformMeta[] = [
     bgLight: "bg-red-500/10",
     textClass: "text-red-600 dark:text-red-400",
     badgeClass:
-      "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+ "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
     barClass: "bg-red-500",
   },
 ];

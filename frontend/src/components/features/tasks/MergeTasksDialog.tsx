@@ -55,7 +55,7 @@ export function MergeTasksDialog({
 
     return (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-2xl rounded-2xl border bg-card p-6 shadow-xl max-h-[90vh] flex flex-col">
+            <div className="w-full max-w-2xl rounded-md border bg-card p-6 shadow-xl max-h-[90vh] flex flex-col">
                 <div className="flex items-center justify-between shrink-0 mb-4">
                     <div className="flex items-center gap-2.5">
                         <div className="rounded-full bg-primary/10 p-2 text-primary">
@@ -81,14 +81,14 @@ export function MergeTasksDialog({
                         </div>
                     ) : preview ? (
                         preview.groups.length === 0 ? (
-                            <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border/60 bg-muted/20 text-muted-foreground">
+                            <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-muted/20 text-muted-foreground">
                                 <AlertTriangle className="h-6 w-6 opacity-80" />
                                 <p className="text-sm">所选任务中没有可合并的分组</p>
                                 <p className="text-xs opacity-80">需要至少 2 个「已完成/停止/失败」状态且关键词存在交集的任务才可合并</p>
                             </div>
                         ) : (
                             <div className="space-y-4">
-                                <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-amber-800 dark:border-amber-500/20 dark:text-amber-300">
+                                <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-4 text-amber-800 dark:border-amber-500/20 dark:text-amber-300">
                                     <div className="flex items-start gap-2">
                                         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                                         <div className="text-sm leading-relaxed">
@@ -107,7 +107,7 @@ export function MergeTasksDialog({
                                         将执行 {preview.mergeable_group_count} 组合并操作（涉及 {preview.total_mergeable_tasks} 个任务）
                                     </h4>
                                     {preview.groups.map((group, idx) => (
-                                        <div key={idx} className="rounded-xl border bg-card overflow-hidden">
+                                        <div key={idx} className="rounded-md border bg-card overflow-hidden">
                                             <div className="bg-muted/30 px-4 py-3 border-b flex items-center justify-between">
                                                 <div className="flex items-center gap-2 min-w-0">
                                                     <span className="font-semibold text-foreground truncate">{group.keyword}</span>
@@ -168,12 +168,12 @@ export function MergeTasksDialog({
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-4 border-t shrink-0 mt-auto">
-                    <Button variant="outline" size="sm" className="rounded-xl" onClick={onClose} disabled={merging}>
+                    <Button variant="outline" size="sm" className="rounded-md" onClick={onClose} disabled={merging}>
                         取消
                     </Button>
                     <Button 
                         size="sm" 
-                        className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground" 
+                        className="rounded-md bg-primary hover:bg-primary/90 text-primary-foreground" 
                         onClick={() => void handleMerge()} 
                         disabled={merging || !preview || preview.groups.length === 0}
                     >

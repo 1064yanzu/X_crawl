@@ -4,95 +4,165 @@
   <meta charset="UTF-8" />
   <title>需要安装 Chrome 浏览器</title>
   <style>
-    :root { color-scheme: light dark; }
-    html, body {
-      margin: 0; padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
-      background: #fafafa;
-      color: #18181b;
-      height: 100%;
+    :root {
+      color-scheme: light;
+      --bg: oklch(0.975 0.008 82);
+      --surface: oklch(0.992 0.005 82);
+      --ink: oklch(0.22 0.020 55);
+      --ink-muted: oklch(0.48 0.014 60);
+      --ink-subtle: oklch(0.62 0.012 65);
+      --line: oklch(0.88 0.012 75);
+      --line-strong: oklch(0.82 0.014 70);
+      --accent: oklch(0.52 0.155 32);
+      --accent-strong: oklch(0.42 0.16 30);
     }
     @media (prefers-color-scheme: dark) {
-      html, body { background: #09090b; color: #f4f4f5; }
-      .card { background: #18181b; border-color: #27272a !important; }
-      .row a { background: #27272a; color: #f4f4f5; }
-      .row a:hover { background: #3f3f46; }
+      :root {
+        color-scheme: dark;
+        --bg: oklch(0.185 0.012 60);
+        --surface: oklch(0.215 0.012 60);
+        --ink: oklch(0.94 0.012 80);
+        --ink-muted: oklch(0.70 0.012 75);
+        --ink-subtle: oklch(0.55 0.012 70);
+        --line: oklch(0.32 0.012 65);
+        --line-strong: oklch(0.40 0.014 65);
+        --accent: oklch(0.72 0.135 35);
+        --accent-strong: oklch(0.80 0.140 38);
+      }
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", sans-serif;
+      -webkit-font-smoothing: antialiased;
     }
     .container {
-      max-width: 520px; margin: 0 auto;
-      padding: 56px 32px;
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 64px 40px;
     }
-    .card {
-      background: white;
-      border: 1px solid #e4e4e7;
-      border-radius: 14px;
-      padding: 32px;
-      box-shadow: 0 18px 48px rgba(0,0,0,0.06);
+    .eyebrow {
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--ink-subtle);
+    }
+    .rule {
+      height: 2px;
+      width: 36px;
+      background: var(--accent);
+      margin-top: 14px;
     }
     h1 {
-      margin: 0 0 12px;
-      font-size: 20px; font-weight: 600;
+      font-family: ui-serif, "Times New Roman", "Songti SC", serif;
+      font-size: 30px;
+      font-weight: 500;
+      letter-spacing: -0.012em;
+      line-height: 1.15;
+      margin: 16px 0 4px;
     }
-    p {
-      margin: 0 0 16px;
-      font-size: 14px; line-height: 1.7;
-      color: #52525b;
+    .lead {
+      font-size: 14.5px;
+      color: var(--ink-muted);
+      line-height: 1.8;
+      margin: 18px 0;
+      max-width: 60ch;
+    }
+    strong { color: var(--ink); font-weight: 600; }
+    hr.sep {
+      border: 0;
+      height: 1px;
+      background: var(--line);
+      margin: 28px 0;
     }
     .row {
-      display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
     }
     .row a {
-      flex: 1; min-width: 200px;
-      display: inline-flex; align-items: center; justify-content: center;
-      padding: 12px 16px;
-      background: #f4f4f5;
-      color: #18181b;
-      border-radius: 10px;
+      flex: 1;
+      min-width: 220px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border: 1px solid var(--line-strong);
+      color: var(--ink);
       text-decoration: none;
-      font-size: 14px; font-weight: 500;
-      transition: background 0.15s;
+      font-size: 13.5px;
+      transition: border-color 200ms cubic-bezier(0.22, 1, 0.36, 1), color 200ms;
     }
-    .row a:hover { background: #e4e4e7; }
+    .row a::after {
+      content: "→";
+      font-family: ui-monospace, Menlo, Consolas, monospace;
+      color: var(--ink-subtle);
+      transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), color 200ms;
+    }
+    .row a:hover {
+      border-color: var(--accent);
+      color: var(--accent-strong);
+    }
+    .row a:hover::after {
+      color: var(--accent);
+      transform: translateX(2px);
+    }
     .row a.primary {
-      background: linear-gradient(135deg, #f97316, #ef4444);
-      color: white;
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
     }
-    .row a.primary:hover { filter: brightness(1.06); }
+    .row a.primary::after { color: var(--bg); }
+    .row a.primary:hover {
+      background: var(--accent-strong);
+      border-color: var(--accent-strong);
+    }
     button.retry {
-      margin-top: 22px;
-      width: 100%;
-      padding: 12px 16px;
-      border: none;
-      border-radius: 10px;
-      background: #18181b;
-      color: white;
-      font-size: 14px; font-weight: 500;
+      margin-top: 26px;
+      padding: 14px 22px;
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: var(--bg);
+      font-size: 13.5px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
       cursor: pointer;
+      transition: opacity 200ms;
     }
-    @media (prefers-color-scheme: dark) {
-      button.retry { background: #f4f4f5; color: #18181b; }
+    button.retry:hover { opacity: 0.85; }
+    .footer {
+      margin-top: 36px;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: 0.24em;
+      text-transform: uppercase;
+      color: var(--ink-subtle);
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="card">
-      <h1>需要安装 Chrome 或 Edge 浏览器</h1>
-      <p>
-        X_crawl 通过接管系统已安装的 Chromium 内核浏览器来抓取 X / 微博 / YouTube 数据，
-        所以需要你的电脑上先装好 <strong>Google Chrome</strong> 或 <strong>Microsoft Edge</strong>。
-      </p>
-      <p>请点击下面的链接下载安装，完成后回到本窗口点击「我已安装，重新检测」。</p>
-      <div class="row">
-        <a class="primary" href="https://www.google.com/chrome/" target="_blank" rel="noopener">
-          下载 Google Chrome
-        </a>
-        <a href="https://www.microsoft.com/edge/download" target="_blank" rel="noopener">
-          下载 Microsoft Edge
-        </a>
-      </div>
-      <button class="retry" id="retry">我已安装，重新检测</button>
+    <div class="eyebrow">Issue 01 · Notice</div>
+    <div class="rule"></div>
+    <h1>需要先安装 Chrome 或 Edge</h1>
+    <p class="lead">
+      X_crawl 通过接管系统已安装的 Chromium 内核浏览器来抓取
+      <strong>X / 微博 / YouTube</strong> 数据。请先安装下列任一浏览器，再回到这里继续。
+    </p>
+
+    <hr class="sep" />
+
+    <div class="row">
+      <a class="primary" href="https://www.google.com/chrome/" target="_blank" rel="noopener">下载 Google Chrome</a>
+      <a href="https://www.microsoft.com/edge/download" target="_blank" rel="noopener">下载 Microsoft Edge</a>
     </div>
+
+    <button class="retry" id="retry">我已安装,重新检测</button>
+
+    <p class="footer">X_crawl · Editorial Crawler · Folio 2026</p>
   </div>
   <script>
     const { ipcRenderer, shell } = require('electron');

@@ -11,7 +11,7 @@ import type { TaskOut } from "@/services/api";
 import { TaskStatusBadge } from "@/components/features/task-detail/TaskStatusBadge";
 import { cn } from "@/lib/utils";
 
-function TaskCompactCard({ task }: { task: TaskOut }) {
+function TaskCompactRow({ task, index }: { task: TaskOut; index: number }) {
     const platformMeta = getPlatformMeta(task.platform);
     const lastUpdated = formatDateTime(getTaskLastUpdated(task));
     const phase = getTaskPhase(task);
@@ -20,35 +20,78 @@ function TaskCompactCard({ task }: { task: TaskOut }) {
     return (
         <Link
             href={`/tasks/${task.task_id}`}
-            className="group block rounded-2xl border border-border/60 bg-background/75 p-4 transition-all duration-200 hover:border-primary/25 hover:bg-background hover:shadow-sm"
+            className="group relative block border-t border-[var(--line)] py-4 transition-colors duration-200 first:border-t-0 hover:bg-[var(--surface-2)]/40"
         >
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                        <span className={cn("inline-flex rounded-full px-2.5 py-1 text-[11px] font-medium", platformMeta.badgeClass)}>
+            <span
+                aria-hidden
+                className="absolute left-0 top-4 hidden font-mono text-[9.5px] uppercase tracking-[0.2em] text-[color:var(--fg-subtle)] sm:block"
+            >
+                {String(index + 1).padStart(2, "0")}
+            </span>
+            <div className="flex items-start gap-3 sm:pl-8">
+                <div className="min-w-0 flex-1 space-y-2">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                        <span className={cn("font-mono text-[10px] uppercase tracking-[0.22em]", platformMeta.badgeClass)}>
                             {platformMeta.label}
                         </span>
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                        <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[color:var(--fg-subtle)]">
                             {getTaskKindLabel(task)}
                         </span>
-                        {queueLabel ? <span className="rounded-full bg-primary/8 px-2 py-0.5 text-[11px] font-medium text-primary">队列 {queueLabel}</span> : null}
+                        {queueLabel ? (
+                            <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[var(--accent)]">
+                                Q {queueLabel}
+                            </span>
+                        ) : null}
                         <TaskStatusBadge status={task.status} riskState={task.risk_state} size="sm" />
                     </div>
-                    <h4 className="line-clamp-2 text-sm font-semibold text-foreground">{task.keyword}</h4>
-                    <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{phase}</p>
+                    <h4 className="line-clamp-2 font-serif text-[15px] leading-snug text-foreground">
+                        {task.keyword}
+                    </h4>
+                    <p className="line-clamp-1 text-[12px] leading-5 text-[color:var(--fg-muted)]">{phase}</p>
+                    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono text-[11px] text-[color:var(--fg-subtle)]">
+                        <span className="numeric">
+                            {task.source_task_id && (task.exclude_count ?? 0) > 0
+                                ? `原 ${(task.exclude_count ?? 0).toLocaleString()} · 增 ${task.result_count.toLocaleString()}`
+                                : `结果 ${task.result_count.toLocaleString()}`}
+                        </span>
+                        {task.current_page > 0 ? <span className="numeric">p.{task.current_page}</span> : null}
+                        <span>{lastUpdated}</span>
+                    </div>
                 </div>
-                <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-foreground" />
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
-                <span>
-                    {task.source_task_id && (task.exclude_count ?? 0) > 0
-                        ? `原始 ${(task.exclude_count ?? 0).toLocaleString()} · 新增 ${task.result_count.toLocaleString()}`
-                        : `结果 ${task.result_count.toLocaleString()}`}
-                </span>
-                {task.current_page > 0 ? <span>页数 {task.current_page}</span> : null}
-                <span>更新 {lastUpdated}</span>
+                <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-[color:var(--fg-subtle)] transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-[var(--accent)]" />
             </div>
         </Link>
+    );
+}
+
+function SectionHeading({
+    icon: Icon,
+    label,
+    count,
+    accent = "default",
+}: {
+    icon: React.ComponentType<{ className?: string }>;
+    label: string;
+    count: number;
+    accent?: "default" | "primary" | "warn";
+}) {
+    const accentClass = {
+        default: "text-[color:var(--fg-subtle)]",
+        primary: "text-[var(--accent)]",
+        warn: "text-[var(--warn)]",
+    }[accent];
+    return (
+        <div className="flex items-baseline justify-between gap-3 py-2">
+            <div className="flex items-center gap-2.5">
+                <Icon className={cn("h-3.5 w-3.5", accentClass)} />
+                <span className="font-mono text-[10.5px] uppercase tracking-[0.24em] text-[color:var(--fg-muted)]">
+                    {label}
+                </span>
+            </div>
+            <span className="font-mono numeric text-[11px] text-[color:var(--fg-subtle)]">
+                {String(count).padStart(2, "0")}
+            </span>
+        </div>
     );
 }
 
@@ -58,12 +101,12 @@ export function DashboardTasks() {
 
     if (isLoading && tasks.length === 0) {
         return (
-            <div className="space-y-3">
+            <div className="space-y-3 pt-2">
                 {[1, 2, 3].map((item) => (
-                    <div key={item} className="rounded-2xl border border-border/60 bg-card/80 p-4 shadow-sm">
-                        <Skeleton className="h-5 w-24" />
-                        <Skeleton className="mt-3 h-4 w-2/3" />
-                        <Skeleton className="mt-3 h-4 w-1/2" />
+                    <div key={item} className="space-y-2 border-t border-[var(--line)] pt-3 first:border-t-0">
+                        <Skeleton className="h-3 w-24" />
+                        <Skeleton className="h-4 w-2/3" />
+                        <Skeleton className="h-3 w-1/2" />
                     </div>
                 ))}
             </div>
@@ -85,56 +128,44 @@ export function DashboardTasks() {
     const historyTasks = tasks.filter((task) => !isTaskActive(task.status));
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-8 pt-2">
             {runningTasks.length > 0 ? (
-                <section className="space-y-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <Activity className="h-4 w-4 text-primary" />
-                        进行中任务
-                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">{runningTasks.length}</span>
-                    </div>
-                    <div className="space-y-3">
-                        {runningTasks.slice(0, 3).map((task) => (
-                            <TaskCompactCard key={task.task_id} task={task} />
+                <section>
+                    <SectionHeading icon={Activity} label="进行中" count={runningTasks.length} accent="primary" />
+                    <div>
+                        {runningTasks.slice(0, 3).map((task, idx) => (
+                            <TaskCompactRow key={task.task_id} task={task} index={idx} />
                         ))}
                     </div>
                 </section>
             ) : null}
 
             {pausedTasks.length > 0 ? (
-                <section className="space-y-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <Pause className="h-4 w-4 text-amber-500" />
-                        已暂停任务
-                        <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-xs text-amber-600 dark:text-amber-400">{pausedTasks.length}</span>
-                    </div>
-                    <div className="space-y-3">
-                        {pausedTasks.slice(0, 3).map((task) => (
-                            <TaskCompactCard key={task.task_id} task={task} />
+                <section>
+                    <SectionHeading icon={Pause} label="已暂停" count={pausedTasks.length} accent="warn" />
+                    <div>
+                        {pausedTasks.slice(0, 3).map((task, idx) => (
+                            <TaskCompactRow key={task.task_id} task={task} index={idx} />
                         ))}
                     </div>
                 </section>
             ) : null}
 
             {historyTasks.length > 0 ? (
-                <section className="space-y-3">
-                    <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <History className="h-4 w-4 text-muted-foreground" />
-                        最近完成
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">{historyTasks.length}</span>
-                    </div>
-                    <div className="space-y-3">
-                        {historyTasks.slice(0, 4).map((task) => (
-                            <TaskCompactCard key={task.task_id} task={task} />
+                <section>
+                    <SectionHeading icon={History} label="最近完成" count={historyTasks.length} />
+                    <div>
+                        {historyTasks.slice(0, 4).map((task, idx) => (
+                            <TaskCompactRow key={task.task_id} task={task} index={idx} />
                         ))}
                     </div>
                 </section>
             ) : null}
 
-            <Link href="/tasks" className="block">
-                <Button variant="outline" className="w-full rounded-xl bg-background">
+            <Link href="/tasks" className="inline-block">
+                <Button variant="link" className="px-0">
                     查看全部队列
-                    <ArrowRight className="ml-2 h-4 w-4" />
+                    <ArrowRight className="ml-2 h-3.5 w-3.5" />
                 </Button>
             </Link>
         </div>

@@ -12,7 +12,7 @@ interface Props {
 
 export function YouTubeChannelFields(props: Props) {
     return (
-        <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+        <section className="space-y-4 rounded-lg border border-border bg-background p-5 shadow-sm">
             <SectionTitle
                 title="频道视频列表"
                 description="按频道主页 uploads 列表按时间倒序抓全量视频，配额消耗远低于关键词搜索。"
@@ -26,7 +26,7 @@ export function YouTubeChannelFields(props: Props) {
                     value={props.channelInput}
                     onChange={(event) => props.onChannelInputChange(event.target.value)}
                     placeholder="例如：@GoogleDevelopers / UC_x5XG1OV2P6uZZ5FSM9Ttw / 完整频道主页 URL"
-                    className="h-11 rounded-xl"
+                    className="h-11 rounded-md"
                 />
                 <span className="text-xs text-muted-foreground">
                     支持三种输入：<code>@handle</code>、<code>UC…</code> 频道 ID、YouTube 频道主页完整 URL。后端会自动解析为频道 ID 并抓取 uploads 播放列表。

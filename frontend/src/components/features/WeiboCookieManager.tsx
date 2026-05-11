@@ -81,7 +81,7 @@ export function WeiboCookieManager() {
 
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-muted/20 p-4 shadow-sm">
                 <div className="flex items-center gap-3">
                     {loading ? (
                         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
@@ -98,11 +98,11 @@ export function WeiboCookieManager() {
                     </div>
                 </div>
                 <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => void loadStatus()} disabled={loading} className="rounded-xl">
+                    <Button variant="ghost" size="sm" onClick={() => void loadStatus()} disabled={loading} className="rounded-md">
                         <RefreshCw className="h-3.5 w-3.5" />
                     </Button>
                     {status && status.count > 0 ? (
-                        <Button variant="ghost" size="sm" onClick={() => setConfirmClear(true)} className="rounded-xl text-red-500 hover:text-red-600">
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmClear(true)} className="rounded-md text-red-500 hover:text-red-600">
                             <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                     ) : null}
@@ -110,9 +110,9 @@ export function WeiboCookieManager() {
             </div>
 
             {status && status.cookies.length > 0 ? (
-                <div className="max-h-36 space-y-1 overflow-y-auto rounded-[1.25rem] border border-border/60 bg-muted/20 p-3 shadow-sm">
+                <div className="max-h-36 space-y-1 overflow-y-auto rounded-lg border border-border bg-muted/20 p-3 shadow-sm">
                     {status.cookies.map((cookie) => (
-                        <div key={cookie.name} className="flex items-center gap-2 rounded-lg bg-background/70 px-3 py-2 text-xs font-mono shadow-sm">
+                        <div key={cookie.name} className="flex items-center gap-2 rounded-lg bg-background px-3 py-2 text-xs font-mono shadow-sm">
                             <span className="w-20 shrink-0 font-semibold text-foreground">{cookie.name}</span>
                             <span className="truncate text-muted-foreground">{cookie.masked}</span>
                         </div>
@@ -120,29 +120,29 @@ export function WeiboCookieManager() {
                 </div>
             ) : null}
 
-            <div className="rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+            <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <p className="text-sm font-medium text-foreground">从浏览器采集</p>
                         <p className="mt-1 text-xs leading-5 text-muted-foreground">需要先在本机浏览器中完成微博登录，再点击下方按钮。</p>
                     </div>
-                    <Button variant="outline" size="sm" onClick={() => void handleCapture()} disabled={loading} className="gap-1.5 rounded-xl">
+                    <Button variant="outline" size="sm" onClick={() => void handleCapture()} disabled={loading} className="gap-1.5 rounded-md">
                         <Globe className="h-3.5 w-3.5" />
                         从浏览器采集
                     </Button>
                 </div>
             </div>
 
-            <div className="space-y-3 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+            <div className="space-y-3 rounded-lg border border-border bg-background p-4 shadow-sm">
                 <label className="text-sm font-medium text-foreground">手动粘贴 Cookie</label>
                 <textarea
-                    className="h-24 w-full resize-none rounded-xl border border-input bg-background px-3 py-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
+                    className="h-24 w-full resize-none rounded-md border border-input bg-background px-3 py-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
                     placeholder="粘贴 document.cookie 内容，如：SUB=xxx; SUBP=xxx; XSRF-TOKEN=xxx"
                     value={rawCookie}
                     onChange={(e) => setRawCookie(e.target.value)}
                 />
                 <div className="flex justify-end">
-                    <Button size="sm" onClick={() => void handleSave()} disabled={!rawCookie.trim() || saving} className="gap-1.5 rounded-xl">
+                    <Button size="sm" onClick={() => void handleSave()} disabled={!rawCookie.trim() || saving} className="gap-1.5 rounded-md">
                         {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
                         保存 Cookie
                     </Button>

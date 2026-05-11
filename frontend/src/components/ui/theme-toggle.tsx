@@ -34,7 +34,7 @@ export function ThemeToggle() {
     };
 
     if (!mounted) {
-        return <div className="h-9 w-9 rounded-xl border border-border/60 bg-card/80" aria-hidden="true" />;
+        return <div className="h-9 w-9 border border-[var(--line)]" aria-hidden="true" />;
     }
 
     return (
@@ -43,7 +43,7 @@ export function ThemeToggle() {
             variant="ghost"
             size="icon"
             onClick={toggle}
-            className="rounded-xl border border-border/60 bg-card/80 text-muted-foreground hover:text-foreground"
+            className="border border-[var(--line)] text-[color:var(--fg-muted)] hover:text-foreground"
             aria-label={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
             title={theme === "dark" ? "切换到浅色模式" : "切换到深色模式"}
         >

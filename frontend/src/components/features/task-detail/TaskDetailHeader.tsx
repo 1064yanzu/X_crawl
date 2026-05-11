@@ -12,7 +12,7 @@ import { formatDateTime, getCommentBackfillPercent, getCommentBackfillSummary, g
 
 function SummaryCard({ label, value, hint }: { label: string; value: string; hint: string }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-background/70 px-4 py-4 shadow-sm">
+        <div className="rounded-md border border-border bg-background px-4 py-4 shadow-sm">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{label}</p>
             <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
             <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
@@ -32,7 +32,7 @@ function ConcurrencySelector({
     onChange: (n: number) => void;
 }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-background/70 px-4 py-4 shadow-sm">
+        <div className="rounded-md border border-border bg-background px-4 py-4 shadow-sm">
             <div className="flex items-center gap-1.5">
                 <Zap className="h-3.5 w-3.5 text-violet-500" />
                 <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">并发数</p>
@@ -44,7 +44,7 @@ function ConcurrencySelector({
                         key={n}
                         type="button"
                         className={cn(
-                            "flex h-8 w-9 items-center justify-center rounded-lg border text-sm font-semibold transition-all",
+ "flex h-8 w-9 items-center justify-center rounded-lg border text-sm font-semibold transition-all",
                             value === n
                                 ? "border-violet-500 bg-violet-500/10 text-violet-700 shadow-sm dark:text-violet-300"
                                 : "border-border bg-background text-muted-foreground hover:border-violet-500/50 hover:text-foreground",
@@ -78,7 +78,7 @@ function TaskExportPanel({
 }) {
     const totalRows = resultCount + replyCount;
     return (
-        <div className="w-full rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm xl:w-[320px]">
+        <div className="w-full rounded-md border border-border bg-background p-4 shadow-sm xl:w-[320px]">
             <div className="flex items-start justify-between gap-3">
                 <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">数据导出</p>
@@ -91,11 +91,11 @@ function TaskExportPanel({
                 </div>
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => onExport("csv")} disabled={exporting !== null} className="rounded-xl">
+                <Button variant="outline" onClick={() => onExport("csv")} disabled={exporting !== null} className="rounded-md">
                     {exporting === "csv" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                     导出 CSV
                 </Button>
-                <Button variant="outline" onClick={() => onExport("excel")} disabled={exporting !== null} className="rounded-xl">
+                <Button variant="outline" onClick={() => onExport("excel")} disabled={exporting !== null} className="rounded-md">
                     {exporting === "excel" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                     导出 Excel
                 </Button>
@@ -155,7 +155,7 @@ export function TaskDetailHeader({
     const backfillPercent = getCommentBackfillPercent(task);
 
     return (
-        <div className="rounded-[1.75rem] border border-border/60 bg-card/90 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+        <div className="rounded-lg border border-border bg-card p-6 shadow-sm sm:p-8">
             <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
                 <div className="min-w-0 flex-1 space-y-4">
                     <Link href="/tasks" className="inline-flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -170,7 +170,7 @@ export function TaskDetailHeader({
                     </div>
                     <div className="space-y-3">
                         <div className="flex items-start gap-3">
-                            <div className="mt-1 rounded-2xl border border-border/60 bg-background/70 p-2 text-muted-foreground">
+                            <div className="mt-1 rounded-md border border-border bg-background p-2 text-muted-foreground">
                                 <Terminal className="h-5 w-5" />
                             </div>
                             <div className="min-w-0">
@@ -180,16 +180,16 @@ export function TaskDetailHeader({
                         </div>
                         <p className="text-xs text-muted-foreground">任务 ID：<span className="font-mono text-foreground">{task.task_id}</span></p>
                         <div className="flex flex-wrap gap-2">
-                            <Button variant="ghost" size="sm" className="rounded-xl" onClick={onCopyTaskId}>
+                            <Button variant="ghost" size="sm" className="rounded-md" onClick={onCopyTaskId}>
                                 <Copy className="mr-1.5 h-3.5 w-3.5" />
                                 复制任务 ID
                             </Button>
-                            <Button variant="ghost" size="sm" className="rounded-xl" onClick={onCopyKeyword}>
+                            <Button variant="ghost" size="sm" className="rounded-md" onClick={onCopyKeyword}>
                                 <Copy className="mr-1.5 h-3.5 w-3.5" />
                                 复制关键词
                             </Button>
                             {exportReady ? (
-                                <Button variant="ghost" size="sm" className="rounded-xl" onClick={onScrollResults}>
+                                <Button variant="ghost" size="sm" className="rounded-md" onClick={onScrollResults}>
                                     查看结果区
                                 </Button>
                             ) : null}
@@ -202,18 +202,18 @@ export function TaskDetailHeader({
                         {active ? (
                             <>
                                 {isRunning ? (
-                                    <Button variant="outline" onClick={onPause} disabled={controlling !== null} className="rounded-xl">
+                                    <Button variant="outline" onClick={onPause} disabled={controlling !== null} className="rounded-md">
                                         {controlling === "pause" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Pause className="mr-1.5 h-3.5 w-3.5" />}
                                         暂停
                                     </Button>
                                 ) : null}
                                 {isPaused ? (
-                                    <Button variant="outline" onClick={onResume} disabled={controlling !== null} className="rounded-xl">
+                                    <Button variant="outline" onClick={onResume} disabled={controlling !== null} className="rounded-md">
                                         {controlling === "resume" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Play className="mr-1.5 h-3.5 w-3.5" />}
                                         继续
                                     </Button>
                                 ) : null}
-                                <Button variant="outline" onClick={onStop} disabled={controlling !== null} className="rounded-xl border-red-300 text-red-700 hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10">
+                                <Button variant="outline" onClick={onStop} disabled={controlling !== null} className="rounded-md border-red-300 text-red-700 hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10">
                                     {controlling === "stop" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <StopCircle className="mr-1.5 h-3.5 w-3.5" />}
                                     终止
                                 </Button>
@@ -223,13 +223,13 @@ export function TaskDetailHeader({
                                 {canBackfill ? (
                                     <TaskCommentBackfillButton
                                         variant="outline"
-                                        className="rounded-xl"
+                                        className="rounded-md"
                                         disabled={controlling !== null}
                                         loading={backfilling}
                                         onClick={onBackfill}
                                     />
                                 ) : null}
-                                <Button variant="outline" onClick={onResume} disabled={controlling !== null || backfilling} className="rounded-xl">
+                                <Button variant="outline" onClick={onResume} disabled={controlling !== null || backfilling} className="rounded-md">
                                     {controlling === "resume" ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="mr-1.5 h-3.5 w-3.5" />}
                                     继续爬取
                                 </Button>
@@ -250,7 +250,7 @@ export function TaskDetailHeader({
 
             <div className="mt-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 {task.task_kind === "comment_backfill" ? (
-                    <div className="rounded-[1.25rem] border border-border/60 bg-background/70 px-5 py-4 shadow-sm">
+                    <div className="rounded-lg border border-border bg-background px-5 py-4 shadow-sm">
                         <p className="text-sm font-medium text-muted-foreground">补采进度</p>
                         <div className="mt-2 flex items-center gap-3">
                             <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">

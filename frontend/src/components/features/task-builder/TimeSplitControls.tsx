@@ -39,9 +39,9 @@ export function TimeSplitControls({
     const platformLabel = platform === "weibo" ? "微博" : "X";
 
     return (
-        <div className={cn("rounded-2xl border border-border/60 bg-muted/20 p-4", className)}>
+        <div className={cn("rounded-md border border-border bg-muted/20 p-4", className)}>
             <div className="flex items-start gap-3">
-                <div className="rounded-xl bg-primary/10 p-2 text-primary">
+                <div className="rounded-md bg-primary/10 p-2 text-primary">
                     <SplitSquareVertical className="h-4 w-4" />
                 </div>
                 <div className="flex-1">
@@ -64,9 +64,9 @@ export function TimeSplitControls({
                             disabled={!hasTimeRange}
                             onClick={() => onModeChange(option.value)}
                             className={cn(
-                                "flex h-full w-full flex-col items-start justify-start rounded-2xl border px-4 py-4 text-left transition-all duration-200",
-                                active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
-                                !hasTimeRange && "cursor-not-allowed opacity-55 hover:border-border/70 hover:bg-card",
+ "flex h-full w-full flex-col items-start justify-start rounded-md border px-4 py-4 text-left transition-all duration-200",
+                                active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border bg-card hover:border-primary/20 hover:bg-muted/30",
+                                !hasTimeRange && "cursor-not-allowed opacity-55 hover:border-border hover:bg-card",
                             )}
                         >
                             <p className="font-medium">{option.label}</p>
@@ -77,7 +77,7 @@ export function TimeSplitControls({
             </div>
 
             {mode === "on" && hasTimeRange ? (
-                <div className="mt-4 grid gap-4 border-t border-border/60 pt-4 md:grid-cols-2">
+                <div className="mt-4 grid gap-4 border-t border-border pt-4 md:grid-cols-2">
                     <div className="space-y-2">
                         <label className="flex items-center gap-2 text-sm font-medium text-foreground">
                             <CalendarRange className="h-4 w-4 text-primary" />
@@ -89,7 +89,7 @@ export function TimeSplitControls({
                             max={365}
                             value={windowDays}
                             onChange={(event) => onWindowDaysChange(Number(event.target.value) || defaultWindowDays)}
-                            className="h-11 rounded-xl bg-background"
+                            className="h-11 rounded-md bg-background"
                         />
                         <p className="text-xs text-muted-foreground">当前默认值 {defaultWindowDays} 天。</p>
                     </div>
@@ -101,7 +101,7 @@ export function TimeSplitControls({
                             max={2000}
                             value={maxSegments}
                             onChange={(event) => onMaxSegmentsChange(Number(event.target.value) || defaultMaxSegments)}
-                            className="h-11 rounded-xl bg-background"
+                            className="h-11 rounded-md bg-background"
                         />
                         <p className="text-xs text-muted-foreground">高级项。当前默认值 {defaultMaxSegments} 段。</p>
                     </div>

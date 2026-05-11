@@ -59,7 +59,7 @@ export function TaskBatchActions({
     if (searchedCount === 0) return null;
 
     return (
-        <div className="rounded-[1.5rem] border border-border/60 bg-card/90 p-4 shadow-sm backdrop-blur-sm sm:p-5">
+        <div className="rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                     <h2 className="text-lg font-semibold text-foreground">批量操作</h2>
@@ -71,7 +71,7 @@ export function TaskBatchActions({
                 <div className="flex flex-wrap gap-2">
                     {/* 全局操作 */}
                     <Button
-                        className="rounded-xl bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700"
+                        className="rounded-md bg-amber-600 text-white hover:bg-amber-700 dark:bg-amber-600 dark:hover:bg-amber-700"
                         onClick={onPauseAll}
                         disabled={!hasActiveTasks || busyAction !== null}
                     >
@@ -79,7 +79,7 @@ export function TaskBatchActions({
                         一键暂停全部
                     </Button>
                     <Button
-                        className="rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
+                        className="rounded-md bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-700"
                         onClick={onResumeAll}
                         disabled={busyAction !== null}
                     >
@@ -90,10 +90,10 @@ export function TaskBatchActions({
                     <div className="mx-1 hidden h-8 w-px bg-border/60 sm:block" />
 
                     {/* 选择控制 */}
-                    <Button variant="outline" className="rounded-xl" onClick={onToggleSelectAll}>
+                    <Button variant="outline" className="rounded-md" onClick={onToggleSelectAll}>
                         {allVisibleSelected ? "取消全选" : "全选当前结果"}
                     </Button>
-                    <Button variant="ghost" className="rounded-xl" onClick={onClearSelection} disabled={selectedCount === 0}>
+                    <Button variant="ghost" className="rounded-md" onClick={onClearSelection} disabled={selectedCount === 0}>
                         清空选择
                     </Button>
 
@@ -102,7 +102,7 @@ export function TaskBatchActions({
                     {/* 选中任务操作 */}
                     <Button
                         variant="outline"
-                        className="rounded-xl border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-500/30 dark:text-amber-300 dark:hover:bg-amber-500/10"
+                        className="rounded-md border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-500/30 dark:text-amber-300 dark:hover:bg-amber-500/10"
                         onClick={onBatchPause}
                         disabled={pausableSelectedCount === 0 || busyAction !== null}
                     >
@@ -111,7 +111,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onBatchResume}
                         disabled={resumableSelectedCount === 0 || busyAction !== null}
                     >
@@ -120,7 +120,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onBatchExport}
                         disabled={exportableSelectedCount === 0 || busyAction !== null}
                     >
@@ -129,7 +129,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onBatchCommentBackfill}
                         disabled={backfillableSelectedCount === 0 || busyAction !== null}
                     >
@@ -138,7 +138,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onBatchRecrawl}
                         disabled={recrawlableSelectedCount === 0 || busyAction !== null}
                     >
@@ -147,7 +147,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onBatchReplyCollection}
                         disabled={replyCollectionEditableCount === 0 || busyAction !== null}
                     >
@@ -156,7 +156,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onBatchMerge}
                         disabled={mergeableSelectedCount < 2 || busyAction !== null}
                     >
@@ -165,7 +165,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-500/30 dark:text-violet-300 dark:hover:bg-violet-500/10"
+                        className="rounded-md border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-500/30 dark:text-violet-300 dark:hover:bg-violet-500/10"
                         onClick={onBatchGroup}
                         disabled={groupableSelectedCount < 2 || busyAction !== null}
                     >
@@ -174,7 +174,7 @@ export function TaskBatchActions({
                     </Button>
                     <Button
                         variant="outline"
-                        className="rounded-xl border-red-300 text-red-700 hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
+                        className="rounded-md border-red-300 text-red-700 hover:bg-red-50 dark:border-red-500/30 dark:text-red-300 dark:hover:bg-red-500/10"
                         onClick={onBatchDelete}
                         disabled={selectedCount === 0 || busyAction !== null}
                     >

@@ -58,7 +58,7 @@ export function TaskResultsSection({
     onResetFilters: () => void;
 }) {
     return (
-        <Card id="task-results" className="rounded-[1.5rem] border-border/60 bg-card/90 p-5 shadow-sm sm:p-6">
+        <Card id="task-results" className="rounded-lg border-border bg-card p-5 shadow-sm sm:p-6">
             <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                     <h3 className="flex items-center gap-2 text-lg font-semibold">
@@ -68,7 +68,7 @@ export function TaskResultsSection({
                     <p className="mt-1 text-sm text-muted-foreground">{active ? "任务仍在运行，下面展示实时预览。" : "任务已结束，下面展示最终结构化结果。"}</p>
                 </div>
                 {exportReady ? (
-                    <div className="rounded-2xl border border-dashed border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+                    <div className="rounded-md border border-dashed border-border bg-background px-3 py-2 text-xs text-muted-foreground">
                         导出入口已收纳到顶部操作区；{active ? "任务运行中也可以先下载当前结果。" : "可直接下载 CSV 或 Excel 做复盘与分发。"}
                     </div>
                 ) : null}
@@ -86,7 +86,7 @@ export function TaskResultsSection({
                     />
                 ) : (
                     <div className="space-y-5">
-                        <div className="rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                        <div className="rounded-lg border border-border bg-background p-4 shadow-sm">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="space-y-3">
                                     <div>
@@ -107,13 +107,13 @@ export function TaskResultsSection({
                                             value={resultQuery}
                                             onChange={(event) => onResultQueryChange(event.target.value)}
                                             placeholder="搜索正文、作者、用户名或标签"
-                                            className="h-11 w-full rounded-xl border border-input bg-background pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                            className="h-11 w-full rounded-md border border-input bg-background pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                         />
                                     </div>
                                     <select
                                         value={resultSort}
                                         onChange={(event) => onResultSortChange(event.target.value as ResultSort)}
-                                        className="h-11 rounded-xl border border-border/60 bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="h-11 rounded-md border border-border bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                     >
                                         <option value="newest">按发布时间（最新）</option>
                                         <option value="oldest">按发布时间（最早）</option>
@@ -123,13 +123,13 @@ export function TaskResultsSection({
                                     <select
                                         value={resultPageSize}
                                         onChange={(event) => onResultPageSizeChange(Number(event.target.value))}
-                                        className="h-11 rounded-xl border border-border/60 bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="h-11 rounded-md border border-border bg-background px-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                     >
                                         <option value={10}>每页 10 条</option>
                                         <option value={20}>每页 20 条</option>
                                         <option value={50}>每页 50 条</option>
                                     </select>
-                                    <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-background p-1 shadow-sm">
+                                    <div className="flex items-center gap-2 rounded-md border border-border bg-background p-1 shadow-sm">
                                         <Button type="button" variant={resultDensity === "comfortable" ? "default" : "ghost"} size="sm" className="rounded-lg" onClick={() => onResultDensityChange("comfortable")}>舒展阅读</Button>
                                         <Button type="button" variant={resultDensity === "compact" ? "default" : "ghost"} size="sm" className="rounded-lg" onClick={() => onResultDensityChange("compact")}>紧凑阅读</Button>
                                     </div>
@@ -160,20 +160,20 @@ export function TaskResultsSection({
                                 icon={Search}
                                 title="没有符合条件的结果"
                                 description="可以修改搜索关键词、切换筛选方式，或恢复默认排序后再试一次。"
-                                action={<Button variant="outline" className="rounded-xl" onClick={onResetFilters}>恢复默认条件</Button>}
+                                action={<Button variant="outline" className="rounded-md" onClick={onResetFilters}>恢复默认条件</Button>}
                             />
                         ) : (
                             <div className="space-y-4">
-                                <div className="flex flex-col gap-3 rounded-[1.25rem] border border-border/60 bg-background/70 px-4 py-3 text-sm text-muted-foreground shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                                <div className="flex flex-col gap-3 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground shadow-sm lg:flex-row lg:items-center lg:justify-between">
                                     <div>
                                         当前页 <span className="font-medium text-foreground">{visibleResultPage}</span> / {totalResultPages}，每页 <span className="font-medium text-foreground">{resultPageSize}</span> 条。
                                     </div>
                                     <div className="flex flex-wrap gap-2">
-                                        <Button variant="outline" size="sm" className="rounded-xl" onClick={() => onGoToResultPage(1)} disabled={visibleResultPage <= 1}>首页</Button>
-                                        <Button variant="outline" size="sm" className="rounded-xl" onClick={() => onGoToResultPage(visibleResultPage - 1)} disabled={visibleResultPage <= 1}>
+                                        <Button variant="outline" size="sm" className="rounded-md" onClick={() => onGoToResultPage(1)} disabled={visibleResultPage <= 1}>首页</Button>
+                                        <Button variant="outline" size="sm" className="rounded-md" onClick={() => onGoToResultPage(visibleResultPage - 1)} disabled={visibleResultPage <= 1}>
                                             <ChevronLeft className="mr-1.5 h-3.5 w-3.5" />上一页
                                         </Button>
-                                        <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-background px-2 py-1.5">
+                                        <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5">
                                             <input
                                                 type="number"
                                                 min={1}
@@ -194,10 +194,10 @@ export function TaskResultsSection({
                                                 跳转
                                             </Button>
                                         </div>
-                                        <Button variant="outline" size="sm" className="rounded-xl" onClick={() => onGoToResultPage(visibleResultPage + 1)} disabled={visibleResultPage >= totalResultPages}>
+                                        <Button variant="outline" size="sm" className="rounded-md" onClick={() => onGoToResultPage(visibleResultPage + 1)} disabled={visibleResultPage >= totalResultPages}>
                                             下一页<ChevronRight className="ml-1.5 h-3.5 w-3.5" />
                                         </Button>
-                                        <Button variant="outline" size="sm" className="rounded-xl" onClick={() => onGoToResultPage(totalResultPages)} disabled={visibleResultPage >= totalResultPages}>末页</Button>
+                                        <Button variant="outline" size="sm" className="rounded-md" onClick={() => onGoToResultPage(totalResultPages)} disabled={visibleResultPage >= totalResultPages}>末页</Button>
                                     </div>
                                 </div>
                                 {paginatedFinishedTweets.map((tweet, index) => (

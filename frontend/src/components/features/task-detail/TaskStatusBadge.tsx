@@ -69,7 +69,7 @@ function getMeta(status: string, riskState: string): BadgeMeta {
     return {
         label: status,
         icon: Pause,
-        className: "border-border/60 bg-background text-muted-foreground",
+        className: "border-border bg-background text-muted-foreground",
     };
 }
 
@@ -80,7 +80,7 @@ export function TaskStatusBadge({ status, riskState, size = "default", className
     return (
         <Badge
             className={cn(
-                "font-medium",
+ "font-medium",
                 size === "xs" ? "h-5 rounded px-1.5 text-[10px]" : size === "sm" ? "h-6 rounded-full px-2.5 text-[11px]" : "py-1 text-sm",
                 meta.className,
                 className,

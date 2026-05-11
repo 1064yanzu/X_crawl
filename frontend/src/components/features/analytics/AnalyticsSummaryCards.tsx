@@ -16,9 +16,9 @@ function StatCard({
     accentClass: string;
 }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-card/90 p-5 shadow-sm backdrop-blur-sm transition-shadow hover:shadow-md">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
             <div className="flex items-center gap-3">
-                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${accentClass}`}>
+                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md ${accentClass}`}>
                     <Icon className="h-5 w-5" />
                 </div>
                 <div className="min-w-0">

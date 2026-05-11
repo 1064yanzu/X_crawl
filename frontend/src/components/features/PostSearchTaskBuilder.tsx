@@ -21,8 +21,8 @@ const AdvancedSearchPanel = dynamic(
 );
 
 const PRODUCT_TABS = [
-    { value: "Top", label: "最热", desc: "按相关性与互动量排序", icon: TrendingUp },
-    { value: "Latest", label: "最新", desc: "用于追踪实时动态", icon: Clock },
+    { value: "Top", label: "最热", desc: "按相关性与互动量", icon: TrendingUp },
+    { value: "Latest", label: "最新", desc: "追踪实时动态", icon: Clock },
     { value: "Photos", label: "图片", desc: "聚焦图片内容", icon: Image },
     { value: "Videos", label: "视频", desc: "聚焦视频内容", icon: Film },
 ] as const;
@@ -106,76 +106,112 @@ export function PostSearchTaskBuilder() {
     };
 
     return (
-        <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="space-y-6 p-6 sm:p-7">
-                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
-                    <SectionTitle title="基础信息" description="先确定平台、关键词与基础采集目标。" />
-
-                    <div className="flex flex-wrap gap-2">
-                        <PlatformButton active={platform === "x"} label="𝕏 Twitter" description="支持高级搜索与时间切片" onClick={() => setPlatform("x")} />
-                        <PlatformButton active={platform === "weibo"} label="微博" description="适合指定时间范围批量回采" onClick={() => setPlatform("weibo")} />
+        <div className="grid gap-0 xl:grid-cols-[minmax(0,1fr)_300px] xl:gap-x-12">
+            <div className="min-w-0 space-y-12 pb-2">
+                <section className="space-y-5">
+                    <SectionTitle
+                        eyebrow="01 · Foundation"
+                        title="基础信息"
+                        description="先确定平台、关键词与基础采集目标。"
+                    />
+                    <div className="flex flex-col gap-0 sm:flex-row sm:gap-6">
+                        <PlatformButton
+                            active={platform === "x"}
+                            label="𝕏 Twitter"
+                            description="高级搜索 / 时间切片"
+                            onClick={() => setPlatform("x")}
+                        />
+                        <PlatformButton
+                            active={platform === "weibo"}
+                            label="微博"
+                            description="按日期范围批量回采"
+                            onClick={() => setPlatform("weibo")}
+                        />
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-foreground">目标关键词</label>
+                        <label className="font-mono text-[10.5px] uppercase tracking-[0.22em] text-[color:var(--fg-subtle)]">
+                            目标关键词
+                        </label>
                         <div className="relative">
-                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Search className="pointer-events-none absolute left-0 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--fg-subtle)]" />
                             <Input
                                 value={keyword}
                                 onChange={(event) => setKeyword(event.target.value)}
                                 onKeyDown={handleKeyDown}
                                 placeholder="输入要追踪的话题、品牌、人物或事件"
-                                className="h-11 rounded-xl bg-background pl-10"
+                                className="pl-7"
                                 autoFocus
                             />
                         </div>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-[12px] leading-6 text-[color:var(--fg-muted)]">
                             {platform === "x"
-                                ? "可直接输入关键词，也可以只使用下方高级搜索拼装查询。任务会持续抓取直到当前结果耗尽或被你手动终止。"
-                                : "微博仅使用这里的关键词与日期范围；关键词会按原样提交，如需兼容旧版 OR 自动拆分可在设置中开启。"}
+                                ? "可直接输入关键词，也可仅通过下方高级搜索拼装查询；任务会持续抓取直到结果耗尽或被手动终止。"
+                                : "微博仅使用此处关键词与日期范围；关键词按原样提交，如需兼容旧版 OR 自动拆分请在设置中开启。"}
                         </p>
                     </div>
 
                     {platform === "weibo" ? (
-                        <div className="grid gap-4 rounded-2xl border border-border/60 bg-muted/20 p-4 md:grid-cols-2">
+                        <div className="grid gap-5 sm:grid-cols-2">
                             <div className="space-y-2">
-                                <label className="flex items-center gap-2 text-sm font-medium">
-                                    <CalendarRange className="h-4 w-4 text-primary" />开始日期
+                                <label className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.22em] text-[color:var(--fg-subtle)]">
+                                    <CalendarRange className="h-3.5 w-3.5" />
+                                    开始日期
                                 </label>
-                                <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className="h-11 rounded-xl bg-background" />
+                                <Input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
                             </div>
                             <div className="space-y-2">
-                                <label className="flex items-center gap-2 text-sm font-medium">
-                                    <CalendarRange className="h-4 w-4 text-primary" />结束日期
+                                <label className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.22em] text-[color:var(--fg-subtle)]">
+                                    <CalendarRange className="h-3.5 w-3.5" />
+                                    结束日期
                                 </label>
-                                <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} className="h-11 rounded-xl bg-background" />
+                                <Input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
                             </div>
                         </div>
                     ) : null}
                 </section>
 
-                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
-                    <SectionTitle title="内容策略" description="选择最贴近业务目标的结果排序与内容类型。" />
-                    <div className="grid gap-3 grid-cols-2 2xl:grid-cols-4">
-                        {PRODUCT_TABS.map(({ value, label, desc, icon: Icon }) => {
+                <hr className="border-[var(--line)]" />
+
+                <section className="space-y-5">
+                    <SectionTitle
+                        eyebrow="02 · Content"
+                        title="内容策略"
+                        description="选择最贴近业务目标的结果排序与内容类型。"
+                    />
+                    <div role="tablist" aria-label="内容策略" className="grid grid-cols-2 border-y border-[var(--line)] sm:grid-cols-4">
+                        {PRODUCT_TABS.map(({ value, label, desc, icon: Icon }, idx) => {
                             const active = product === value;
                             return (
                                 <button
                                     key={value}
                                     type="button"
+                                    role="tab"
+                                    aria-selected={active}
                                     onClick={() => setProduct(value as ProductType)}
                                     className={cn(
-                                        "flex h-full w-full flex-col items-start justify-start rounded-2xl border px-4 py-4 text-left transition-all duration-200",
-                                        active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
+                                        "group relative flex min-w-0 flex-col items-start gap-1.5 px-4 py-4 text-left",
+                                        "transition-colors duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
+                                        idx !== 0 ? "sm:border-l sm:border-[var(--line)]" : "",
+                                        idx === 2 ? "border-t border-[var(--line)] sm:border-t-0" : "",
+                                        idx === 3 ? "border-t border-[var(--line)] sm:border-t-0" : "",
+                                        active
+                                            ? "text-foreground"
+                                            : "text-[color:var(--fg-muted)] hover:text-foreground",
                                     )}
                                 >
-                                    <div className="flex items-center gap-2">
-                                        <div className={cn("rounded-xl p-2", active ? "bg-primary/12 text-primary" : "bg-muted text-muted-foreground")}>
-                                            <Icon className="h-4 w-4" />
-                                        </div>
-                                        <span className="font-medium">{label}</span>
+                                    <span
+                                        aria-hidden
+                                        className={cn(
+                                            "absolute left-0 top-0 h-[2px] transition-all duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
+                                            active ? "w-full bg-[var(--accent)]" : "w-0 bg-[var(--accent)]",
+                                        )}
+                                    />
+                                    <div className="flex w-full items-center gap-2">
+                                        <Icon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-[var(--accent)]" : "text-[color:var(--fg-subtle)]")} />
+                                        <span className="font-serif text-[14.5px] tracking-tight">{label}</span>
                                     </div>
-                                    <p className="mt-3 text-xs leading-5 text-muted-foreground">{desc}</p>
+                                    <p className="line-clamp-1 w-full text-[11.5px] leading-5 text-[color:var(--fg-subtle)]">{desc}</p>
                                 </button>
                             );
                         })}
@@ -183,24 +219,37 @@ export function PostSearchTaskBuilder() {
                 </section>
 
                 {platform === "x" ? (
-                    <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
-                        <SectionTitle title="高级筛选" description="需要时再展开，把复杂查询收纳到二级区域。" />
-                        <AdvancedSearchPanel
-                            params={advancedParams}
-                            onChange={setAdvancedParams as (params: AdvancedSearchParams) => void}
-                            isOpen={advancedOpen}
-                            onToggle={() => setAdvancedOpen((open) => !open)}
-                        />
-                        {xSplitNotice ? (
-                            <div className="rounded-2xl border border-blue-200/70 bg-blue-50/70 px-4 py-3 text-sm text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
-                                {xSplitNotice}
-                            </div>
-                        ) : null}
-                    </section>
+                    <>
+                        <hr className="border-[var(--line)]" />
+                        <section className="space-y-5">
+                            <SectionTitle
+                                eyebrow="03 · Filter"
+                                title="高级筛选"
+                                description="需要时再展开，把复杂查询收纳到二级区域。"
+                            />
+                            <AdvancedSearchPanel
+                                params={advancedParams}
+                                onChange={setAdvancedParams as (params: AdvancedSearchParams) => void}
+                                isOpen={advancedOpen}
+                                onToggle={() => setAdvancedOpen((open) => !open)}
+                            />
+                            {xSplitNotice ? (
+                                <div className="border-l-2 border-[var(--info)] bg-[color:var(--info-tint)]/60 px-4 py-3 text-[12.5px] leading-6 text-foreground">
+                                    {xSplitNotice}
+                                </div>
+                            ) : null}
+                        </section>
+                    </>
                 ) : null}
 
-                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
-                    <SectionTitle title="时间拆分" description="把拆分策略放到任务层，由你决定本次任务是否切段、怎么切。" />
+                <hr className="border-[var(--line)]" />
+
+                <section className="space-y-5">
+                    <SectionTitle
+                        eyebrow={platform === "x" ? "04 · Slicing" : "03 · Slicing"}
+                        title="时间拆分"
+                        description="把拆分策略放到任务层，由你决定本次任务是否切段、怎么切。"
+                    />
                     <TimeSplitControls
                         platform={platform}
                         hasTimeRange={hasTaskTimeRange}
@@ -215,60 +264,76 @@ export function PostSearchTaskBuilder() {
                     />
                 </section>
 
-                <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
-                    <SectionTitle title="评论与扩展抓取" description="默认关闭，只有确实需要评论层级时再开启。" />
-                    <div className="rounded-2xl border border-border/60 bg-muted/20 p-4">
-                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                            <div className="flex gap-3">
-                                <div className="rounded-xl bg-primary/10 p-2 text-primary">
-                                    <MessageSquare className="h-4 w-4" />
-                                </div>
-                                <div>
-                                    <p className="font-medium text-foreground">深入抓取评论回复</p>
-                                    <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                                        开启后会在搜索结果基础上进入推文详情抓取评论，显著增加耗时，但适合舆情溯源与讨论网络分析。
-                                    </p>
-                                </div>
-                            </div>
-                            <button
-                                type="button"
-                                aria-pressed={fetchReplies}
-                                onClick={() => setFetchReplies((value) => !value)}
-                                className={cn(
-                                    "inline-flex h-11 shrink-0 whitespace-nowrap items-center rounded-full border px-4 text-sm font-medium transition-all",
-                                    fetchReplies ? "border-primary/20 bg-primary text-primary-foreground" : "border-border/70 bg-background text-muted-foreground hover:text-foreground",
-                                )}
-                            >
-                                {fetchReplies ? "已开启" : "保持关闭"}
-                            </button>
-                        </div>
+                <hr className="border-[var(--line)]" />
 
-                        {fetchReplies ? (
-                            <div className="mt-4 grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
-                                {[
-                                    { value: 1, title: "一级评论", description: "优先速度，仅采集推文直接评论。" },
-                                    { value: 2, title: "二级评论", description: "包含评论的子回复，更适合深度分析。" },
-                                ].map((option) => {
-                                    const active = replyDepth === option.value;
-                                    return (
-                                        <button
-                                            key={option.value}
-                                            type="button"
-                                            onClick={() => setReplyDepth(option.value)}
-                                            className={cn(
-                                                "rounded-2xl border px-4 py-4 text-left transition-all duration-200",
-                                                active ? "border-primary/30 bg-primary/8 text-foreground shadow-sm" : "border-border/70 bg-card hover:border-primary/20 hover:bg-muted/30",
-                                            )}
-                                        >
-                                            <p className="font-medium">{option.title}</p>
-                                            <p className="mt-2 text-xs leading-5 text-muted-foreground">{option.description}</p>
-                                        </button>
-                                    );
-                                })}
+                <section className="space-y-5">
+                    <SectionTitle
+                        eyebrow={platform === "x" ? "05 · Replies" : "04 · Replies"}
+                        title="评论与扩展抓取"
+                        description="默认关闭，只有确实需要评论层级时再开启。"
+                    />
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="flex min-w-0 gap-3">
+                            <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-[var(--accent)]" />
+                            <div className="min-w-0">
+                                <p className="font-serif text-[15px] tracking-tight text-foreground">深入抓取评论回复</p>
+                                <p className="mt-1 text-[12.5px] leading-6 text-[color:var(--fg-muted)]">
+                                    在搜索结果基础上进入推文详情抓取评论，显著增加耗时，适合舆情溯源与讨论网络分析。
+                                </p>
                             </div>
-                        ) : null}
+                        </div>
+                        <button
+                            type="button"
+                            aria-pressed={fetchReplies}
+                            onClick={() => setFetchReplies((value) => !value)}
+                            className={cn(
+                                "inline-flex h-9 shrink-0 items-center whitespace-nowrap border px-4 font-mono text-[10.5px] uppercase tracking-[0.22em]",
+                                "transition-colors duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
+                                fetchReplies
+                                    ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)]"
+                                    : "border-[var(--line-strong)] text-[color:var(--fg-muted)] hover:text-foreground hover:border-[var(--fg-muted)]",
+                            )}
+                        >
+                            {fetchReplies ? "已开启" : "保持关闭"}
+                        </button>
                     </div>
+
+                    {fetchReplies ? (
+                        <div className="grid gap-0 border-y border-[var(--line)] md:grid-cols-2">
+                            {[
+                                { value: 1, title: "一级评论", description: "优先速度，仅采集推文直接评论。" },
+                                { value: 2, title: "二级评论", description: "包含评论的子回复，更适合深度分析。" },
+                            ].map((option, idx) => {
+                                const active = replyDepth === option.value;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        onClick={() => setReplyDepth(option.value)}
+                                        className={cn(
+                                            "group relative flex flex-col items-start gap-1.5 px-4 py-4 text-left",
+                                            "transition-colors duration-200 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
+                                            idx === 1 ? "border-t border-[var(--line)] md:border-t-0 md:border-l" : "",
+                                            active ? "text-foreground" : "text-[color:var(--fg-muted)] hover:text-foreground",
+                                        )}
+                                    >
+                                        <span
+                                            aria-hidden
+                                            className={cn(
+                                                "absolute left-0 top-0 h-[2px] transition-all duration-300 [transition-timing-function:cubic-bezier(0.22,1,0.36,1)]",
+                                                active ? "w-full bg-[var(--accent)]" : "w-0 bg-[var(--accent)]",
+                                            )}
+                                        />
+                                        <p className="font-serif text-[14.5px] tracking-tight">{option.title}</p>
+                                        <p className="text-[11.5px] leading-5 text-[color:var(--fg-subtle)]">{option.description}</p>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    ) : null}
                 </section>
+
+                <hr className="border-[var(--line)]" />
 
                 <TaskQueuePanel
                     queueName={queueName}
@@ -283,7 +348,7 @@ export function PostSearchTaskBuilder() {
                 />
             </div>
 
-            <aside className="border-t border-border/50 bg-muted/15 p-6 xl:border-l xl:border-t-0 xl:p-7">
+            <aside className="mt-12 min-w-0 border-t border-[var(--line)] pt-10 xl:mt-0 xl:border-l xl:border-t-0 xl:pl-12 xl:pt-0">
                 <CrawlerTaskSummary
                     summaryRows={summaryRows}
                     canSubmit={canSubmit}

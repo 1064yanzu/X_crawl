@@ -23,8 +23,8 @@ export function SelectField<T extends string>({
                 value={value}
                 onChange={(event) => onChange(event.target.value as T)}
                 className={cn(
-                    "h-11 rounded-xl border border-border/60 bg-background px-3 text-sm",
-                    "focus:border-primary/40 focus:ring-2 focus:ring-primary/20",
+ "h-11 rounded-md border border-border bg-background px-3 text-sm",
+ "focus:border-primary/40 focus:ring-2 focus:ring-primary/20",
                 )}
             >
                 {options.map((opt) => (

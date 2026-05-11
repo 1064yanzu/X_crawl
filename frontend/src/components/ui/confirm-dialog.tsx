@@ -1,5 +1,4 @@
 "use client";
-import * as React from "react";
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -24,19 +23,31 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
     if (!open) return null;
     return (
-        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-md rounded-2xl border bg-card p-5 shadow-xl">
-                <div className="flex items-start gap-3">
-                    <div className="rounded-full bg-amber-500/15 p-2 text-amber-700">
-                        <AlertTriangle className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0">
-                        <h3 className="text-base font-semibold">{title}</h3>
-                        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+        <div
+            className="fixed inset-0 z-[90] flex items-center justify-center bg-[color:var(--bg)]/70 p-4 animate-in fade-in duration-200"
+            onClick={onCancel}
+        >
+            <div
+                className="relative w-full max-w-md border border-[var(--line)] bg-[var(--surface)] p-7 [box-shadow:0_24px_64px_-20px_oklch(0.15_0.02_60/0.25)] animate-in zoom-in-95 fade-in duration-200"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <span aria-hidden className="absolute left-0 top-0 h-full w-[2px] bg-[var(--danger)]" />
+                <div className="flex items-start gap-4 pl-3">
+                    <AlertTriangle className="mt-1 h-4 w-4 shrink-0 text-[var(--danger)]" />
+                    <div className="min-w-0 space-y-2">
+                        <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-[color:var(--fg-subtle)]">
+                            Confirmation
+                        </p>
+                        <h3 className="font-serif text-[1.25rem] font-medium leading-tight text-foreground">
+                            {title}
+                        </h3>
+                        {description ? (
+                            <p className="text-[13px] leading-6 text-[color:var(--fg-muted)]">{description}</p>
+                        ) : null}
                     </div>
                 </div>
-                <div className="mt-5 flex items-center justify-end gap-2">
-                    <Button variant="outline" size="sm" onClick={onCancel}>
+                <div className="mt-6 flex items-center justify-end gap-3 pl-3">
+                    <Button variant="ghost" size="sm" onClick={onCancel}>
                         {cancelText}
                     </Button>
                     <Button variant="destructive" size="sm" onClick={onConfirm}>
@@ -47,4 +58,3 @@ export function ConfirmDialog({
         </div>
     );
 }
-

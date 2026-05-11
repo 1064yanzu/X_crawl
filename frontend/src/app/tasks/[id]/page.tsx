@@ -132,7 +132,7 @@ export default function TaskResultPage() {
                 description="该任务可能已被清理、删除，或当前地址无效。"
                 action={
                     <Link href="/tasks">
-                        <Button variant="outline" className="rounded-xl">返回采集队列</Button>
+                        <Button variant="outline" className="rounded-md">返回采集队列</Button>
                     </Link>
                 }
             />
@@ -227,14 +227,14 @@ export default function TaskResultPage() {
 
 function PanelSkeleton({ title }: { title: string }) {
     return (
-        <div className="rounded-[1.5rem] border border-border/60 bg-card/90 p-5 shadow-sm">
+        <div className="rounded-lg border border-border bg-card p-5 shadow-sm">
             <div className="space-y-3 animate-pulse">
                 <div className="h-5 w-32 rounded bg-muted" />
                 <div className="h-4 w-2/3 rounded bg-muted" />
                 <div className="grid gap-3 md:grid-cols-3">
-                    <div className="h-20 rounded-xl bg-muted/80" />
-                    <div className="h-20 rounded-xl bg-muted/80" />
-                    <div className="h-20 rounded-xl bg-muted/80" />
+                    <div className="h-20 rounded-md bg-muted/80" />
+                    <div className="h-20 rounded-md bg-muted/80" />
+                    <div className="h-20 rounded-md bg-muted/80" />
                 </div>
                 <p className="text-xs text-muted-foreground">正在加载{title}...</p>
             </div>

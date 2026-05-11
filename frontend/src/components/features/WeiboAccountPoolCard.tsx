@@ -100,17 +100,17 @@ export function WeiboAccountPoolCard() {
         <div className="space-y-4">
             <div className="space-y-3">
                 {loading ? (
-                    <div className="flex items-center gap-2 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 text-sm text-muted-foreground shadow-sm">
+                    <div className="flex items-center gap-2 rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground shadow-sm">
                         <Loader2 className="h-4 w-4 animate-spin" /> 正在加载微博账号池...
                     </div>
                 ) : accounts.length === 0 ? (
-                    <div className="flex items-start gap-2.5 rounded-[1.25rem] border border-orange-500/20 bg-orange-500/5 px-4 py-4 text-sm text-orange-700 shadow-sm dark:text-orange-400">
+                    <div className="flex items-start gap-2.5 rounded-lg border border-orange-500/20 bg-orange-500/5 px-4 py-4 text-sm text-orange-700 shadow-sm dark:text-orange-400">
                         <Info className="mt-0.5 h-4 w-4 shrink-0" />
                         <p>在上方「微博 Cookie 管理」中保存 Cookie 后，账号会自动同步到这里，无需手动添加。</p>
                     </div>
                 ) : (
                     accounts.map((account) => (
-                        <div key={account.account_id} className="rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+                        <div key={account.account_id} className="rounded-lg border border-border bg-background p-4 shadow-sm">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0 flex-1">
                                     <div className="flex flex-wrap items-center gap-2">
@@ -141,7 +141,7 @@ export function WeiboAccountPoolCard() {
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="rounded-xl"
+                                        className="rounded-md"
                                         onClick={() => void handleValidate(account.account_id)}
                                         disabled={validatingId === account.account_id}
                                         title="验证账号登录状态"
@@ -151,7 +151,7 @@ export function WeiboAccountPoolCard() {
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="rounded-xl"
+                                        className="rounded-md"
                                         onClick={() => void handleToggleEnabled(account)}
                                         title={account.enabled ? "停用账号" : "启用账号"}
                                     >
@@ -160,7 +160,7 @@ export function WeiboAccountPoolCard() {
                                     <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="rounded-xl text-red-500 hover:text-red-600"
+                                        className="rounded-md text-red-500 hover:text-red-600"
                                         onClick={() => setConfirmDeleteId(account.account_id)}
                                         title="删除账号"
                                     >
@@ -174,7 +174,7 @@ export function WeiboAccountPoolCard() {
             </div>
 
             <div className="flex items-center justify-end">
-                <Button size="sm" variant="ghost" className="gap-1.5 rounded-xl text-muted-foreground" onClick={() => void fetchData()} disabled={loading}>
+                <Button size="sm" variant="ghost" className="gap-1.5 rounded-md text-muted-foreground" onClick={() => void fetchData()} disabled={loading}>
                     <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
                     刷新
                 </Button>
@@ -195,7 +195,7 @@ export function WeiboAccountPoolCard() {
 
 function MiniStat({ label, value, accent }: { label: string; value: string; accent?: string }) {
     return (
-        <div className="rounded-xl border border-border/60 bg-muted/20 px-3 py-2 shadow-sm">
+        <div className="rounded-md border border-border bg-muted/20 px-3 py-2 shadow-sm">
             <p className="text-[11px] text-muted-foreground">{label}</p>
             <p className={cn("mt-1 text-sm font-medium text-foreground", accent)}>{value}</p>
         </div>

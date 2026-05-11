@@ -7,7 +7,7 @@ import { YouTubeQuotaCard } from "@/components/features/YouTubeQuotaCard";
 export default function YouTubeSettingsPage() {
     return (
         <div className="grid gap-6 animate-in fade-in duration-300">
-            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card ">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Youtube className="h-5 w-5 text-red-600 dark:text-red-400" /> YouTube 接入说明
@@ -22,7 +22,7 @@ export default function YouTubeSettingsPage() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex items-start gap-3 rounded-2xl border border-red-200/70 bg-red-50/60 p-4 text-sm text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-100">
+                    <div className="flex items-start gap-3 rounded-md border border-red-200/70 bg-red-50/60 p-4 text-sm text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-100">
                         <Info className="mt-0.5 h-4 w-4 shrink-0" />
                         <div className="space-y-1">
                             <p>

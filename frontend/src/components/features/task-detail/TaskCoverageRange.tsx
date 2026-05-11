@@ -18,7 +18,7 @@ export function TaskCoverageRange({ task }: { task: TaskOut }) {
     const coverage = task.time_coverage ?? {};
 
     return (
-        <div className="rounded-xl border bg-card p-4 shadow-sm">
+        <div className="rounded-md border bg-card p-4 shadow-sm">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
                 <CalendarRange className="h-4 w-4 text-primary" />
                 推文/评论覆盖时间范围

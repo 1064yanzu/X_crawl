@@ -20,7 +20,7 @@ export function ConfigRow({
     unit?: string;
 }) {
     return (
-        <div className="flex flex-col gap-3 border-b border-border/50 py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-b border-border py-4 last:border-0 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-foreground">{label}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
@@ -34,7 +34,7 @@ export function ConfigRow({
                     step={step}
                     value={value}
                     onChange={(e) => onChange(parseFloat(e.target.value) || min)}
-                    className="h-11 w-28 rounded-xl border border-input bg-background px-3 text-right font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="h-11 w-28 rounded-md border border-input bg-background px-3 text-right font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
                 <span className="min-w-10 text-xs text-muted-foreground">{unit}</span>
             </div>

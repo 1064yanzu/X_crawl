@@ -79,7 +79,7 @@ export function EngineConfigCard() {
     };
 
     return (
-        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+        <Card className="rounded-lg border-border bg-card ">
             <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-xl"><Cpu className="h-5 w-5" /> 爬虫引擎核心</CardTitle>
                 <CardDescription>统一管理浏览器模式、实时推送和资源压力收敛策略。</CardDescription>
@@ -141,7 +141,7 @@ export function EngineConfigCard() {
                             />
                         </div>
 
-                        <div className="rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+                        <div className="rounded-md border border-border bg-muted/10 p-4 shadow-sm">
                             <p className="text-sm font-medium text-foreground">最大节流倍数</p>
                             <p className="mt-1 text-xs leading-5 text-muted-foreground">推荐值 3.0，范围 1.1 - 6.0，数值越高说明高压时减速越明显。</p>
                             <div className="mt-3 flex items-center gap-3">
@@ -153,14 +153,14 @@ export function EngineConfigCard() {
                                     value={throttleMaxFactor}
                                     onChange={(e) => setThrottleMaxFactor(Number(e.target.value) || 3)}
                                     disabled={saving || loading}
-                                    className="h-11 w-32 rounded-xl border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                    className="h-11 w-32 rounded-md border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                 />
                                 <span className="text-xs text-muted-foreground">倍</span>
                             </div>
                         </div>
 
-                        <div className="flex justify-end rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
-                            <Button size="sm" onClick={handleSave} disabled={saving || loading} className="min-w-[112px] rounded-xl">
+                        <div className="flex justify-end rounded-lg border border-border bg-background p-4 shadow-sm">
+                            <Button size="sm" onClick={handleSave} disabled={saving || loading} className="min-w-[112px] rounded-md">
                                 {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                                 保存引擎设置
                             </Button>
@@ -186,7 +186,7 @@ function ToggleField({
     disabled?: boolean;
 }) {
     return (
-        <label className="flex items-start justify-between gap-3 rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+        <label className="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/10 p-4 shadow-sm">
             <div>
                 <p className="text-sm font-medium text-foreground">{label}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
@@ -222,7 +222,7 @@ function NumberField({
     disabled?: boolean;
 }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+        <div className="rounded-md border border-border bg-muted/10 p-4 shadow-sm">
             <p className="text-sm font-medium text-foreground">{label}</p>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
             <div className="mt-3 flex items-center gap-2">
@@ -234,7 +234,7 @@ function NumberField({
                     value={value}
                     onChange={(e) => onChange(Number(e.target.value) || min)}
                     disabled={disabled}
-                    className="h-11 w-full rounded-xl border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    className="h-11 w-full rounded-md border border-input bg-background px-3 font-mono text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
                 <span className="text-xs text-muted-foreground">{unit}</span>
             </div>

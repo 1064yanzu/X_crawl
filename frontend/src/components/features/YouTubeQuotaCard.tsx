@@ -50,8 +50,8 @@ export function YouTubeQuotaCard() {
     }, [summary]);
 
     return (
-        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
-            <CardHeader className="flex flex-col gap-3 border-b border-border/50 pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <Card className="rounded-lg border-border bg-card ">
+            <CardHeader className="flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Gauge className="h-5 w-5 text-red-600 dark:text-red-400" /> 今日配额概览
@@ -60,18 +60,18 @@ export function YouTubeQuotaCard() {
                         每个 YouTube API Key 默认每日 10,000 单位；搜索 100 单位/次，list 类 1 单位/次。
                     </CardDescription>
                 </div>
-                <Button variant="outline" size="sm" className="rounded-xl" onClick={refresh} disabled={loading}>
+                <Button variant="outline" size="sm" className="rounded-md" onClick={refresh} disabled={loading}>
                     <RefreshCw className={cn("mr-1 h-4 w-4", loading && "animate-spin")} />
                     刷新
                 </Button>
             </CardHeader>
             <CardContent className="space-y-5 pt-5">
                 {loading && !summary ? (
-                    <div className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-border/60 bg-background/40 p-6 text-sm text-muted-foreground">
+                    <div className="flex items-center justify-center gap-2 rounded-md border border-dashed border-border bg-background p-6 text-sm text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" /> 正在加载配额...
                     </div>
                 ) : !summary || summary.total_keys === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-border/60 bg-background/40 p-6 text-center text-sm text-muted-foreground">
+                    <div className="rounded-md border border-dashed border-border bg-background p-6 text-center text-sm text-muted-foreground">
                         尚未配置任何 Key。添加 Key 后此处会出现实时配额数据。
                     </div>
                 ) : (
@@ -116,7 +116,7 @@ export function YouTubeQuotaCard() {
                             <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-muted">
                                 <div
                                     className={cn(
-                                        "h-full rounded-full transition-all",
+ "h-full rounded-full transition-all",
                                         usagePct >= 95
                                             ? "bg-rose-500"
                                             : usagePct >= 75
@@ -151,7 +151,7 @@ function MetricBlock({
     compact?: boolean;
 }) {
     return (
-        <div className="rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm">
+        <div className="rounded-md border border-border bg-background p-4 shadow-sm">
             <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">
                 <Icon className="h-3.5 w-3.5" />
                 {label}

@@ -77,7 +77,7 @@ export function FailedRepliesPanel({ taskId, taskStatus }: FailedRepliesPanelPro
     const isTaskDone = taskStatus === "done" || taskStatus === "stopped" || taskStatus === "failed";
 
     return (
-        <div className="bg-amber-50/50 dark:bg-amber-950/10 border border-amber-200 dark:border-amber-900/40 rounded-xl p-5 space-y-4">
+        <div className="bg-amber-50/50 dark:bg-amber-950/10 border border-amber-200 dark:border-amber-900/40 rounded-md p-5 space-y-4">
             {/* Header */}
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-2">

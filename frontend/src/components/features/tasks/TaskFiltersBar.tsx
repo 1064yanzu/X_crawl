@@ -31,7 +31,7 @@ export function TaskFiltersBar({
     onDensityChange: (value: DensityMode) => void;
 }) {
     return (
-        <div className="space-y-4 rounded-[1.5rem] border border-border/60 bg-card/90 p-4 shadow-sm backdrop-blur-sm sm:p-5">
+        <div className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm sm:p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                     <h2 className="text-lg font-semibold text-foreground">筛选与排序</h2>
@@ -54,11 +54,11 @@ export function TaskFiltersBar({
                         value={query}
                         onChange={(event) => onQueryChange(event.target.value)}
                         placeholder="搜索关键词、任务 ID、状态或最近阶段"
-                        className="h-11 w-full rounded-xl border border-input bg-background pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                        className="h-11 w-full rounded-md border border-input bg-background pl-10 pr-4 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                     />
                 </div>
 
-                <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-background px-3 shadow-sm">
+                <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 shadow-sm">
                     <ArrowUpDown className="h-4 w-4 text-muted-foreground" />
                     <select
                         value={sortMode}
@@ -73,7 +73,7 @@ export function TaskFiltersBar({
                     </select>
                 </div>
 
-                <div className="flex items-center gap-2 rounded-xl border border-border/60 bg-background p-1 shadow-sm">
+                <div className="flex items-center gap-2 rounded-md border border-border bg-background p-1 shadow-sm">
                     <Button type="button" variant={density === "comfortable" ? "default" : "ghost"} size="sm" className="rounded-lg" onClick={() => onDensityChange("comfortable")}>
                         舒展
                     </Button>
@@ -86,7 +86,7 @@ export function TaskFiltersBar({
                 </div>
             </div>
 
-            <div className="flex flex-col gap-3 rounded-[1.25rem] border border-border/60 bg-background/65 px-4 py-3 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-col gap-3 rounded-lg border border-border bg-background px-4 py-3 text-sm text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-2 font-medium text-foreground">
                     <Keyboard className="h-4 w-4 text-primary" />
                     键盘导航

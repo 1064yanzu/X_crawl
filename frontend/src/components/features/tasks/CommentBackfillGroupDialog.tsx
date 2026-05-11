@@ -75,7 +75,7 @@ export function CommentBackfillGroupDialog({
 
     return (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4">
-            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border bg-card shadow-xl">
+            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border bg-card shadow-xl">
                 {/* ── 标题栏 ── */}
                 <div className="flex shrink-0 items-center justify-between border-b px-6 py-4">
                     <div className="flex items-center gap-2.5">
@@ -103,7 +103,7 @@ export function CommentBackfillGroupDialog({
                 {/* ── 内容 ── */}
                 <div className="flex-1 overflow-y-auto px-6 py-4">
                     {/* 工作原理说明 */}
-                    <div className="mb-4 rounded-xl border border-violet-500/20 bg-violet-500/5 p-4">
+                    <div className="mb-4 rounded-md border border-violet-500/20 bg-violet-500/5 p-4">
                         <div className="flex items-start gap-2 text-sm text-violet-800 dark:text-violet-300">
                             <MessageCircleMore className="mt-0.5 h-4 w-4 shrink-0" />
                             <div className="space-y-1 leading-relaxed">
@@ -126,7 +126,7 @@ export function CommentBackfillGroupDialog({
                                 合并后约 {totalExpectedPosts} 条帖子待补采
                             </span>
                         </h4>
-                        <div className="overflow-hidden rounded-xl border">
+                        <div className="overflow-hidden rounded-md border">
                             <ul className="divide-y text-sm">
                                 {tasks.map((task) => {
                                     const progress = task.comment_backfill_progress;
@@ -141,7 +141,7 @@ export function CommentBackfillGroupDialog({
                                         <li
                                             key={task.task_id}
                                             className={cn(
-                                                "px-4 py-3",
+ "px-4 py-3",
                                                 isFullyDone && "opacity-50",
                                             )}
                                         >
@@ -170,7 +170,7 @@ export function CommentBackfillGroupDialog({
                                                             <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
                                                                 <div
                                                                     className={cn(
-                                                                        "h-full rounded-full transition-all",
+ "h-full rounded-full transition-all",
                                                                         isFullyDone
                                                                             ? "bg-emerald-500"
                                                                             : "bg-violet-500",
@@ -192,7 +192,7 @@ export function CommentBackfillGroupDialog({
                                                                 </p>
                                                             )}
                                                             <p className={cn(
-                                                                "tabular-nums text-xs font-medium",
+ "tabular-nums text-xs font-medium",
                                                                 isFullyDone
                                                                     ? "text-muted-foreground"
                                                                     : "text-foreground",
@@ -245,7 +245,7 @@ export function CommentBackfillGroupDialog({
                                         key={n}
                                         type="button"
                                         className={cn(
-                                            "flex h-9 w-12 items-center justify-center rounded-lg border text-sm font-medium transition-colors",
+ "flex h-9 w-12 items-center justify-center rounded-lg border text-sm font-medium transition-colors",
                                             concurrency === n
                                                 ? "border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300"
                                                 : "border-border bg-background text-muted-foreground hover:border-violet-500/50 hover:text-foreground",
@@ -292,7 +292,7 @@ export function CommentBackfillGroupDialog({
                     <Button
                         variant="outline"
                         size="sm"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={onClose}
                         disabled={submitting}
                     >
@@ -300,7 +300,7 @@ export function CommentBackfillGroupDialog({
                     </Button>
                     <Button
                         size="sm"
-                        className="rounded-xl bg-violet-600 text-white hover:bg-violet-700"
+                        className="rounded-md bg-violet-600 text-white hover:bg-violet-700"
                         onClick={() => void handleSubmit()}
                         disabled={submitting || tasks.length < 1}
                     >

@@ -646,7 +646,7 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
     const url = `${API_BASE_URL}${endpoint}`;
 
     const headers = {
-        "Content-Type": "application/json",
+ "Content-Type": "application/json",
         ...options?.headers,
     };
 
@@ -1055,7 +1055,7 @@ export const api = {
             options?: { signal?: AbortSignal; onProgress?: (loaded: number, total: number | null) => void },
         ) => {
             await downloadPostBlob(
-                "/api/v1/export/batch/csv",
+ "/api/v1/export/batch/csv",
                 { task_ids: taskIds, merge_mode: "single", deduplicate },
                 `batch_${taskIds.length}tasks.csv`,
                 options,
@@ -1068,7 +1068,7 @@ export const api = {
             options?: { signal?: AbortSignal; onProgress?: (loaded: number, total: number | null) => void },
         ) => {
             await downloadPostBlob(
-                "/api/v1/export/batch/excel",
+ "/api/v1/export/batch/excel",
                 { task_ids: taskIds, merge_mode: mergeMode, deduplicate },
                 `batch_${taskIds.length}tasks.xlsx`,
                 options,

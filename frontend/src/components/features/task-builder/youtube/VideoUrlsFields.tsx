@@ -30,7 +30,7 @@ export function YouTubeVideoUrlsFields(props: Props) {
     const { ids, invalid } = props.parsed;
 
     return (
-        <section className="space-y-4 rounded-[1.25rem] border border-border/60 bg-background/70 p-5 shadow-sm">
+        <section className="space-y-4 rounded-lg border border-border bg-background p-5 shadow-sm">
             <SectionTitle
                 title="视频链接批量"
                 description="粘贴或导入一批 YouTube 视频链接 / 11 位 video ID，后端跳过搜索，直接抓详情与评论。"
@@ -45,14 +45,14 @@ export function YouTubeVideoUrlsFields(props: Props) {
                     onChange={(event) => props.onTextChange(event.target.value)}
                     rows={8}
                     placeholder={[
-                        "https://youtu.be/dQw4w9WgXcQ",
-                        "https://www.youtube.com/watch?v=abcdefghijk",
-                        "https://www.youtube.com/shorts/xyz12345678",
-                        "dQw4w9WgXcQ",
+ "https://youtu.be/dQw4w9WgXcQ",
+ "https://www.youtube.com/watch?v=abcdefghijk",
+ "https://www.youtube.com/shorts/xyz12345678",
+ "dQw4w9WgXcQ",
                     ].join("\n")}
                     className={cn(
-                        "w-full rounded-xl border border-border/60 bg-background px-3 py-2.5 text-sm font-mono leading-6",
-                        "focus:border-primary/40 focus:ring-2 focus:ring-primary/20 outline-none resize-y",
+ "w-full rounded-md border border-border bg-background px-3 py-2.5 text-sm font-mono leading-6",
+ "focus:border-primary/40 focus:ring-2 focus:ring-primary/20 outline-none resize-y",
                     )}
                 />
             </label>
@@ -65,10 +65,10 @@ export function YouTubeVideoUrlsFields(props: Props) {
                 onDragLeave={() => setDragActive(false)}
                 onDrop={handleDrop}
                 className={cn(
-                    "flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-5 py-6 text-center cursor-pointer transition-all",
+ "flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed px-5 py-6 text-center cursor-pointer transition-all",
                     dragActive
                         ? "border-primary/60 bg-primary/8"
-                        : "border-border/70 bg-muted/20 hover:border-primary/30 hover:bg-muted/30",
+                        : "border-border bg-muted/20 hover:border-primary/30 hover:bg-muted/30",
                 )}
             >
                 <FileUp className="h-5 w-5 text-muted-foreground" />
@@ -106,10 +106,10 @@ export function YouTubeVideoUrlsFields(props: Props) {
 
             <div
                 className={cn(
-                    "flex flex-col gap-2 rounded-2xl border px-4 py-3 text-sm",
+ "flex flex-col gap-2 rounded-md border px-4 py-3 text-sm",
                     ids.length > 0
                         ? "border-emerald-200/70 bg-emerald-50/70 text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-100"
-                        : "border-border/60 bg-muted/20 text-muted-foreground",
+                        : "border-border bg-muted/20 text-muted-foreground",
                 )}
             >
                 <div className="flex items-center gap-2">
@@ -129,7 +129,7 @@ export function YouTubeVideoUrlsFields(props: Props) {
                         <button
                             type="button"
                             onClick={props.onClear}
-                            className="ml-auto inline-flex items-center gap-1 rounded-full border border-border/60 bg-background px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+                            className="ml-auto inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
                         >
                             <X className="h-3 w-3" /> 清空
                         </button>

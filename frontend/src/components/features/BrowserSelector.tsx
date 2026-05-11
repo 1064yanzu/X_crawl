@@ -52,13 +52,13 @@ function BrowserCard({
             onClick={() => !isIncompatible && onSelect(browser.id)}
             disabled={isIncompatible || isSelecting}
             className={cn(
-                "group relative w-full rounded-[1.25rem] border-2 p-4 text-left transition-all duration-200",
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:shadow-sm",
+ "group relative w-full rounded-lg border-2 p-4 text-left transition-all duration-200",
+ "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:shadow-sm",
                 isSelected
                     ? "border-primary bg-primary/6 shadow-sm"
                     : isIncompatible
-                        ? "cursor-not-allowed border-border/40 bg-muted/20 opacity-60"
-                        : "cursor-pointer border-border/60 bg-card hover:border-primary/30 hover:bg-primary/[0.02]",
+                        ? "cursor-not-allowed border-border bg-muted/20 opacity-60"
+                        : "cursor-pointer border-border bg-card hover:border-primary/30 hover:bg-primary/[0.02]",
             )}
         >
             {isSelected ? (
@@ -148,11 +148,11 @@ export function BrowserSelector() {
 
     if (!data || data.browsers.length === 0) {
         return (
-            <div className="flex flex-col items-center justify-center rounded-[1.25rem] border border-dashed border-border/80 bg-muted/20 py-10 text-center">
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 py-10 text-center">
                 <Monitor className="mb-3 h-10 w-10 text-muted-foreground/30" />
                 <p className="text-sm font-medium text-foreground">未检测到任何浏览器</p>
                 <p className="mt-1 text-xs text-muted-foreground">请确认已安装 Chrome、Edge 或其它 Chromium 内核浏览器。</p>
-                <Button variant="outline" size="sm" className="mt-4 rounded-xl" onClick={() => void fetchBrowsers()}>
+                <Button variant="outline" size="sm" className="mt-4 rounded-md" onClick={() => void fetchBrowsers()}>
                     <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
                     重新检测
                 </Button>
@@ -164,7 +164,7 @@ export function BrowserSelector() {
 
     return (
         <div className="space-y-4">
-            <div className="rounded-[1.25rem] border border-border/60 bg-muted/20 p-4 shadow-sm">
+            <div className="rounded-lg border border-border bg-muted/20 p-4 shadow-sm">
                 <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                     <div>
                         <h4 className="text-sm font-semibold text-foreground">当前浏览器会话</h4>
@@ -193,7 +193,7 @@ export function BrowserSelector() {
                 </div>
 
                 {data.last_login_failure_reason ? (
-                    <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    <div className="mt-3 rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                         最近失败原因：{data.last_login_failure_reason}
                     </div>
                 ) : null}
@@ -204,12 +204,12 @@ export function BrowserSelector() {
                 onClick={() => void handleSelect("")}
                 disabled={selecting}
                 className={cn(
-                    "group relative w-full rounded-[1.25rem] border-2 p-4 text-left transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:shadow-sm",
-                    !selectedId ? "border-primary bg-primary/6 shadow-sm" : "border-border/60 bg-card hover:border-primary/30",
+ "group relative w-full rounded-lg border-2 p-4 text-left transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary hover:shadow-sm",
+                    !selectedId ? "border-primary bg-primary/6 shadow-sm" : "border-border bg-card hover:border-primary/30",
                 )}
             >
                 <div className="flex items-center gap-3">
-                    <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", !selectedId ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
+                    <div className={cn("flex h-10 w-10 items-center justify-center rounded-md", !selectedId ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground")}>
                         <Sparkles className="h-5 w-5" />
                     </div>
                     <div className="flex-1">
@@ -245,9 +245,9 @@ export function BrowserSelector() {
                 ))}
             </div>
 
-            <div className="flex items-center justify-between rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm">
+            <div className="flex items-center justify-between rounded-lg border border-border bg-background p-4 shadow-sm">
                 <p className="text-xs leading-5 text-muted-foreground">切换浏览器路径后，建议重启爬虫服务再发起新任务。</p>
-                <Button variant="ghost" size="sm" onClick={() => void fetchBrowsers()} disabled={loading} className="rounded-xl text-muted-foreground">
+                <Button variant="ghost" size="sm" onClick={() => void fetchBrowsers()} disabled={loading} className="rounded-md text-muted-foreground">
                     <RefreshCw className={cn("mr-1 h-3 w-3", loading && "animate-spin")} />
                     刷新
                 </Button>
@@ -258,7 +258,7 @@ export function BrowserSelector() {
 
 function InfoTile({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
     return (
-        <div className="rounded-xl border border-border/60 bg-background/70 p-3 shadow-sm">
+        <div className="rounded-md border border-border bg-background p-3 shadow-sm">
             <p className="text-[11px] text-muted-foreground">{label}</p>
             <p className={cn("mt-1 break-all text-sm text-foreground", mono && "font-mono text-[12px]")}>{value}</p>
         </div>

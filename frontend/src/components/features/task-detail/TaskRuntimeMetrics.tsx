@@ -10,7 +10,7 @@ export function TaskRuntimeMetrics({
 }) {
     const metrics = runtimeMetrics ?? {};
     return (
-        <div className="bg-card border rounded-xl p-5 shadow-sm flex flex-col justify-center">
+        <div className="bg-card border rounded-md p-5 shadow-sm flex flex-col justify-center">
             <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5">
                 <BarChart3 className="w-4 h-4" /> 运行质量指标
             </p>

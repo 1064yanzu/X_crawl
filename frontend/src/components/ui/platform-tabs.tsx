@@ -42,7 +42,7 @@ export function PlatformTabs({
     return (
         <div
             className={cn(
-                "inline-flex items-center gap-1 p-1 bg-muted/50 rounded-xl border border-border/30",
+ "inline-flex items-center gap-1 p-1 bg-muted/50 rounded-md border border-border",
                 className
             )}
         >
@@ -57,10 +57,10 @@ export function PlatformTabs({
                         type="button"
                         onClick={() => onChange(platform.id)}
                         className={cn(
-                            "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer whitespace-nowrap",
+ "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer whitespace-nowrap",
                             isActive
-                                ? "bg-background text-foreground shadow-sm border border-border/60"
-                                : "text-muted-foreground hover:text-foreground hover:bg-background/60"
+                                ? "bg-background text-foreground shadow-sm border border-border"
+                                : "text-muted-foreground hover:text-foreground hover:bg-background"
                         )}
                     >
                         <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -68,7 +68,7 @@ export function PlatformTabs({
                         {typeof count === "number" && (
                             <span
                                 className={cn(
-                                    "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold leading-none",
+ "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-semibold leading-none",
                                     isActive
                                         ? "bg-primary/10 text-primary"
                                         : "bg-muted text-muted-foreground"

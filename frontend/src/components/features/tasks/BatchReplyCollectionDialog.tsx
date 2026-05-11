@@ -72,7 +72,7 @@ export function BatchReplyCollectionDialog({
 
     return (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4">
-            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border bg-card p-6 shadow-xl">
+            <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-md border bg-card p-6 shadow-xl">
                 <div className="mb-4 flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                         <div className="rounded-full bg-primary/10 p-2 text-primary">
@@ -91,7 +91,7 @@ export function BatchReplyCollectionDialog({
                 </div>
 
                 <div className="mb-4 flex-1 space-y-4 overflow-y-auto">
-                    <div className="rounded-xl border border-border/60 bg-muted/20 p-4 text-sm text-muted-foreground">
+                    <div className="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                         <p className="font-medium text-foreground">这次操作会把任务切成两种明确模式</p>
                         <ul className="mt-2 list-disc space-y-1 pl-5">
                             <li><span className="text-foreground">采集评论</span>：开启评论采集；其中 X 任务会统一按二级评论模式执行。</li>
@@ -101,19 +101,19 @@ export function BatchReplyCollectionDialog({
                     </div>
 
                     <div className="grid gap-3 sm:grid-cols-3">
-                        <div className="rounded-xl border bg-card p-4">
+                        <div className="rounded-md border bg-card p-4">
                             <p className="text-xs text-muted-foreground">可改为采评论</p>
                             <p className="mt-2 text-2xl font-semibold tabular-nums">{withoutCommentsTasks.length}</p>
                         </div>
-                        <div className="rounded-xl border bg-card p-4">
+                        <div className="rounded-md border bg-card p-4">
                             <p className="text-xs text-muted-foreground">可改为不采评论</p>
                             <p className="mt-2 text-2xl font-semibold tabular-nums">{withCommentsTasks.length}</p>
                         </div>
-                        <div className="rounded-xl border bg-card p-4">
+                        <div className="rounded-md border bg-card p-4">
                             <p className="text-xs text-muted-foreground">符合条件平台</p>
                             <p className="mt-2 text-sm font-semibold text-foreground">X {xEligibleCount} · 微博 {weiboEligibleCount}</p>
                         </div>
-                        <div className="rounded-xl border bg-card p-4 sm:col-span-3">
+                        <div className="rounded-md border bg-card p-4 sm:col-span-3">
                             <p className="text-xs text-muted-foreground">不符合条件</p>
                             <p className="mt-2 text-2xl font-semibold tabular-nums">{ineligibleCount}</p>
                         </div>
@@ -122,7 +122,7 @@ export function BatchReplyCollectionDialog({
                     {eligibleTasks.length > 0 ? (
                         <div className="space-y-3">
                             <h4 className="text-sm font-medium">本次将处理的任务</h4>
-                            <div className="overflow-hidden rounded-xl border">
+                            <div className="overflow-hidden rounded-md border">
                                 <ul className="divide-y text-sm">
                                     {eligibleTasks.map((task) => {
                                         const withComments = isTaskWithReplyCollection(task);
@@ -149,20 +149,20 @@ export function BatchReplyCollectionDialog({
                             </div>
                         </div>
                     ) : (
-                        <div className="rounded-xl border border-dashed border-border/60 bg-muted/20 p-6 text-center text-sm text-muted-foreground">
+                        <div className="rounded-md border border-dashed border-border bg-muted/20 p-6 text-center text-sm text-muted-foreground">
                             当前选中的任务里，没有符合条件的 X / 微博历史帖子采集任务。
                         </div>
                     )}
                 </div>
 
                 <div className="mt-auto flex flex-wrap items-center justify-end gap-2 border-t pt-4">
-                    <Button variant="outline" size="sm" className="rounded-xl" onClick={onClose} disabled={submittingMode !== null}>
+                    <Button variant="outline" size="sm" className="rounded-md" onClick={onClose} disabled={submittingMode !== null}>
                         取消
                     </Button>
                     <Button
                         variant="outline"
                         size="sm"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={() => void handleSubmit("without_comments")}
                         disabled={submittingMode !== null || withCommentsTasks.length === 0}
                     >
@@ -171,7 +171,7 @@ export function BatchReplyCollectionDialog({
                     </Button>
                     <Button
                         size="sm"
-                        className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+                        className="rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
                         onClick={() => void handleSubmit("with_comments")}
                         disabled={submittingMode !== null || withoutCommentsTasks.length === 0}
                     >

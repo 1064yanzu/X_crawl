@@ -11,7 +11,7 @@ import { RawResponseStorageCard } from "@/components/features/settings/RawRespon
 export default function GeneralSettingsPage() {
     return (
         <div className="grid gap-6 animate-in fade-in duration-300">
-            <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+            <Card className="rounded-lg border-border bg-card ">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Monitor className="h-5 w-5 text-indigo-500" /> 浏览器选择
@@ -30,7 +30,7 @@ export default function GeneralSettingsPage() {
             <ProxyConfigCard />
             <RawResponseStorageCard />
 
-            <Card className="rounded-[1.5rem] border-red-200/70 bg-red-50/70 dark:border-red-500/20 dark:bg-red-500/10">
+            <Card className="rounded-lg border-red-200/70 bg-red-50/70 dark:border-red-500/20 dark:bg-red-500/10">
                 <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-xl">
                         <Shield className="h-5 w-5" /> 高风险操作
@@ -38,7 +38,7 @@ export default function GeneralSettingsPage() {
                     <CardDescription>仅放破坏性操作，避免和普通配置混在一起。</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <div className="flex flex-col gap-4 rounded-2xl border border-red-200/80 bg-white/70 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-red-500/10 dark:bg-black/10">
+                    <div className="flex flex-col gap-4 rounded-md border border-red-200/80 bg-white/70 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-red-500/10 dark:bg-black/10">
                         <div>
                             <h4 className="font-medium text-red-700 dark:text-red-200">清理浏览器缓存</h4>
                             <p className="mt-1 text-sm leading-6 text-red-700/80 dark:text-red-200/80">

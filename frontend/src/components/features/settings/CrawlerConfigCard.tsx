@@ -26,7 +26,7 @@ export function CrawlerConfigCard() {
     };
 
     return (
-        <Card className="rounded-[1.5rem] border-border/60 bg-card/90 backdrop-blur-sm">
+        <Card className="rounded-lg border-border bg-card ">
             <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-xl">
                     <Timer className="h-5 w-5 text-blue-500" /> 爬虫速率调优
@@ -40,7 +40,7 @@ export function CrawlerConfigCard() {
                     </div>
                 ) : (
                     <>
-                        <div className="rounded-[1.25rem] border border-border/60 bg-muted/10 px-4 shadow-sm sm:px-5">
+                        <div className="rounded-lg border border-border bg-muted/10 px-4 shadow-sm sm:px-5">
                             <ConfigRow label="数据包等待超时" description="等待 SearchTimeline / TweetDetail 包的最长时间。" value={config.crawler_timeout} onChange={set("crawler_timeout")} min={5} max={120} />
                             <ConfigRow label="翻页间隔" description="翻页的基线间隔，实际运行会叠加轻微抖动。" value={config.crawler_page_interval} onChange={set("crawler_page_interval")} min={1} max={60} />
                             <ConfigRow label="首次加载等待" description="搜索页首次加载完成后的补充等待时间。" value={config.crawler_initial_wait} onChange={set("crawler_initial_wait")} min={0} max={30} />
@@ -108,14 +108,14 @@ export function CrawlerConfigCard() {
                                 checked={Boolean(config.crawler_cross_platform_concurrent ?? true)}
                                 onChange={(checked) => setConfig((prev) => ({ ...prev, crawler_cross_platform_concurrent: checked }))}
                             />
-                            <div className="rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+                            <div className="rounded-md border border-border bg-muted/10 p-4 shadow-sm">
                                 <div className="flex items-center justify-between gap-3">
                                     <div>
                                         <p className="text-sm font-medium text-foreground">调度后端</p>
                                         <p className="mt-1 text-xs leading-5 text-muted-foreground">当前默认使用内存调度，Redis 仅作为预留选项。</p>
                                     </div>
                                     <select
-                                        className="h-10 rounded-xl border border-input bg-background px-3 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                        className="h-10 rounded-md border border-input bg-background px-3 text-xs shadow-sm focus:outline-none focus:ring-2 focus:ring-primary"
                                         value={config.scheduler_backend ?? "memory"}
                                         onChange={(e) => setConfig((prev) => ({ ...prev, scheduler_backend: e.target.value as "memory" | "redis" }))}
                                     >
@@ -126,15 +126,15 @@ export function CrawlerConfigCard() {
                             </div>
                         </div>
 
-                        <div className="mt-4 flex flex-col gap-3 rounded-[1.25rem] border border-border/60 bg-background/70 p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+                        <div className="mt-4 flex flex-col gap-3 rounded-lg border border-border bg-background p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
                             <p className="text-xs leading-5 text-muted-foreground">推荐并发为 1；极速模式建议将翻页间隔控制在 2 - 6 秒之间。</p>
                             <div className="flex items-center gap-2">
                                 {isDirty ? (
-                                    <Button variant="ghost" size="sm" onClick={reset} className="rounded-xl text-muted-foreground">
+                                    <Button variant="ghost" size="sm" onClick={reset} className="rounded-md text-muted-foreground">
                                         <RotateCcw className="mr-1 h-3.5 w-3.5" /> 撤销
                                     </Button>
                                 ) : null}
-                                <Button size="sm" onClick={handleSave} disabled={saving || !isDirty} className={`min-w-[104px] rounded-xl ${saved ? "bg-emerald-600 hover:bg-emerald-600" : ""}`}>
+                                <Button size="sm" onClick={handleSave} disabled={saving || !isDirty} className={`min-w-[104px] rounded-md ${saved ? "bg-emerald-600 hover:bg-emerald-600" : ""}`}>
                                     {saving ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Save className="mr-1.5 h-3.5 w-3.5" />}
                                     {saved ? "已保存" : "应用配置"}
                                 </Button>
@@ -159,7 +159,7 @@ function ToggleField({
     onChange: (checked: boolean) => void;
 }) {
     return (
-        <label className="flex items-start justify-between gap-3 rounded-2xl border border-border/60 bg-muted/10 p-4 shadow-sm">
+        <label className="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/10 p-4 shadow-sm">
             <div>
                 <p className="text-sm font-medium text-foreground">{label}</p>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>

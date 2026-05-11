@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { BarChart3, Bookmark, Database, Settings, Terminal } from "lucide-react";
+import { BarChart3, Database, Settings, Terminal } from "lucide-react";
 
 export type NavItem = {
     name: string;
@@ -12,7 +12,6 @@ export const NAV_ITEMS: NavItem[] = [
     { name: "控制台", href: "/", icon: Terminal, hint: "创建与总览" },
     { name: "采集任务", href: "/tasks", icon: Database, hint: "查看运行状态" },
     { name: "数据看板", href: "/analytics", icon: BarChart3, hint: "趋势与统计" },
-    { name: "断点续传", href: "/checkpoints", icon: Bookmark, hint: "恢复中断任务" },
     { name: "设置", href: "/settings", icon: Settings, hint: "浏览器与账号" },
 ];
 

@@ -47,15 +47,15 @@ export function AdvancedSearchPanel({ params, onChange, isOpen, onToggle }: Prop
     const hasFilters = hasActiveFilters(params);
 
     return (
-        <div className="rounded-2xl border border-border/60 bg-card/80 shadow-sm">
+        <div className="rounded-md border border-border bg-card shadow-sm">
             <button
                 type="button"
                 onClick={onToggle}
-                className="flex w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left transition-colors hover:bg-muted/30"
+                className="flex w-full items-center justify-between gap-3 rounded-md px-4 py-3 text-left transition-colors hover:bg-muted/30"
                 aria-expanded={isOpen}
             >
                 <div className="flex min-w-0 items-center gap-3">
-                    <div className="rounded-xl border border-border/60 bg-background p-2 text-primary shadow-sm">
+                    <div className="rounded-md border border-border bg-background p-2 text-primary shadow-sm">
                         <SlidersHorizontal className="h-4 w-4" />
                     </div>
                     <div className="min-w-0">
@@ -76,8 +76,8 @@ export function AdvancedSearchPanel({ params, onChange, isOpen, onToggle }: Prop
             </button>
 
             {isOpen ? (
-                <div className="border-t border-border/50 px-4 py-4">
-                    <div className="space-y-3 rounded-2xl border border-border/50 bg-background/50 p-4">
+                <div className="border-t border-border px-4 py-4">
+                    <div className="space-y-3 rounded-md border border-border bg-background p-4">
                         <WordsSection params={params} update={update} />
                         <AccountsSection params={params} update={update} />
                         <FilterSection

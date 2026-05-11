@@ -140,7 +140,7 @@ export function BatchExportDialog({
 
     return (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 p-4">
-            <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-xl">
+            <div className="w-full max-w-lg rounded-md border bg-card p-6 shadow-xl">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                         <div className="rounded-full bg-primary/10 p-2 text-primary">
@@ -160,7 +160,7 @@ export function BatchExportDialog({
 
                 {/* 数据量预估信息 */}
                 {(estimateLoading || estimate) && (
-                    <div className="mt-4 rounded-xl border border-border/60 bg-muted/30 px-4 py-3">
+                    <div className="mt-4 rounded-md border border-border bg-muted/30 px-4 py-3">
                         {estimateLoading ? (
                             <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -207,10 +207,10 @@ export function BatchExportDialog({
                     {FORMAT_OPTIONS.map((opt) => (
                         <label
                             key={opt.value}
-                            className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors ${
+                            className={`flex cursor-pointer items-start gap-3 rounded-md border p-3.5 transition-colors ${
                                 format === opt.value
                                     ? "border-primary bg-primary/5"
-                                    : "border-border/60 bg-background/60 hover:border-border"
+                                    : "border-border bg-background hover:border-border"
                             } ${exporting ? "pointer-events-none opacity-60" : ""}`}
                         >
                             <input
@@ -234,10 +234,10 @@ export function BatchExportDialog({
                 </div>
 
                 <label
-                    className={`mt-4 flex cursor-pointer items-center gap-3 rounded-xl border p-3.5 transition-colors ${
+                    className={`mt-4 flex cursor-pointer items-center gap-3 rounded-md border p-3.5 transition-colors ${
                         deduplicate
                             ? "border-primary bg-primary/5"
-                            : "border-border/60 bg-background/60 hover:border-border"
+                            : "border-border bg-background hover:border-border"
                     } ${exporting ? "pointer-events-none opacity-60" : ""}`}
                 >
                     <input
@@ -293,19 +293,19 @@ export function BatchExportDialog({
                         <Button
                             variant="outline"
                             size="sm"
-                            className="rounded-xl"
+                            className="rounded-md"
                             onClick={handleCancel}
                         >
                             取消导出
                         </Button>
                     ) : (
-                        <Button variant="outline" size="sm" className="rounded-xl" onClick={onClose}>
+                        <Button variant="outline" size="sm" className="rounded-md" onClick={onClose}>
                             取消
                         </Button>
                     )}
                     <Button
                         size="sm"
-                        className="rounded-xl"
+                        className="rounded-md"
                         onClick={() => void handleExport()}
                         disabled={exporting}
                     >

@@ -9,7 +9,7 @@ export function TopKeywords({
 }) {
     if (data.length === 0) {
         return (
-            <Card className="rounded-2xl border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
+            <Card className="rounded-md border-border bg-card shadow-sm ">
                 <CardHeader className="pb-3">
                     <CardTitle className="text-lg">关键词排行</CardTitle>
                 </CardHeader>
@@ -23,7 +23,7 @@ export function TopKeywords({
     const maxTweets = Math.max(...data.map((d) => d.tweets), 1);
 
     return (
-        <Card className="rounded-2xl border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
+        <Card className="rounded-md border-border bg-card shadow-sm ">
             <CardHeader className="pb-3">
                 <CardTitle className="text-lg">关键词排行</CardTitle>
                 <p className="text-xs text-muted-foreground">按推文数降序，前 20 名</p>
@@ -31,7 +31,7 @@ export function TopKeywords({
             <CardContent>
                 <div className="space-y-3">
                     {/* 表头 */}
-                    <div className="grid grid-cols-[1fr_72px_72px_72px] gap-2 border-b border-border/60 pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="grid grid-cols-[1fr_72px_72px_72px] gap-2 border-b border-border pb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                         <span>关键词</span>
                         <span className="text-right">任务</span>
                         <span className="text-right">推文</span>

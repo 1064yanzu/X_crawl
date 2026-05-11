@@ -25,15 +25,15 @@ function RateValue({ value, unit, size = "lg" }: { value: number; unit: string; 
     const isActive = value > 0;
     return (
         <span className={cn(
-            "tabular-nums font-bold tracking-tight transition-colors duration-500",
+ "tabular-nums font-bold tracking-tight transition-colors duration-500",
             size === "lg" ? "text-3xl" : "text-xl",
             isActive ? "text-foreground" : "text-muted-foreground/60",
         )}>
             {value.toLocaleString(undefined, { maximumFractionDigits: 1 })}
             <span className={cn(
-                "ml-1 font-medium",
+ "ml-1 font-medium",
                 size === "lg" ? "text-sm" : "text-xs",
-                "text-muted-foreground",
+ "text-muted-foreground",
             )}>
                 {unit}
             </span>
@@ -63,7 +63,7 @@ function TaskRateRow({ item }: { item: TaskRateItem }) {
     return (
         <Link
             href={`/tasks/${item.task_id}`}
-            className="group block rounded-xl border border-border/50 bg-background/60 p-3.5 transition-all duration-200 hover:border-primary/20 hover:bg-background hover:shadow-sm"
+            className="group block rounded-md border border-border bg-background p-3.5 transition-all duration-200 hover:border-primary/20 hover:bg-background hover:shadow-sm"
         >
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -134,7 +134,7 @@ function RateMetric({ label, value15s, value60s }: { label: string; value15s: nu
                     {value60s.toLocaleString(undefined, { maximumFractionDigits: 1 })}
                 </span>
                 <span className={cn(
-                    "text-[10px] tabular-nums",
+ "text-[10px] tabular-nums",
                     value15s > value60s
                         ? "text-emerald-600 dark:text-emerald-400"
                         : value15s < value60s * 0.5
@@ -155,7 +155,7 @@ export function LiveRatesPanel() {
 
     if (isLoading && !data) {
         return (
-            <Card className="rounded-2xl border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
+            <Card className="rounded-md border-border bg-card shadow-sm ">
                 <CardHeader className="pb-3">
                     <Skeleton className="h-5 w-40" />
                 </CardHeader>
@@ -163,10 +163,10 @@ export function LiveRatesPanel() {
                     <div className="space-y-4">
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                             {[1, 2, 3, 4].map((i) => (
-                                <Skeleton key={i} className="h-20 rounded-xl" />
+                                <Skeleton key={i} className="h-20 rounded-md" />
                             ))}
                         </div>
-                        <Skeleton className="h-24 rounded-xl" />
+                        <Skeleton className="h-24 rounded-md" />
                     </div>
                 </CardContent>
             </Card>
@@ -178,12 +178,12 @@ export function LiveRatesPanel() {
     const g = rates?.global_rates;
 
     return (
-        <Card className="rounded-2xl border-border/60 bg-card/90 shadow-sm backdrop-blur-sm">
+        <Card className="rounded-md border-border bg-card shadow-sm ">
             <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                     <CardTitle className="flex items-center gap-2.5 text-lg">
                         <div className={cn(
-                            "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
+ "flex h-8 w-8 items-center justify-center rounded-lg transition-colors",
                             isActive
                                 ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                                 : "bg-muted text-muted-foreground",
@@ -246,7 +246,7 @@ export function LiveRatesPanel() {
                         </div>
 
                         {/* 累计统计 */}
-                        <div className="flex items-center gap-6 rounded-xl bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-6 rounded-md bg-muted/50 px-4 py-2.5 text-xs text-muted-foreground">
                             <span>运行中任务累计：</span>
                             <span className="font-semibold text-foreground">{g!.total_tweets.toLocaleString()} 推文</span>
                             <span className="font-semibold text-foreground">{g!.total_replies.toLocaleString()} 评论</span>
@@ -283,7 +283,7 @@ function GlobalRateCard({
     icon: React.ComponentType<{ className?: string }>;
 }) {
     return (
-        <div className="rounded-xl border border-border/50 bg-background/60 p-4 transition-shadow hover:shadow-sm">
+        <div className="rounded-md border border-border bg-background p-4 transition-shadow hover:shadow-sm">
             <div className="flex items-center gap-2.5">
                 <div className={cn("flex h-8 w-8 items-center justify-center rounded-lg", accentClass)}>
                     <Icon className="h-4 w-4" />
@@ -294,7 +294,7 @@ function GlobalRateCard({
                 <RateValue value={value} unit="" size="sm" />
                 {instantValue !== null && (
                     <span className={cn(
-                        "text-[10px] tabular-nums",
+ "text-[10px] tabular-nums",
                         instantValue > value
                             ? "text-emerald-600 dark:text-emerald-400"
                             : instantValue < value * 0.5

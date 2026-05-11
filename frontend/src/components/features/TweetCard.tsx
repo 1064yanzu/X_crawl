@@ -44,7 +44,7 @@ function MediaGrid({ media, compact = false }: { media: AnyRecord[]; compact?: b
 
     return (
         <div className={cn(
-            "mt-3 grid gap-1 overflow-hidden rounded-2xl border border-border/30",
+ "mt-3 grid gap-1 overflow-hidden rounded-md border border-border",
             media.length === 1 ? "grid-cols-1" : "grid-cols-2"
         )}>
             {media.map((m: AnyRecord, i: number) => {
@@ -57,7 +57,7 @@ function MediaGrid({ media, compact = false }: { media: AnyRecord[]; compact?: b
                     <div
                         key={m.id || i}
                         className={cn(
-                            "relative bg-muted group/media overflow-hidden",
+ "relative bg-muted group/media overflow-hidden",
                             media.length === 3 && i === 0 ? "row-span-2" : ""
                         )}
                     >
@@ -81,7 +81,7 @@ function MediaGrid({ media, compact = false }: { media: AnyRecord[]; compact?: b
                                         className={cn("w-full h-full object-cover", compact ? "max-h-[240px]" : "max-h-[400px]")}
                                     />
                                     <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                        <div className="w-14 h-14 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                                        <div className="w-14 h-14 rounded-full bg-white/20 flex items-center justify-center">
                                             <Video className="w-7 h-7 text-white" />
                                         </div>
                                     </div>
@@ -126,7 +126,7 @@ function ReplyCard({ reply }: { reply: AnyRecord }) {
     const media: AnyRecord[] = reply.media || [];
 
     return (
-        <div className="flex gap-2.5 py-3 border-b border-border/30 last:border-0">
+        <div className="flex gap-2.5 py-3 border-b border-border last:border-0">
             {/* 竖线连接 */}
             <div className="flex flex-col items-center shrink-0">
                 {author.avatar_url ? (
@@ -135,7 +135,7 @@ function ReplyCard({ reply }: { reply: AnyRecord }) {
                         src={author.avatar_url}
                         alt={author.name || "头像"}
                         className={cn(
-                            "w-8 h-8 object-cover shrink-0",
+ "w-8 h-8 object-cover shrink-0",
                             author.profile_image_shape === "Square" ? "rounded-lg" : "rounded-full"
                         )}
                     />
@@ -211,8 +211,8 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
 
     return (
         <div className={cn(
-            "bg-card border rounded-2xl shadow-sm hover:shadow-md transition-shadow relative group",
-            isReply ? "p-3 border-border/40" : compact ? "p-4" : "p-5",
+ "bg-card border rounded-md shadow-sm hover:shadow-md transition-shadow relative group",
+            isReply ? "p-3 border-border" : compact ? "p-4" : "p-5",
             depth > 0 && "ml-4 border-l-2 border-primary/20"
         )}>
             <div className={cn("flex gap-3", compact && !isReply && "gap-2.5")}>
@@ -224,14 +224,14 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
                             src={author.avatar_url}
                             alt={(author.name as string) || "头像"}
                             className={cn(
-                                "object-cover",
+ "object-cover",
                                 isReply ? "w-9 h-9" : compact ? "w-10 h-10" : "w-12 h-12",
                                 author.profile_image_shape === "Square" ? "rounded-lg" : "rounded-full"
                             )}
                         />
                     ) : (
                         <div className={cn(
-                            "bg-muted rounded-full flex items-center justify-center font-bold text-muted-foreground",
+ "bg-muted rounded-full flex items-center justify-center font-bold text-muted-foreground",
                             isReply ? "w-9 h-9 text-base" : compact ? "w-10 h-10 text-base" : "w-12 h-12 text-lg"
                         )}>
                             {(author.name as string)?.charAt(0) || "?"}
@@ -265,7 +265,7 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
 
                     {/* Text body */}
                     <div className={cn(
-                        "leading-normal whitespace-pre-wrap break-words",
+ "leading-normal whitespace-pre-wrap break-words",
                         isReply ? "text-sm" : compact ? "text-[14px]" : "text-[15px]",
                         canCollapseText && !showFullText && "line-clamp-4",
                     )}>
@@ -315,7 +315,7 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
 
                     {/* Quoted tweet */}
                     {tweet.quoted_tweet && (
-                        <div className={cn("rounded-xl border border-border/50 bg-muted/20", compact ? "mt-2.5 p-2.5" : "mt-3 p-3")}>
+                        <div className={cn("rounded-md border border-border bg-muted/20", compact ? "mt-2.5 p-2.5" : "mt-3 p-3")}>
                             <div className="flex items-center gap-1.5 mb-1">
                                 <Quote className="w-3.5 h-3.5 text-muted-foreground" />
                                 <span className="text-xs text-muted-foreground font-medium">引用推文</span>
@@ -377,7 +377,7 @@ export function TweetCard({ tweet, isReply = false, depth = 0, compact = false }
                             </button>
 
                             {showReplies && (
-                                <div className="mt-2 border border-border/30 rounded-xl overflow-hidden bg-muted/10 px-3">
+                                <div className="mt-2 border border-border rounded-md overflow-hidden bg-muted/10 px-3">
                                     {replies.map((reply: AnyRecord, idx: number) => (
                                         <ReplyCard key={reply.id ? `${reply.id}-${idx}` : `reply-${idx}`} reply={reply} />
                                     ))}

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PageHeader } from "@/components/ui/page-header";
-import { StatCard } from "@/components/ui/stat-card";
+import { StatCard, StatCardGroup } from "@/components/ui/stat-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TaskBatchActions } from "@/components/features/tasks/TaskBatchActions";
@@ -468,27 +468,27 @@ export default function TasksPage() {
 
     return (
         <>
-            <div className="space-y-6 pb-8 animate-in fade-in slide-in-from-bottom-4 duration-700 ease-out">
+            <div className="space-y-10 pb-16 editorial-rise">
                 <PageHeader
-                    eyebrow="Task Center"
+                    eyebrow="Issue 01 · Task center"
                     icon={Database}
                     title="采集队列"
                     description="查看和管理采集任务。"
                     actions={
                         <Link href="/">
-                            <Button className="rounded-xl">
-                                <TerminalSquare className="mr-2 h-4 w-4" />
+                            <Button>
+                                <TerminalSquare className="mr-2 h-3.5 w-3.5" />
                                 新建任务
                             </Button>
                         </Link>
                     }
                 >
-                    <div className="grid gap-3 md:grid-cols-4">
+                    <StatCardGroup>
                         <StatCard label="全部任务" value={tasks.length} hint="包含历史记录与当前队列" icon={Database} />
                         <StatCard label="运行中" value={runningCount} hint="正在执行或排队中" icon={Loader2} tone="primary" />
-                        <StatCard label="已暂停" value={pausedCount} hint={pausedCount > 0 ? "有任务被暂停，可一键恢复" : "当前没有暂停的任务"} icon={Pause} tone={pausedCount > 0 ? "warning" : undefined} />
+                        <StatCard label="已暂停" value={pausedCount} hint={pausedCount > 0 ? "可一键恢复" : "当前没有暂停"} icon={Pause} tone={pausedCount > 0 ? "warning" : "default"} />
                         <StatCard label="异常 / 风控" value={riskCount} hint={`累计完成 ${completedCount} 个任务`} icon={Clock3} tone={riskCount > 0 ? "warning" : "success"} />
-                    </div>
+                    </StatCardGroup>
                 </PageHeader>
 
                 <BrowserPoolPanel />
@@ -550,20 +550,20 @@ export default function TasksPage() {
                                         : "可以切换回全部平台，或直接创建该平台的新任务。"}
                                 action={
                                     hasSearch ? (
-                                        <Button variant="outline" className="rounded-xl" onClick={() => setQuery("")}>清空搜索</Button>
+                                        <Button variant="outline" className="rounded-md" onClick={() => setQuery("")}>清空搜索</Button>
                                     ) : activePlatform === "all" ? (
                                         <Link href="/">
-                                            <Button variant="outline" className="rounded-xl">去创建任务</Button>
+                                            <Button variant="outline" className="rounded-md">去创建任务</Button>
                                         </Link>
                                     ) : (
-                                        <Button variant="outline" className="rounded-xl" onClick={() => setActivePlatform("all")}>查看全部平台</Button>
+                                        <Button variant="outline" className="rounded-md" onClick={() => setActivePlatform("all")}>查看全部平台</Button>
                                     )
                                 }
                             />
                         ) : (
                             <div className={cn(
-                                "grid",
-                                density === "mini" ? "gap-0.5 rounded-2xl border border-border/60 bg-card/90 p-2 shadow-sm" : density === "compact" ? "gap-2" : "gap-4",
+ "grid",
+                                density === "mini" ? "gap-0.5 rounded-md border border-border bg-card p-2 shadow-sm" : density === "compact" ? "gap-2" : "gap-4",
                             )}>
                                 {searchedTasks.map((task) => (
                                     <TaskListCard
@@ -704,7 +704,7 @@ function TaskListSkeleton() {
     return (
         <div className="space-y-3">
             {[1, 2, 3].map((item) => (
-                <Card key={item} className="rounded-[1.5rem] border border-border/60 bg-card/90 p-5 shadow-sm">
+                <Card key={item} className="rounded-lg border border-border bg-card p-5 shadow-sm">
                     <div className="space-y-4">
                         <div className="flex items-center gap-2">
                             <Skeleton className="h-6 w-24 rounded-full" />

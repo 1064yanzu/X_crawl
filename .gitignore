@@ -77,6 +77,9 @@ backend/xcrawl-backend.spec
 desktop/node_modules/
 desktop/dist/
 desktop/.npmrc
+desktop/release/
+desktop/assets/icon.icns
+desktop/assets/icon.ico
 
 # Frontend production build
 dist-frontend/
