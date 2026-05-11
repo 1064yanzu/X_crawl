@@ -1,195 +1,355 @@
-# X_crawl 极速推文采集系统
+# X_crawl - X/Twitter 推文采集系统
 
-X_crawl 是一个全栈架构的高性能自动化采集控制台。系统采用目前最先进的 **Next.js 15 (App Router) + Tailwind CSS v4** 作为现代化前端界面，以及底层的 **FastAPI + DrissionPage** 构筑稳健且隐蔽的后端爬行与解析引擎。
+X_crawl 是一个全栈架构的高性能推文采集系统。前端采用 **Next.js 16 (App Router) + React 19 + Tailwind CSS v4** 构建现代化控制台，后端基于 **FastAPI + DrissionPage** 驱动真实的 Chromium 浏览器进行网络请求拦截与数据采集。
 
-本项目同时支持实时队列管控与断点续存（Resume），并提供极高拟合度的高级 UI 显示和全面的异常状态恢复机制。
+系统支持关键词搜索采集、评论抓取、断点续传、实时任务监控，并提供跨平台一键启动脚本。
 
-
-你自己启动用这两条就行：
-# 后端（终端1）
-cd /develop/X_crawl
-./scripts/start-backend.sh
-# 前端（终端2）
-cd /develop/X_crawl
-./scripts/start-frontend.sh
-
-如果你要生产模式：
-./scripts/start-backend.sh --prod
-./scripts/start-frontend.sh --prod
-
-
+> **请在使用前仔细阅读本文件末尾的 [免责声明](#免责声明)。**
 
 ---
 
-## 环境准备与前置要求
+## 功能特性
 
-- **Node.js**: v18.17 及以上（运行并编译 Next.js 前端）
-- **Python**: 3.10 及以上（运行后端爬虫与 API 接口）
-- **包管理器**: `npm` 和 `pip`
-- **浏览器环境**: 本机需要安装 Chrome/Edge/Chromium 或类似浏览器，系统默认开启了自动寻找执行路径与持久化用户会话（User Data）的支持机制。
+- **真实浏览器驱动** — 基于 DrissionPage 操控 Chromium，通过网络请求拦截获取数据，无需逆向 API
+- **断点续传** — 支持任务中断后从断点恢复，避免重复采集
+- **实时监控** — 任务状态实时轮询，展示采集进度、速率、资源占用等指标
+- **数据导出** — 支持 CSV、Excel 格式导出采集结果
+- **多维度过滤** — 支持综合/最新/含图片/含视频等搜索维度
+- **评论抓取** — 支持对已采集推文进行评论回复的深度抓取
+- **自动节流** — 根据系统资源压力动态调整采集速率，防止服务卡死
+- **跨平台** — 提供 macOS / Linux / Windows 启动脚本
 
 ---
 
-## 🚀 后端 (Backend) 启动指南
+## 环境要求
 
-后端负责响应前端的发号施令并将爬取任务入列执行。
+| 依赖 | 版本要求 | 说明 |
+|------|---------|------|
+| Node.js | >= 18.17 | 运行前端 |
+| Python | >= 3.10 | 运行后端 |
+| npm | 随 Node.js 安装 | 前端包管理 |
+| pip | 随 Python 安装 | 后端包管理 |
+| Chromium 浏览器 | Chrome / Edge / Brave 等 | 后端自动检测路径 |
 
-### 1. 初始化及依赖安装
+---
 
-请在终端进入后端目录：
+## 快速开始
+
+### 1. 克隆项目
 
 ```bash
-# 1. 切换到项目后端目录 (如果路径包含空格请加引号)
-cd "/Volumes/external disk/develop/X_crawl/backend"
-
-# 2. 创建一个虚拟环境（推荐将其命名为 .venv）
-python -m venv .venv
-
-# 3. 激活虚拟环境 (MacOS / Linux)
-source .venv/bin/activate
-# 注意：如果您在上级或者外部目录，需要加引号，例如：
-# source "/Volumes/external disk/develop/X_crawl/backend/.venv/bin/activate"
-
-# 4. 安装对应的 Python 依赖
-pip install -r requirements.txt
+git clone <repository-url> X_crawl
+cd X_crawl
 ```
 
-### 2. 本地开发环境启动
+### 2. 后端启动
 
 ```bash
-# 确保在已激活的 .venv 环境下，在 backend 目录运行：
+# 进入后端目录
+cd backend
+
+# 创建并激活虚拟环境
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+# .venv\Scripts\activate         # Windows
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置环境变量
+cp .env.example .env
+# 根据需要编辑 .env 文件
+
+# 启动开发服务器
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
-启动后可以在 `http://localhost:8000/docs` 查看由 FastAPI 自动生成的 Swagger API 文档。
 
-### 3. 生产环境部署启动
+启动后访问 `http://localhost:8000/docs` 查看 Swagger API 文档。
 
-生产环境中不需要 `--reload`。但当前爬虫后端的任务调度、浏览器池、账号池都依赖**进程内状态**，因此**不要使用多 workers**，否则会出现任务状态分裂、浏览器实例互相清理、登录态被打断等问题。
+### 3. 前端启动
+
+新开一个终端窗口：
 
 ```bash
-# 单节点生产推荐命令（必须单 worker）
+# 进入前端目录
+cd frontend
+
+# 安装依赖
+npm install
+
+# 启动开发服务器
+npm run dev
+```
+
+启动后访问 `http://localhost:3721` 进入采集控制台。
+
+### 4. 一键启动脚本（推荐）
+
+项目提供跨平台启动脚本，自动处理环境检测与配置：
+
+**macOS / Linux：**
+
+```bash
+# 开发模式
+./run/start-backend.sh
+./run/start-frontend.sh
+
+# 生产模式
+./run/start-backend.sh --prod
+./run/start-frontend.sh --prod
+```
+
+**Windows PowerShell：**
+
+```powershell
+# 开发模式
+./run/start-backend.ps1
+./run/start-frontend.ps1
+
+# 生产模式
+./run/start-backend.ps1 --prod
+./run/start-frontend.ps1 --prod
+```
+
+---
+
+## 使用指南
+
+### 创建采集任务
+
+1. 打开前端控制台 (`http://localhost:3721`)
+2. 在首页「新建任务」区域填写搜索关键词
+3. 设置采集数量上限
+4. 选择搜索维度（综合、最新、仅图片、仅视频等）
+5. 可选：开启「断点续传」，遇到异常中断后可无缝恢复
+6. 点击开始采集
+
+### 任务管理
+
+- **任务列表** (`/tasks`) — 查看所有任务的状态（等待中 / 采集中 / 完成 / 失败 / 暂停），支持暂停、恢复、停止、删除操作
+- **任务详情** (`/tasks/[id]`) — 查看具体采集结果，推文以卡片形式展示，包含博主信息、互动指标、媒体内容等
+- **断点管理** (`/checkpoints`) — 查看所有可恢复的断点，手动触发断点续传
+
+### 数据导出
+
+在任务详情页可选择导出格式：
+- **CSV** — `GET /api/v1/export/{task_id}/csv`
+- **Excel** — `GET /api/v1/export/{task_id}/excel`
+
+### Cookie 管理
+
+系统通过浏览器 Cookie 维持登录态：
+- 支持手动上传 Cookie
+- 支持通过浏览器自动捕获 Cookie
+- Cookie 存储在 `~/.xcrawl-cookies.json`
+
+---
+
+## 生产部署
+
+### 后端
+
+生产环境不使用 `--reload`，且**必须使用单 worker**（任务调度和浏览器实例依赖进程内状态）：
+
+```bash
 source .venv/bin/activate
 uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
-*(说明：并发能力由应用内任务调度器和浏览器池控制，不依赖 Uvicorn workers 扩容。需要提高并发时，请调业务并发配置，而不是加 Web workers。)*
-
----
-
-## 🎨 前端 (Frontend) 启动指南
-
-前端提供了拥有卓越视觉与控制感的一站式管理大盘 (`Dashboard`)，所有操作可视化。
-
-### 1. 初始化配置与安装
-
-新开一个终端窗口，并在终端进入前端目录：
+### 前端
 
 ```bash
-# 1. 切换到项目前端目录
-cd "/Volumes/external disk/develop/X_crawl/frontend"
-
-# 2. 安装所有的 Node.js 依赖
-npm install
-```
-
-前端环境变量（可选）：可以复制 `.env.example` 创建 `.env.local` 并在里面设置 `NEXT_PUBLIC_API_URL=http://localhost:8000` (如果后端不使用默认的 8000 端口的话)。目前代码已实现默认回退代理逻辑。
-
-### 2. 本地开发环境启动
-
-```bash
-# 启动具备模块热替换(HMR)特性的开发服务器
-npm run dev
-```
-
-启动之后，访问 [http://localhost:3721](http://localhost:3721) 即可看到高级现代化的采集工作台。
-
-### 3. 构建与生产环境启动
-
-为了获取最优性能，强烈并建议在面向最终使用时进行生产级构建。
-
-```bash
-# 1. 在 frontend 目录下先执行构建
 npm run build
-
-# 2. 启动生产服务器
 npm run start
 ```
 
----
+### Linux 无头服务器
 
-## 💡 使用指南及核心机制说明
+若服务器无图形界面（无 `DISPLAY` 环境变量），系统会自动启用无头模式。可在设置页配置以下参数：
 
-1. **一站式控制台 (Dashboard)**
-   - 首页即可观测到后端 API 以及探活浏览器系统的实时挂载健康度。
-   - 可以在 “新建任务” 区填写关键词、抓取数量并选型 (如综合、最新、包含图片/视频的独立过滤维度)。
-   - **智能断点续传（推荐）：** 请勾选启动，如遇网路异常导致服务或页面丢失，重启即可无缝从中断点提取后续数据。
-
-2. **采集任务队列 (`/tasks`)**
-   - 查看所有已派发任务的历史周期。任务具备 `等待中 (Pending)`、`采集中 (Running)`、`完成 (Done)` 等状态。点击卡片均可直达具体细节抓取列表。
-   - 随时可执行强制终止（删除）并清退云端存档。
-
-3. **数据快照与结构化查看 (`/tasks/[id]`)**
-   - 提供真实推文数据的流式复刻 UI 板块（`TweetCard`），自适应呈现博主验证体系、指标以及自适应矩阵排列的图文/高清视频回填显示。
-
-4. **断点提取与灾备 (`/checkpoints`)**
-   - 若系统被意外关闭而保存有 `Cursor` 及内存持久化数据，进入“断点续传”页面，您可以随时找到该断点，并手动一键传达命令恢复采集流继续抓取。
+- `--no-sandbox`
+- `--disable-dev-shm-usage`
+- `--disable-gpu`
+- `--disable-setuid-sandbox`
 
 ---
 
-## 常见问题 (FAQ)
+## 配置说明
 
-- **为什么激活虚拟环境时提示 `command not found` 或者路径错误？**
-  如果您所在系统的目录名称带有空格（如 `external disk`），很多命令需要将整个路径加上双引号，或者尽量相对路径进入文件夹后，再执行 `source .venv/bin/activate`。
-- **采集失败并提示配置异常？**
-  本引擎利用 DrissionPage 操控真实浏览器。请确保您本机拥有一款主流基于 Chromium 内核的浏览器（例如 Google Chrome，Microsoft Edge，Brave 等）。后台启动已加入了自动查找检测探针。
+### 后端环境变量 (`backend/.env`)
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `BROWSER_EXEC_PATH` | Chromium 浏览器可执行文件路径 | 自动检测 |
+| `BROWSER_USER_DATA_PATH` | 浏览器用户数据目录 | 自动检测 |
+| `BROWSER_PROXY` | 代理地址 | 无 |
+| `BROWSER_HEADLESS` | 无头模式 | `false` |
+| `API_PORT` | 后端端口 | `8000` |
+
+### 前端环境变量 (`frontend/.env.local`)
+
+| 变量名 | 说明 | 默认值 |
+|--------|------|--------|
+| `NEXT_PUBLIC_API_URL` | 后端 API 地址 | `http://localhost:8000` |
+
+### 运行时配置
+
+通过前端设置页面可动态调整以下参数（无需重启服务）：
+
+- `crawler_auto_throttle_enabled` — 自动节流开关
+- `crawler_dynamic_concurrency_enabled` — 动态并发调整
+- `crawler_memory_pressure_warn_pct` — 内存压力警告阈值
+- `crawler_memory_pressure_critical_pct` — 内存压力临界阈值
+- `crawler_resource_throttle_max_factor` — 资源节流最大因子
+- `crawler_live_push_interval_ms` — 实时数据推送间隔
 
 ---
 
-## 跨平台一键启动脚本（macOS / Linux / Windows）
+## 项目结构
 
-本仓库新增了原生启动脚本，优先作为部署与联调入口：
-
-- macOS / Linux
-  - 后端：`./scripts/start-backend.sh`
-  - 前端：`./scripts/start-frontend.sh`
-- Windows PowerShell
-  - 后端：`./scripts/start-backend.ps1`
-  - 前端：`./scripts/start-frontend.ps1`
-
-支持参数：
-
-- `--prod`：生产模式启动（后端禁用 reload；前端先 build 再 start）
-
-示例：
-
-```bash
-./scripts/start-backend.sh --prod
-./scripts/start-frontend.sh
+```
+X_crawl/
+├── frontend/                # Next.js 16 前端
+│   ├── src/
+│   │   ├── app/            # App Router 页面
+│   │   ├── components/     # UI 组件 (ui/ + features/)
+│   │   └── services/       # API 客户端
+│   └── package.json
+├── backend/                 # FastAPI 后端
+│   ├── api/
+│   │   ├── main.py         # 应用入口
+│   │   ├── routers/        # REST 路由 (/api/v1/*)
+│   │   ├── services/       # 任务调度、爬取服务
+│   │   └── schemas/        # Pydantic 数据模型
+│   ├── crawler/            # 爬虫核心
+│   │   ├── x_searcher.py   # 采集编排器
+│   │   ├── parser.py       # GraphQL 响应解析
+│   │   ├── browser.py      # Chromium 浏览器管理
+│   │   └── checkpoint.py   # 断点保存/恢复
+│   ├── config.py           # 配置管理
+│   └── requirements.txt
+├── docs/                    # 接口文档与参考资料
+├── run/                     # 启动脚本
+└── README.md
 ```
 
-## Linux 无头服务器注意事项
+---
 
-1. 若 Linux 环境没有 `DISPLAY`，脚本会默认开启 `BROWSER_HEADLESS=true`（可手动覆盖）。
-2. 后端可开启 Linux 无头加固参数（设置页可配置）：
-   - `--no-sandbox`
-   - `--disable-dev-shm-usage`
-   - `--disable-gpu`
-   - `--disable-setuid-sandbox`
-3. 推荐保留真实浏览器会话与自然请求头，不手工伪造核心鉴权头。
+## API 路由一览
 
-## 实时可观测与资源保护
+所有接口前缀为 `/api/v1/`：
 
-新增能力：
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/search` | 创建采集任务 |
+| GET | `/search/{task_id}` | 查询任务状态与结果 |
+| GET | `/tasks` | 列出所有任务 |
+| POST | `/tasks/{id}/pause` | 暂停任务 |
+| POST | `/tasks/{id}/resume` | 恢复任务 |
+| POST | `/tasks/{id}/stop` | 停止任务 |
+| DELETE | `/tasks/{id}` | 删除任务 |
+| GET | `/checkpoints` | 列出可恢复断点 |
+| DELETE | `/checkpoints/{id}` | 删除断点 |
+| GET | `/export/{id}/csv` | 导出 CSV |
+| GET | `/export/{id}/excel` | 导出 Excel |
+| GET | `/cookies` | 获取 Cookie |
+| POST | `/cookies` | 设置 Cookie |
+| POST | `/cookies/capture` | 自动捕获 Cookie |
+| DELETE | `/cookies` | 删除 Cookie |
+| GET | `/crawler-config` | 获取运行时配置 |
+| PUT | `/crawler-config` | 更新运行时配置 |
 
-1. 任务详情实时展示动作流、速率、风控/重试健康、主机与进程资源占用、推文/评论覆盖时间范围。
-2. 在资源紧张时自动放慢抓取节奏，并在高压下动态收敛并发，降低服务卡死风险。
-3. SSE 通道采用轻量快照（不推全量 tweets）+ 轮询兜底，兼顾实时性与性能。
+---
 
-对应可配置项（设置页可见）：
+## 常见问题
 
-- `crawler_auto_throttle_enabled`
-- `crawler_dynamic_concurrency_enabled`
-- `crawler_memory_pressure_warn_pct`
-- `crawler_memory_pressure_critical_pct`
-- `crawler_resource_throttle_max_factor`
-- 以及 `crawler_live_push_interval_ms`
+**Q: 激活虚拟环境时提示路径错误？**
+
+如果项目路径包含空格，需要用引号包裹路径：
+```bash
+source "/path with spaces/backend/.venv/bin/activate"
+```
+
+**Q: 采集失败并提示浏览器配置异常？**
+
+确保本机安装了基于 Chromium 内核的浏览器（Chrome、Edge、Brave 等）。系统会自动检测浏览器路径，也可在 `.env` 中手动指定 `BROWSER_EXEC_PATH`。
+
+**Q: 任务突然中断了怎么办？**
+
+如果创建任务时开启了「断点续传」，前往 `/checkpoints` 页面找到对应断点，点击恢复即可从断点继续采集。
+
+**Q: Linux 无头服务器上启动失败？**
+
+确认已安装 Chromium 及其依赖。脚本会自动启用无头模式，如果仍有问题，在设置页开启 `--no-sandbox` 和 `--disable-dev-shm-usage` 参数。
+
+**Q: 前端无法连接后端？**
+
+检查后端是否已启动并运行在 8000 端口。如端口不同，在 `frontend/.env.local` 中设置 `NEXT_PUBLIC_API_URL` 指向正确的后端地址。
+
+---
+
+## 免责声明
+
+### 1. 仅供学习与研究用途
+
+本项目（X_crawl）是一个**技术研究与学习工具**，旨在帮助开发者了解网络爬虫、浏览器自动化、前后端全栈开发等技术原理。本项目**不得用于任何商业用途或非法目的**。
+
+### 2. 遵守法律法规
+
+使用者在使用本项目时，必须遵守所在国家和地区的法律法规，包括但不限于：
+
+- 《中华人民共和国网络安全法》
+- 《中华人民共和国数据安全法》
+- 《中华人民共和国个人信息保护法》
+- 《计算机信息网络国际联网安全保护管理办法》
+- 以及使用者所在司法管辖区的相关法律法规
+
+任何利用本项目进行的违法违规行为，均由使用者自行承担全部法律责任。
+
+### 3. 遵守平台规则
+
+X/Twitter 及其关联平台拥有自身的服务条款（Terms of Service）和使用政策。使用者应当：
+
+- 在使用本项目前，仔细阅读并遵守 X/Twitter 的服务条款
+- 不得过度频繁地请求平台接口，避免对平台正常运营造成影响
+- 不得采集、存储、传播涉及他人隐私的个人信息
+- 尊重内容创作者的知识产权
+
+### 4. 数据使用责任
+
+- 使用者通过本项目采集的数据，其使用方式和用途由使用者自行负责
+- **严禁**将采集的数据用于骚扰、诈骗、身份盗用、垃圾信息发送等违法行为
+- **严禁**将采集的数据用于未经当事人同意的商业营销活动
+- 使用者应确保对采集数据的处理符合相关数据保护法规的要求
+
+### 5. 免责条款
+
+- 本项目按**「现状」**提供，不附带任何形式的明示或暗示保证，包括但不限于适销性、特定用途适用性和不侵权的保证
+- 项目作者及贡献者**不对**因使用或无法使用本项目而导致的任何直接、间接、偶然、特殊或后果性损害承担责任，包括但不限于数据丢失、业务中断、利润损失等
+- 项目作者及贡献者**不对**使用者使用本项目所进行的任何违法行为承担连带责任
+- 本项目不保证持续维护和更新，不保证功能的完整性和稳定性
+
+### 6. 知识产权
+
+- 本项目代码采用开源协议发布，使用者应遵守相应协议条款
+- 通过本项目采集的内容版权归原作者和/或 X/Twitter 平台所有
+- 使用者不得将采集内容用于侵犯他人知识产权的行为
+
+### 7. 最终声明
+
+**使用本项目即表示您已阅读、理解并同意上述全部条款。如果您不同意上述任何条款，请立即停止使用并删除本项目的所有副本。**
+
+本项目的作者保留随时修改本免责声明的权利，修改后的条款将在项目仓库中更新后立即生效。
+
+---
+
+## 许可证
+
+本项目采用 **[Business Source License 1.1 (BSL 1.1)](LICENSE)**，核心条款：
+
+- 仅允许**非商业用途**（个人学习、学术研究、教育评估）
+- **禁止**任何形式的商业使用，包括但不限于付费服务、商用产品集成、以采集数据牟利
+- 源码可供查看、修改和再分发，但必须保留许可证和署名
+- **变更日期**：2029-05-12 — 届时自动转为 MIT License，届时将完全开源
+
+详情请阅读 [LICENSE](LICENSE) 文件全文。
