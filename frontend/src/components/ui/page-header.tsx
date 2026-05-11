@@ -13,8 +13,8 @@ interface PageHeaderProps {
 }
 
 /**
- * 编辑感 PageHeader — 不再是「大圆角玻璃卡」，
- * 而是杂志页头：印刷红短线 + 章节小字 + 衬线大标题 + 描述 + 细线收尾。
+ * PageHeader — 杂志页头风格：
+ * 印刷红短线 + 章节小字 + 衬线大标题 + 描述 + 细线收尾。
  */
 export function PageHeader({
     title,

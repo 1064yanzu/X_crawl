@@ -12,8 +12,8 @@ export default function Home() {
                 <PageHeader
                     eyebrow="Issue 01 · Console"
                     icon={Activity}
-                    title="今日采集编辑室"
-                    description="排版任务、监听节奏、收纳成果。先确认环境，再下笔。"
+                    title="采集控制台"
+                    description="创建任务、监听进度、收纳成果。先确认环境，再开始。"
                 />
             </div>
 

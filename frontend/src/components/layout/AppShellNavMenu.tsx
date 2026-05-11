@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { type NavItem, isActivePath } from "@/components/layout/app-shell-config";
 
 /**
- * 编辑感主导航 — 杂志目录 (table of contents) 风格：
+ * 主导航 — 杂志目录 (table of contents) 风格：
  * 极简文字列表，左侧细线锚定当前页，hover 时印刷红短线靠近。
  */
 export function AppShellNavMenu({

@@ -4,8 +4,8 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import type { NavItem } from "@/components/layout/app-shell-config";
 
 /**
- * 编辑感顶栏 — 杂志「页眉 (running head)」：
- * 移除毛玻璃；只用一条细线 + 章节信息小字 + 主题切换。
+ * 顶栏 — 杂志「页眉 (running head)」风格：
+ * 一条细线 + 章节信息小字 + 主题切换。
  */
 export function AppShellTopBar({
     currentNav,

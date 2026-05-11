@@ -40,7 +40,7 @@ const appMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "X_crawl · 编辑室",
+  title: "X_crawl · 采集控制台",
   description: "多平台采集控制台 — X / 微博 / YouTube，节奏化采集与可恢复任务流。",
 };
 

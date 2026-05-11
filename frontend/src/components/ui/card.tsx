@@ -2,7 +2,7 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 /**
- * 编辑感 Card 系统
+ * Card 系统
  *
  * 默认 `variant="flat"` — 不带边框、背景、阴影。鼓励用 typography
  * 与分隔线做层级，避免「卡片套娃」。

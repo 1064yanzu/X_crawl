@@ -58,7 +58,7 @@ export function CrawlerTaskBuilder() {
                 </Link>
             </header>
 
-            {/* Segmented tabs — 编辑感「目录」式切换：上下细线 + 文本 + active 下划线 */}
+            {/* Segmented tabs — 「目录」式切换：上下细线 + 文本 + active 下划线 */}
             <nav
                 role="tablist"
                 aria-label="任务类型"

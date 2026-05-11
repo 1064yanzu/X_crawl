@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ============================================================
- * X_crawl · 编辑感 (editorial) 主题
+ * X_crawl · Editorial-style 主题
  * — 纸感米白 / 墨色咖；印刷砖红 accent
  * — 衬线标题 + sans 正文
  * — 全部 OKLCH，neutral 微染 accent 色相
@@ -197,7 +197,7 @@ h1.editorial,
   color: var(--accent-strong);
 }
 
-/* 滚动条 — 编辑感，常隐 */
+/* 滚动条 — 常隐，hover 显示 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

@@ -11,8 +11,8 @@ interface EmptyStateProps {
 }
 
 /**
- * 编辑感空状态 — 不再是「虚线圆角小卡 + 圆角小图标 + 灰底」，
- * 而是杂志专题页的「空白栏」：左上一道印刷红短线，下面叙事文本。
+ * 空状态 — 杂志专题页的「空白栏」：
+ * 左上一道印刷红短线，下面叙事文本。
  */
 export function EmptyState({
     icon: Icon,
