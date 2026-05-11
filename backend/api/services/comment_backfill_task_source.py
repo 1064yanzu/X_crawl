@@ -27,6 +27,12 @@ def analyze_comment_backfill_task(task: dict) -> CommentBackfillTaskAnalysisResu
         raise HTTPException(status_code=400, detail=f"任务 {task_id or '--'} 不是帖子采集任务，不能直接发起评论补采")
     if status != "done":
         raise HTTPException(status_code=400, detail=f"任务 {task_id or '--'} 尚未完成，当前状态为 {status or '--'}")
+    raw_platform = _clean_str(task.get("platform")).lower()
+    if raw_platform == "youtube":
+        raise HTTPException(
+            status_code=400,
+            detail="YouTube 任务评论已在原任务内通过 Data API 抓取，不支持 X/微博评论补采入口；如需补齐请恢复或重跑 YouTube 任务",
+        )
     if platform is None:
         raise HTTPException(status_code=400, detail=f"任务 {task_id or '--'} 缺少可识别的平台信息")
     if not isinstance(tweets, list) or not tweets:

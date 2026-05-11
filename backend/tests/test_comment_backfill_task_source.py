@@ -63,3 +63,26 @@ def test_analyze_comment_backfill_task_requires_done_search_task():
 
     assert exc_info.value.status_code == 400
     assert "不是帖子采集任务" in str(exc_info.value.detail)
+
+
+def test_analyze_comment_backfill_task_rejects_youtube_without_validation_error():
+    task = {
+        "task_id": "yt-001",
+        "task_kind": "search",
+        "status": "done",
+        "platform": "youtube",
+        "keyword": "youtube-urls · 453 视频",
+        "tweets": [
+            {
+                "id": "video-001",
+                "platform": "youtube",
+                "metrics": {"replies": 10},
+            }
+        ],
+    }
+
+    with pytest.raises(HTTPException) as exc_info:
+        analyze_comment_backfill_task(task)
+
+    assert exc_info.value.status_code == 400
+    assert "YouTube 任务评论已在原任务内" in str(exc_info.value.detail)

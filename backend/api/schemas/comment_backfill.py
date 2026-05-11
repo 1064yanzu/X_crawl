@@ -47,7 +47,7 @@ class CommentBackfillFromTasksRequest(BaseModel):
 class CommentBackfillTaskSourceSummary(BaseModel):
     source_task_id: str
     source_keyword: str
-    platform: Literal["x", "weibo"]
+    platform: Literal["x", "weibo", "youtube"]
     task_status: str
     result_count: int
     unique_post_count: int

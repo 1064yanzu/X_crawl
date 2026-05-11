@@ -65,21 +65,28 @@ function ConcurrencySelector({
 
 function TaskExportPanel({
     resultCount,
+    replyCount,
     active,
     exporting,
     onExport,
 }: {
     resultCount: number;
+    replyCount: number;
     active: boolean;
     exporting: "csv" | "excel" | null;
     onExport: (format: "csv" | "excel") => void;
 }) {
+    const totalRows = resultCount + replyCount;
     return (
         <div className="w-full rounded-2xl border border-border/60 bg-background/70 p-4 shadow-sm xl:w-[320px]">
             <div className="flex items-start justify-between gap-3">
                 <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">数据导出</p>
-                    <p className="mt-1 text-sm font-medium text-foreground">当前累计 {resultCount} 条结构化结果</p>
+                    <p className="mt-1 text-sm font-medium text-foreground">预计导出 {totalRows.toLocaleString()} 行</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        原帖/视频 {resultCount.toLocaleString()} 条
+                        {replyCount > 0 ? ` · 评论 ${replyCount.toLocaleString()} 条` : ""}
+                    </p>
                     <p className="mt-1 text-xs text-muted-foreground">{active ? "任务仍在运行，也可以先导出当前结果。" : "支持 CSV 与 Excel 两种格式，适合复盘、汇报和二次处理。"}</p>
                 </div>
             </div>
@@ -229,7 +236,15 @@ export function TaskDetailHeader({
                             </>
                         )}
                     </div>
-                    {exportReady ? <TaskExportPanel resultCount={task.result_count} active={active} exporting={exporting} onExport={onExport} /> : null}
+                    {exportReady ? (
+                        <TaskExportPanel
+                            resultCount={task.result_count}
+                            replyCount={task.replies_fetched}
+                            active={active}
+                            exporting={exporting}
+                            onExport={onExport}
+                        />
+                    ) : null}
                 </div>
             </div>
 

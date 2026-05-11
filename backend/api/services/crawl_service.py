@@ -785,7 +785,13 @@ def _run_youtube_task(
     if source not in ("keyword", "channel", "video_urls"):
         source = "keyword"
 
-    max_videos = int(yt_params.get("max_videos") or 50)
+    raw_max_videos = yt_params.get("max_videos")
+    if source == "video_urls":
+        # video_urls 模式下 0 是明确语义：按用户传入的视频 ID 全量抓取。
+        # 不能用 `or 50`，否则 400+ 条链接会被误截成 50 条。
+        max_videos = int(raw_max_videos) if raw_max_videos is not None else 0
+    else:
+        max_videos = int(raw_max_videos or 50)
     order = str(yt_params.get("order") or "relevance")
     region_code = yt_params.get("region_code") or None
     relevance_language = yt_params.get("relevance_language") or None
