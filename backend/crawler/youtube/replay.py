@@ -173,7 +173,6 @@ def has_raw_responses(task_id: Optional[str]) -> bool:
     """快速判断该任务是否存在 YouTube 原始响应目录。"""
     if not task_id:
         return False
-    from config import settings
-    from pathlib import Path
-    base = Path(settings.raw_responses_dir) / task_id / "youtube"
+    from config import settings, resolve_data_path
+    base = resolve_data_path(settings.raw_responses_dir) / task_id / "youtube"
     return base.exists() and any(base.iterdir())

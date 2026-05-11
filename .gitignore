@@ -23,11 +23,12 @@ backend/checkpoints
 
 # production
 /build
-CHANGELOG.md
+
 # Python cache
 __pycache__/
 *.py[cod]
 *$py.class
+
 # misc
 .DS_Store
 *.pem
@@ -38,8 +39,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -47,12 +49,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# backend
 /backend/logs
-backend/api/routers/__pycache__
+
+# tools
 .claude
 .ipo/ai-workspace
 .pytest_cache
 .ruff_cache
+
+# misc / generated
 /run
 scripts
 1.py
@@ -60,3 +67,16 @@ CHANGELOG.md
 CONCURRENT_CRAWL_PLAN.md
 CONCURRENT_IMPLEMENTATION_SUMMARY.md
 emails.txt
+
+# PyInstaller
+backend/build/
+backend/dist/
+backend/xcrawl-backend.spec
+
+# Desktop app (Electron)
+desktop/node_modules/
+desktop/dist/
+desktop/.npmrc
+
+# Frontend production build
+dist-frontend/

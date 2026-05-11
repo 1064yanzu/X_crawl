@@ -26,16 +26,19 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from json_utils import dump_json
+from config import resolve_data_path
 
 logger = logging.getLogger(__name__)
 
 
-_CHECKPOINT_DIR = Path(__file__).parent.parent.parent / "checkpoints"
+def _checkpoint_dir() -> Path:
+    return resolve_data_path("checkpoints")
 
 
 def _path_for(task_id: str) -> Path:
-    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    return _CHECKPOINT_DIR / f"youtube_{task_id}.json"
+    d = _checkpoint_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"youtube_{task_id}.json"
 
 
 def compute_video_ids_signature(video_ids: Iterable[str]) -> str:

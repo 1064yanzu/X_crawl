@@ -14,14 +14,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from config import settings
+from config import settings, resolve_data_path
 
 logger = logging.getLogger(__name__)
 
 
 def _get_task_dir(task_id: str) -> Path:
     """获取指定任务的原始响应存储目录（自动创建）"""
-    base = Path(settings.raw_responses_dir)
+    base = resolve_data_path(settings.raw_responses_dir)
     task_dir = base / task_id
     task_dir.mkdir(parents=True, exist_ok=True)
     return task_dir
@@ -72,7 +72,7 @@ def save_raw_response(task_id: str, page_num: int, body: dict) -> Optional[str]:
 
 def get_task_response_dir(task_id: str) -> Path:
     """返回指定任务原始响应目录的 Path 对象（不自动创建）"""
-    return Path(settings.raw_responses_dir) / task_id
+    return resolve_data_path(settings.raw_responses_dir) / task_id
 
 
 def list_task_responses(task_id: str) -> list[dict]:
@@ -106,7 +106,7 @@ def list_all_tasks() -> list[dict]:
     Returns:
         list of dict, 每项包含 task_id / page_count / total_bytes / latest_at
     """
-    base = Path(settings.raw_responses_dir)
+    base = resolve_data_path(settings.raw_responses_dir)
     if not base.exists():
         return []
 
@@ -156,7 +156,7 @@ def delete_task_responses(task_id: str) -> int:
 
 def _get_reply_dir(task_id: str, tweet_id: str) -> Path:
     """获取指定任务+推文的回复响应存储目录（自动创建）"""
-    task_dir = Path(settings.raw_responses_dir) / task_id / "replies" / tweet_id
+    task_dir = resolve_data_path(settings.raw_responses_dir) / task_id / "replies" / tweet_id
     task_dir.mkdir(parents=True, exist_ok=True)
     return task_dir
 
@@ -198,7 +198,7 @@ def save_reply_response(task_id: str, tweet_id: str, page_num: int, body: dict) 
 
 def list_reply_responses(task_id: str, tweet_id: str) -> list[dict]:
     """列出某推文回复的所有已存储原始响应文件"""
-    reply_dir = Path(settings.raw_responses_dir) / task_id / "replies" / tweet_id
+    reply_dir = resolve_data_path(settings.raw_responses_dir) / task_id / "replies" / tweet_id
     if not reply_dir.exists():
         return []
     result = []
@@ -268,7 +268,7 @@ def save_youtube_response(
     endpoint_dir = _YT_ENDPOINT_DIRS.get(endpoint) or endpoint.replace(".", "_")
 
     try:
-        base = Path(settings.raw_responses_dir) / task_id / "youtube" / endpoint_dir
+        base = resolve_data_path(settings.raw_responses_dir) / task_id / "youtube" / endpoint_dir
         if context:
             # context 支持 "a/b" 多级拆分
             for seg in str(context).split("/"):
@@ -301,7 +301,7 @@ def iter_youtube_responses(
 ):
     """遍历某任务某 endpoint（+context）下所有原始响应，按文件名排序。yield (path, payload dict)。"""
     endpoint_dir = _YT_ENDPOINT_DIRS.get(endpoint) or endpoint.replace(".", "_")
-    base = Path(settings.raw_responses_dir) / task_id / "youtube" / endpoint_dir
+    base = resolve_data_path(settings.raw_responses_dir) / task_id / "youtube" / endpoint_dir
     if context:
         for seg in str(context).split("/"):
             base = base / _sanitize_path_segment(seg)

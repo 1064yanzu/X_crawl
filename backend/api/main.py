@@ -33,7 +33,10 @@ from api.routers import youtube_api_keys as youtube_api_keys_router
 from crawler.browser import close_browser, maybe_cleanup_stale_linux_browsers
 from crawler.browser_detector import detect_all
 from crawler.log_config import setup_logging
-from config import settings
+from config import settings, ensure_data_dirs
+
+# 启动前确保数据目录就绪（桌面端模式下 data_dir 来自 XCRAWL_DATA_DIR 环境变量）
+ensure_data_dirs()
 
 # 初始化结构化日志（控制台 + 文件轮转）
 setup_logging()

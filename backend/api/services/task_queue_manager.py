@@ -38,10 +38,10 @@ def _ensure_loaded() -> None:
         if _loaded:
             return
 
-        from config import settings
+        from config import settings, resolve_data_path
 
         db = _get_db()
-        db.init_db(settings.tasks_db_path)
+        db.init_db(str(resolve_data_path(settings.tasks_db_path)))
         queues = db.load_task_queues()
 
         with _lock:

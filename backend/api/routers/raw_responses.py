@@ -28,10 +28,11 @@ async def get_all_tasks():
     - 最后保存时间
     """
     tasks = list_all_tasks()
+    from config import resolve_data_path
     return {
         "save_enabled": settings.save_raw_responses,
         "max_pages_per_task": settings.raw_responses_max_pages,
-        "storage_dir": str(Path(settings.raw_responses_dir).resolve()),
+        "storage_dir": str(resolve_data_path(settings.raw_responses_dir).resolve()),
         "tasks": tasks,
     }
 

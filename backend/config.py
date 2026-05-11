@@ -2,10 +2,24 @@
 全局配置模块
 支持从 .env 文件读取配置
 """
+import os
 import sys
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
+
+
+def _default_data_dir() -> str:
+    """
+    数据目录默认值：
+    - 优先读 XCRAWL_DATA_DIR 环境变量（桌面端/打包模式由 Electron 注入）
+    - 否则使用 backend/ 目录本身（兼容仓库内开发模式）
+    """
+    env_val = os.environ.get("XCRAWL_DATA_DIR")
+    if env_val:
+        return str(Path(env_val).expanduser())
+    return str(Path(__file__).resolve().parent)
 
 
 class Settings(BaseSettings):
@@ -14,6 +28,12 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+    )
+
+    # 数据目录（所有可写文件的根：tasks.db / checkpoints / raw_responses / logs / cookies）
+    data_dir: str = Field(
+        default_factory=_default_data_dir,
+        description="数据根目录。所有相对路径（tasks_db_path、raw_responses_dir 等）都会在此目录下解析",
     )
 
     # 浏览器配置
@@ -375,6 +395,29 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def resolve_data_path(path: str) -> Path:
+    """
+    将路径解析为绝对路径：
+    - 绝对路径：保持不变
+    - 相对路径：相对 settings.data_dir 解析
+    - 空字符串：直接返回 data_dir
+    """
+    if not path:
+        return Path(settings.data_dir)
+    p = Path(path).expanduser()
+    if p.is_absolute():
+        return p
+    return Path(settings.data_dir) / p
+
+
+def ensure_data_dirs() -> None:
+    """确保 data_dir 及常用子目录存在。桌面端启动时调用。"""
+    base = Path(settings.data_dir)
+    base.mkdir(parents=True, exist_ok=True)
+    for sub in ("checkpoints", "logs", "raw_responses"):
+        (base / sub).mkdir(parents=True, exist_ok=True)
 
 
 def apply_user_settings() -> None:

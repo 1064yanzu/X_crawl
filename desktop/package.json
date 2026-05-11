@@ -1,0 +1,65 @@
+{
+  "name": "xcrawl-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "X_crawl 桌面端壳 —— Electron + FastAPI + Next.js standalone",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build && electron .",
+    "start": "electron .",
+    "pack:mac": "npm run build && electron-builder --mac --publish never",
+    "pack:win": "npm run build && electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.6.0"
+  },
+  "build": {
+    "appId": "com.xcrawl.desktop",
+    "productName": "X_crawl",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "resources/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/dist/xcrawl-backend",
+        "to": "backend"
+      },
+      {
+        "from": "../dist-frontend",
+        "to": "frontend"
+      }
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "identity": null,
+      "icon": "assets/icon.icns"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDir": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

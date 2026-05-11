@@ -339,15 +339,16 @@ def _ensure_db() -> None:
         if _db_initialized:
             return
 
-        from config import settings
+        from config import settings, resolve_data_path
 
         db = _get_db()
-        db.init_db(settings.tasks_db_path)
+        db_path = str(resolve_data_path(settings.tasks_db_path))
+        db.init_db(db_path)
 
         # 初始化采集量分桶数据库（与主库共用同一文件）
         try:
             from api.services.crawl_volume_db import init_volume_db
-            init_volume_db(settings.tasks_db_path)
+            init_volume_db(db_path)
         except Exception as _e:
             logger.warning(f"采集量分桶数据库初始化失败（忽略）: {_e}")
 

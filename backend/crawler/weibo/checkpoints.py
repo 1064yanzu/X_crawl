@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Optional
 
 from json_utils import dump_json
+from config import resolve_data_path
 
 
-CHECKPOINTS_DIR = Path(__file__).parent.parent.parent / "checkpoints"
+CHECKPOINTS_DIR = resolve_data_path("checkpoints")
 
 
 def load_checkpoint(task_id: Optional[str]) -> dict:

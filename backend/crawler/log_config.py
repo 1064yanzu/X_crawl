@@ -8,13 +8,10 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from config import settings
+from config import settings, resolve_data_path
 
 
 # ---- 默认值（可通过 config.py / .env 覆盖）----
-_DEFAULT_LOG_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
-)
 _DEFAULT_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
 _DEFAULT_BACKUP_COUNT = 5
 _DEFAULT_LOG_LEVEL = "DEBUG"
@@ -38,7 +35,8 @@ def setup_logging() -> None:
         return
     _initialized = True
 
-    log_dir = getattr(settings, "log_dir", "") or _DEFAULT_LOG_DIR
+    log_dir = getattr(settings, "log_dir", "") or "logs"
+    log_dir = str(resolve_data_path(log_dir))
     log_level_str = getattr(settings, "log_level", "") or _DEFAULT_LOG_LEVEL
     max_bytes = getattr(settings, "log_max_bytes", 0) or _DEFAULT_MAX_BYTES
     backup_count = getattr(settings, "log_backup_count", 0) or _DEFAULT_BACKUP_COUNT

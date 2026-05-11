@@ -12,10 +12,13 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
 
+from config import resolve_data_path
+
 logger = logging.getLogger(__name__)
 
-# 检查点保存目录
-_CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoints"
+# 检查点保存目录（基于 data_dir）
+def _checkpoint_dir() -> Path:
+    return resolve_data_path("checkpoints")
 
 # 后台写入线程池（单线程保证同一文件写入顺序）
 _writer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ckpt-writer")
@@ -23,8 +26,9 @@ _writer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ckpt-writer
 
 def _get_checkpoint_path(task_id: str) -> Path:
     """返回指定任务的检查点文件路径"""
-    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    return _CHECKPOINT_DIR / f"{task_id}.json"
+    d = _checkpoint_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"{task_id}.json"
 
 
 def _do_write(path: Path, data: dict, tweet_count: int, has_cursor: bool) -> None:
@@ -148,9 +152,9 @@ def list_checkpoints() -> list[dict]:
     列出所有未完成的检查点
     用于 API 展示可恢复的任务
     """
-    _CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    _checkpoint_dir().mkdir(parents=True, exist_ok=True)
     result = []
-    for p in _CHECKPOINT_DIR.glob("*.json"):
+    for p in _checkpoint_dir().glob("*.json"):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 data = json.load(f)

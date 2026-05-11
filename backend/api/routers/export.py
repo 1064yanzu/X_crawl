@@ -299,7 +299,8 @@ def _load_raw_reply_map(task_id: str, tweet_ids: list[str]) -> dict[str, list[di
     from crawler.reply_parser import parse_tweet_detail_response
 
     backend_dir = Path(__file__).resolve().parents[2]
-    raw_root = Path(settings.raw_responses_dir)
+    from config import resolve_data_path
+    raw_root = resolve_data_path(settings.raw_responses_dir)
     if not raw_root.is_absolute():
         raw_root = backend_dir / raw_root
     replies_root = raw_root / task_id / "replies"

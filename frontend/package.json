@@ -6,7 +6,8 @@
     "dev": "next dev -p 3721",
     "build": "next build",
     "start": "next start -p 3721",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:desktop": "node scripts/build-desktop.mjs"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.2.4",
