@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -42,9 +43,9 @@ class _TaskBreaker:
     """单个任务的断路器状态。"""
 
     def __init__(self):
-        self.errors: list[float] = []           # 错误时间戳列表（滑动窗口）
-        self.tripped_until: float = 0.0         # 熔断解除时间（monotonic）
-        self.consecutive_trips: int = 0         # 连续熔断次数（用于递增冷却）
+        self.errors: deque[float] = deque(maxlen=20)  # 改用 deque，自动限制大小
+        self.tripped_until: float = 0.0               # 熔断解除时间（monotonic）
+        self.consecutive_trips: int = 0               # 连续熔断次数（用于递增冷却）
 
 
 class CircuitBreaker:
@@ -68,9 +69,11 @@ class CircuitBreaker:
         with self._condition:
             tb = self._get_or_create(task_id)
             tb.errors.append(now)
-            # 清理过期条目
+
+            # 清理过期条目（从左侧移除，利用 deque 的高效性）
             cutoff = now - _WINDOW_SEC
-            tb.errors = [t for t in tb.errors if t > cutoff]
+            while tb.errors and tb.errors[0] <= cutoff:
+                tb.errors.popleft()
 
             # 检查是否需要熔断
             if len(tb.errors) >= _TRIP_THRESHOLD and now >= tb.tripped_until:

@@ -5,8 +5,9 @@
 用于数据安全备份与离线回溯分析。
 
 存储结构：
-    {raw_responses_dir}/{task_id}/page_{n}_{timestamp}.json
+    {raw_responses_dir}/{task_id}/page_{n}_{timestamp}.json.gz
 """
+import gzip
 import json
 import logging
 import os
@@ -27,19 +28,30 @@ def _get_task_dir(task_id: str) -> Path:
     return task_dir
 
 
-def save_raw_response(task_id: str, page_num: int, body: dict) -> Optional[str]:
+def save_raw_response(
+    task_id: str,
+    page_num: int,
+    body: dict,
+    *,
+    parse_failed: bool = False
+) -> Optional[str]:
     """
-    保存原始响应 JSON 到磁盘。
+    保存原始响应 JSON 到磁盘（gzip 压缩）。
 
     Args:
-        task_id:  当前任务 ID，用于子目录命名
-        page_num: 当前页码（从 1 开始）
-        body:     原始响应 dict（即监听到的 packet.response.body）
+        task_id:      当前任务 ID，用于子目录命名
+        page_num:     当前页码（从 1 开始）
+        body:         原始响应 dict（即监听到的 packet.response.body）
+        parse_failed: 解析是否失败（仅在失败时保留，用于调试）
 
     Returns:
         保存的文件绝对路径，若未开启保存则返回 None
     """
     if not settings.save_raw_responses:
+        return None
+
+    # 仅在解析失败时保留（可选配置）
+    if settings.raw_responses_keep_only_failed and not parse_failed:
         return None
 
     # 每任务最大保存页数检查
@@ -53,10 +65,11 @@ def save_raw_response(task_id: str, page_num: int, body: dict) -> Optional[str]:
     try:
         task_dir = _get_task_dir(task_id)
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
-        filename = f"page_{page_num:03d}_{ts}.json"
+        filename = f"page_{page_num:03d}_{ts}.json.gz"
         file_path = task_dir / filename
 
-        with open(file_path, "w", encoding="utf-8") as f:
+        # 使用 gzip 压缩（X 的 GraphQL 响应一般 4-10× 压缩比）
+        with gzip.open(file_path, "wt", encoding="utf-8", compresslevel=6) as f:
             json.dump(body, f, ensure_ascii=False, separators=(",", ":"))
 
         size_kb = file_path.stat().st_size / 1024
@@ -87,7 +100,7 @@ def list_task_responses(task_id: str) -> list[dict]:
         return []
 
     result = []
-    for f in sorted(task_dir.glob("page_*.json")):
+    for f in sorted(task_dir.glob("page_*.json*")):  # 兼容 .json 和 .json.gz
         stat = f.stat()
         result.append({
             "filename": f.name,
@@ -114,7 +127,7 @@ def list_all_tasks() -> list[dict]:
     for task_dir in sorted(base.iterdir()):
         if not task_dir.is_dir():
             continue
-        files = list(task_dir.glob("page_*.json"))
+        files = list(task_dir.glob("page_*.json*"))  # 兼容 .json 和 .json.gz
         if not files:
             continue
         total_bytes = sum(f.stat().st_size for f in files)
@@ -143,11 +156,83 @@ def delete_task_responses(task_id: str) -> int:
     if not task_dir.exists():
         return 0
 
-    files = list(task_dir.glob("page_*.json"))
+    files = list(task_dir.glob("page_*.json*"))  # 兼容 .json 和 .json.gz
     count = len(files)
     shutil.rmtree(task_dir, ignore_errors=True)
     logger.info(f"已删除任务 {task_id} 的 {count} 个原始响应文件")
     return count
+
+
+def cleanup_old_responses() -> dict:
+    """
+    启动时清理超过 7 天且任务状态为 done 的 raw_responses 目录。
+
+    Returns:
+        清理统计信息
+    """
+    import shutil
+    import time
+
+    base = resolve_data_path(settings.raw_responses_dir)
+    if not base.exists():
+        return {"deleted_tasks": 0, "freed_bytes": 0}
+
+    # 获取所有已完成任务的 task_id
+    try:
+        from api.services import task_db
+        conn = task_db._get_conn()
+        done_task_ids = set(
+            row["task_id"]
+            for row in conn.execute(
+                "SELECT task_id FROM tasks WHERE status IN ('done', 'stopped', 'failed')"
+            ).fetchall()
+        )
+    except Exception as e:
+        logger.warning(f"无法获取已完成任务列表: {e}")
+        done_task_ids = set()
+
+    deleted_count = 0
+    freed_bytes = 0
+    cutoff_time = time.time() - (7 * 24 * 3600)  # 7 天前
+
+    for task_dir in base.iterdir():
+        if not task_dir.is_dir():
+            continue
+
+        task_id = task_dir.name
+        # 只清理已完成的任务
+        if task_id not in done_task_ids:
+            continue
+
+        # 检查目录修改时间
+        try:
+            mtime = task_dir.stat().st_mtime
+            if mtime > cutoff_time:
+                continue
+
+            # 计算目录大小
+            total_size = sum(
+                f.stat().st_size
+                for f in task_dir.rglob("*")
+                if f.is_file()
+            )
+
+            # 删除目录
+            shutil.rmtree(task_dir, ignore_errors=True)
+            deleted_count += 1
+            freed_bytes += total_size
+            logger.info(f"已清理过期 raw_responses 目录: {task_id} ({total_size / 1024 / 1024:.1f} MB)")
+
+        except Exception as e:
+            logger.debug(f"清理目录 {task_dir} 失败: {e}")
+            continue
+
+    if deleted_count > 0:
+        logger.info(
+            f"启动时清理完成: 删除 {deleted_count} 个过期目录，释放 {freed_bytes / 1024 / 1024:.1f} MB"
+        )
+
+    return {"deleted_tasks": deleted_count, "freed_bytes": freed_bytes}
 
 
 # ═══════════════════════════════════════════════════════════════════

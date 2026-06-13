@@ -61,6 +61,14 @@ async def lifespan(app: FastAPI):
         f"| user_data={'✅' if detected['user_data_path'] else '⚠️'} "
         f"| platform={detected['platform']}"
     )
+
+    # 启动时清理超过 7 天的已完成任务的 raw_responses 目录
+    try:
+        from crawler.response_saver import cleanup_old_responses
+        cleanup_old_responses()
+    except Exception as cleanup_err:
+        logger.warning(f"清理过期 raw_responses 失败（非致命）: {cleanup_err}")
+
     # 启动浏览器生命周期守护线程（健康心跳 + debug 清理）
     try:
         from crawler.browser_lifecycle import start_all as start_lifecycle

@@ -3,7 +3,9 @@
 # dependencies
 /node_modules
 /.pnp
+.antigravitycli
 .pnp.*
+.gitignore
 .yarn/*
 !.yarn/patches
 !.yarn/plugins

@@ -1,5 +1,5 @@
 """
-任务管理器（线程安全 + 节流持久化 + 结果懒加载）。
+任务管理器（线程安全 + 节流持久化 + 结果懒加载 + LRU 缓存）。
 """
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -17,12 +18,17 @@ from json_utils import normalize_json_value
 logger = logging.getLogger(__name__)
 
 _tasks: dict[str, dict] = {}
-_task_results: dict[str, list[dict]] = {}
+_task_results: OrderedDict[str, list[dict]] = OrderedDict()  # 改为 OrderedDict 支持 LRU
+_task_results_max_size = 8  # LRU 缓存最大容量
 _loaded_task_results: set[str] = set()
 _tasks_lock = threading.RLock()
 
 _task_signals: dict[str, str] = {}
 _signal_lock = threading.Lock()
+
+# Resume Event 字典：任务 ID -> Event（用于 pause/resume 即时唤醒）
+_resume_events: dict[str, threading.Event] = {}
+_resume_events_lock = threading.Lock()
 
 _task_threads: dict[str, threading.Thread] = {}
 _threads_lock = threading.RLock()
@@ -30,6 +36,12 @@ _threads_lock = threading.RLock()
 _persist_mark: dict[str, float] = {}
 _persist_mark_lock = threading.Lock()
 _PERSIST_MIN_INTERVAL_SEC = 0.4
+
+# reply snapshot 增量缓存：避免每条评论都全表走查
+_reply_summary_cache: dict[str, dict] = {}  # task_id -> {replies_fetched, coverage}
+_reply_summary_cache_lock = threading.Lock()
+_reply_persist_counter: dict[str, int] = {}  # task_id -> counter（每 30 条或 30 秒触发完整落盘）
+_reply_last_full_persist: dict[str, float] = {}  # task_id -> last_time
 
 _db_initialized = False
 _db_lock = threading.Lock()
@@ -271,13 +283,37 @@ def _decorate_task_runtime(task: dict, *, queue_position: Optional[int]) -> dict
 
 
 def _set_task_result_locked(task_id: str, tweets: list[dict]) -> None:
-    _task_results[task_id] = tweets
+    """设置任务结果到缓存，触发 LRU 淘汰逻辑"""
+    # 如果已存在，移到最新位置
+    if task_id in _task_results:
+        _task_results.move_to_end(task_id)
+    else:
+        _task_results[task_id] = tweets
+
     _loaded_task_results.add(task_id)
+
+    # LRU 淘汰：超过容量时移除最旧的（但不淘汰活跃任务）
+    while len(_task_results) > _task_results_max_size:
+        oldest_id, _ = _task_results.popitem(last=False)
+        # 如果最旧的任务还在运行，不淘汰它
+        if oldest_id in _tasks:
+            task_status = _tasks[oldest_id].get("status")
+            if task_status in ("running", "paused"):
+                # 重新放回并移到最新
+                _task_results[oldest_id] = _
+                _task_results.move_to_end(oldest_id)
+                continue
+        _loaded_task_results.discard(oldest_id)
+        logger.debug(f"LRU 淘汰任务结果: {oldest_id}")
 
 
 def _get_task_result_snapshot(task_id: str, *, load: bool = False) -> list[dict]:
+    """获取任务结果的深拷贝快照"""
     with _tasks_lock:
         if task_id in _loaded_task_results:
+            # LRU 命中，移到最新位置
+            if task_id in _task_results:
+                _task_results.move_to_end(task_id)
             return copy.deepcopy(_task_results.get(task_id, []))
 
     if not load:
@@ -286,8 +322,7 @@ def _get_task_result_snapshot(task_id: str, *, load: bool = False) -> list[dict]
     tweets = _get_db().load_task_result(task_id)
     with _tasks_lock:
         if task_id not in _loaded_task_results:
-            _task_results[task_id] = tweets
-            _loaded_task_results.add(task_id)
+            _set_task_result_locked(task_id, tweets)
         return copy.deepcopy(_task_results.get(task_id, []))
 
 
@@ -299,6 +334,9 @@ def _get_task_result_ref(task_id: str, *, load: bool = False) -> list[dict]:
     """
     with _tasks_lock:
         if task_id in _loaded_task_results:
+            # LRU 命中，移到最新位置
+            if task_id in _task_results:
+                _task_results.move_to_end(task_id)
             return _task_results.get(task_id, [])
 
     if not load:
@@ -307,17 +345,54 @@ def _get_task_result_ref(task_id: str, *, load: bool = False) -> list[dict]:
     tweets = _get_db().load_task_result(task_id)
     with _tasks_lock:
         if task_id not in _loaded_task_results:
-            _task_results[task_id] = tweets
-            _loaded_task_results.add(task_id)
+            _set_task_result_locked(task_id, tweets)
         return _task_results.get(task_id, [])
 
 
+# 摘要字段白名单（避免 deepcopy 大对象）
+_SUMMARY_KEYS = {
+    "task_id", "status", "keyword", "product", "max_count", "result_count",
+    "current_page", "created_at", "finished_at", "error", "risk_state",
+    "quality_state", "last_event_at", "resumed", "fetch_replies",
+    "max_replies_per_tweet", "reply_depth", "crawl_strategy", "replies_fetched",
+    "crawl_phase", "task_kind", "source_file_name", "source_task_id",
+    "source_task_ids", "is_recrawl", "exclude_count", "exclude_tweet_ids",
+    "queue_id", "queue_name", "queue_order", "queue_total",
+    "debug_screenshot", "assigned_account_id", "account_alias",
+    "platform", "start_date", "end_date", "time_split_mode",
+    "time_split_window_days", "time_split_max_segments", "concurrency",
+    "youtube",
+}
+
+
 def _get_task_summary_snapshot(task_id: str) -> Optional[dict]:
+    """
+    获取任务摘要快照（优化版：白名单浅拷贝，避免 deepcopy 大对象）
+
+    已知大字段（runtime_metrics, segment_progress, time_coverage,
+    comment_backfill_progress, preview_tweets）单独处理，不走 deepcopy。
+    """
     with _tasks_lock:
         task = _tasks.get(task_id)
         if not task:
             return None
-        return copy.deepcopy(task)
+
+        # 白名单浅拷贝
+        snapshot = {k: task[k] for k in _SUMMARY_KEYS if k in task}
+
+        # 大字段单独处理（浅拷贝字典/列表）
+        if "runtime_metrics" in task:
+            snapshot["runtime_metrics"] = dict(task["runtime_metrics"])
+        if "segment_progress" in task:
+            snapshot["segment_progress"] = dict(task["segment_progress"])
+        if "time_coverage" in task:
+            snapshot["time_coverage"] = dict(task["time_coverage"])
+        if "comment_backfill_progress" in task:
+            snapshot["comment_backfill_progress"] = dict(task["comment_backfill_progress"])
+        if "preview_tweets" in task:
+            snapshot["preview_tweets"] = list(task["preview_tweets"])
+
+        return snapshot
 
 
 def _build_task_view(task_id: str, *, include_tweets: bool) -> Optional[dict]:
@@ -474,6 +549,17 @@ def get_signal(task_id: str | None) -> str:
 def clear_signal(task_id: str) -> None:
     with _signal_lock:
         _task_signals.pop(task_id, None)
+    # 同时清理 resume event
+    with _resume_events_lock:
+        _resume_events.pop(task_id, None)
+
+
+def get_or_create_resume_event(task_id: str) -> threading.Event:
+    """获取或创建任务的 resume Event（用于 pause/resume 即时唤醒）"""
+    with _resume_events_lock:
+        if task_id not in _resume_events:
+            _resume_events[task_id] = threading.Event()
+        return _resume_events[task_id]
 
 
 def register_thread(task_id: str, thread: threading.Thread) -> None:
@@ -532,6 +618,12 @@ def resume_task(task_id: str) -> bool:
             task["crawl_phase"] = "任务已恢复运行"
         _touch(task)
     send_signal(task_id, "run")
+
+    # 触发 resume Event，即时唤醒等待中的爬虫线程
+    with _resume_events_lock:
+        if task_id in _resume_events:
+            _resume_events[task_id].set()
+
     telemetry.record_event(task_id, "task_resumed", status="running", phase=task.get("crawl_phase", "任务已恢复运行"))
     _persist_force(task_id, full=False)
     return True
@@ -1261,7 +1353,11 @@ def update_task_reply_snapshot(
     *,
     comment_stats: Optional[dict] = None,
 ) -> bool:
-    """按帖子维度幂等回写评论树，避免二级评论重复累计。"""
+    """
+    按帖子维度幂等回写评论树，避免二级评论重复累计。
+
+    优化：增量缓存 + 节流落盘（每 30 条或 30 秒触发完整持久化）
+    """
     from crawler import telemetry
     from api.services.reply_tree import count_reply_tree_nodes
 
@@ -1297,7 +1393,24 @@ def update_task_reply_snapshot(
     if not updated:
         return False
 
-    replies_fetched, coverage = _summarize_tweets(tweets_ref)
+    # 增量更新缓存（避免每次都对全 tweets 走查）
+    delta_replies = max(0, new_count - old_count)
+    with _reply_summary_cache_lock:
+        if task_id not in _reply_summary_cache:
+            # 首次：全量计算
+            replies_fetched, coverage = _summarize_tweets(tweets_ref)
+            _reply_summary_cache[task_id] = {
+                "replies_fetched": replies_fetched,
+                "coverage": coverage,
+            }
+        else:
+            # 增量更新
+            cache = _reply_summary_cache[task_id]
+            cache["replies_fetched"] = cache.get("replies_fetched", 0) + delta_replies
+            # coverage 保持不变（仅在完整落盘时更新）
+
+        replies_fetched = _reply_summary_cache[task_id]["replies_fetched"]
+        coverage = _reply_summary_cache[task_id]["coverage"]
 
     with _tasks_lock:
         task = _tasks.get(task_id)
@@ -1312,7 +1425,6 @@ def update_task_reply_snapshot(
         risk_state = task.get("risk_state")
         page = task.get("current_page")
 
-    delta_replies = max(0, new_count - old_count)
     telemetry.record_event(
         task_id,
         "reply_tree_synced",
@@ -1327,7 +1439,36 @@ def update_task_reply_snapshot(
             "new_reply_count": new_count,
         },
     )
-    _persist(task_id, full=True)
+
+    # 节流落盘：每 30 条评论或每 30 秒触发一次完整持久化
+    import time
+    now = time.monotonic()
+    with _reply_summary_cache_lock:
+        counter = _reply_persist_counter.get(task_id, 0) + 1
+        _reply_persist_counter[task_id] = counter
+        last_full = _reply_last_full_persist.get(task_id, 0.0)
+        should_persist_full = counter >= 30 or (now - last_full) >= 30.0
+
+    if should_persist_full:
+        # 完整持久化：重新计算 coverage + 落盘
+        replies_fetched, coverage = _summarize_tweets(tweets_ref)
+        with _reply_summary_cache_lock:
+            _reply_summary_cache[task_id] = {
+                "replies_fetched": replies_fetched,
+                "coverage": coverage,
+            }
+            _reply_persist_counter[task_id] = 0
+            _reply_last_full_persist[task_id] = now
+        with _tasks_lock:
+            task = _tasks.get(task_id)
+            if task:
+                task["replies_fetched"] = replies_fetched
+                task["time_coverage"] = coverage
+        _persist(task_id, full=True)
+    else:
+        # 轻量持久化：只写 summary
+        _persist(task_id, full=False)
+
     return True
 
 
@@ -1531,7 +1672,32 @@ def delete_task(task_id: str) -> bool:
     clear_thread(task_id)
     with _persist_mark_lock:
         _persist_mark.pop(task_id, None)
+
+    # 清理 reply 增量缓存
+    with _reply_summary_cache_lock:
+        _reply_summary_cache.pop(task_id, None)
+        _reply_persist_counter.pop(task_id, None)
+        _reply_last_full_persist.pop(task_id, None)
+
     telemetry.clear_task(task_id)
+
+    # 清理其他模块级缓存
+    try:
+        from crawler import utils, reply_fetcher, circuit_breaker, browser_lifecycle
+        # 清理 utils 中的暂停日志时间戳
+        if hasattr(utils, '_PAUSE_LOG_TS'):
+            utils._PAUSE_LOG_TS.pop(task_id, None)
+        # 清理 reply_fetcher 中的登录缓存
+        if hasattr(reply_fetcher, '_login_cache'):
+            reply_fetcher._login_cache.pop(task_id, None)
+        # 清理 circuit_breaker 中的断路器状态
+        if hasattr(circuit_breaker, '_breakers'):
+            circuit_breaker._breakers.pop(task_id, None)
+        # 清理 browser_lifecycle 中的页面计数
+        if hasattr(browser_lifecycle, '_page_counts'):
+            browser_lifecycle._page_counts.pop(task_id, None)
+    except Exception as cleanup_err:
+        logger.debug(f"清理模块级缓存时出错（非致命）: {cleanup_err}")
 
     try:
         _get_db().delete_task(task_id)

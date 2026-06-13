@@ -3,6 +3,7 @@
 
 提取 x_searcher / reply_fetcher 中重复的工具函数，统一维护。
 """
+import platform
 import time
 import math
 import random
@@ -20,13 +21,16 @@ _PAUSE_LOG_LOCK = threading.Lock()
 _PAUSE_LOG_TS: dict[str, float] = {}
 _PAUSE_LOG_INTERVAL_SEC = 15.0
 
+# 平台判断缓存
+_IS_LINUX = platform.system() == "Linux"
+
 
 def interruptible_sleep(seconds: float, task_id: Optional[str] = None) -> None:
     """
     可中断等待：长 sleep 会分片执行，期间可响应 pause/stop。
     """
     total = max(0.0, float(seconds))
-    poll_ms = max(50, int(getattr(settings, "crawler_interrupt_poll_ms", 300)))
+    poll_ms = max(50, int(getattr(settings, "crawler_interrupt_poll_ms", 500)))  # 默认提升到 500ms
     step = poll_ms / 1000.0
     elapsed = 0.0
     # 每 10秒执行一次清理检查，而不是每次 sleep 片段都检查
@@ -35,7 +39,8 @@ def interruptible_sleep(seconds: float, task_id: Optional[str] = None) -> None:
     while elapsed < total:
         if task_id:
             check_signal(task_id)
-        if elapsed - last_cleanup >= cleanup_interval:
+        # 仅在 Linux 平台执行清理
+        if _IS_LINUX and elapsed - last_cleanup >= cleanup_interval:
             maybe_cleanup_stale_linux_browsers(reason="interruptible_sleep")
             last_cleanup = elapsed
         remain = total - elapsed
@@ -77,8 +82,10 @@ def check_signal(task_id: Optional[str]) -> None:
     """
     检查任务控制信号：
     - stop  → 抛出 StopSignal 异常，终止爬虫
-    - pause → 轮询等待，直到信号变为 run（支持继续）
+    - pause → 使用 Event.wait() 等待，直到信号变为 run（支持继续）
     - run   → 直接返回（正常）
+
+    优化：使用 threading.Event 替代 0.3s 轮询，响应即时且 CPU 几乎归零。
     """
     if not task_id:
         return
@@ -101,7 +108,13 @@ def check_signal(task_id: Optional[str]) -> None:
                     should_log = True
             if should_log:
                 logger.info(f"任务 {task_id} 已暂停，等待继续信号...")
-            interruptible_sleep(0.3)
+
+            # 使用 Event.wait() 替代轮询，唤醒延迟从平均 150ms 降到 ~0
+            resume_event = _task_mgr.get_or_create_resume_event(task_id)
+            # 带超时的 wait，每 5 秒检查一次信号（防止 Event 未及时清理导致死锁）
+            resumed = resume_event.wait(timeout=5.0)
+            if resumed:
+                resume_event.clear()  # 重置 Event，为下次暂停做准备
         else:
             with _PAUSE_LOG_LOCK:
                 _PAUSE_LOG_TS.pop(task_id, None)

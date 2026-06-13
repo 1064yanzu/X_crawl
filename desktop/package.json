@@ -1,7 +1,7 @@
 {
   "name": "xcrawl-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "X_crawl 桌面端壳 —— Electron + FastAPI + Next.js standalone",
   "main": "dist/main.js",
   "scripts": {

@@ -240,13 +240,16 @@ class Settings(BaseSettings):
 
     # 原始响应持久化配置
     save_raw_responses: bool = Field(
-        default=True, description="是否将原始 API 响应 JSON 保存到磁盘"
+        default=False, description="是否将原始 API 响应 JSON 保存到磁盘（默认关闭以节省空间）"
     )
     raw_responses_dir: str = Field(
         default="raw_responses", description="原始响应存储根目录（相对于 backend/ 或绝对路径）"
     )
     raw_responses_max_pages: int = Field(
-        default=0, description="每任务最多保存页数，0 = 不限制"
+        default=50, description="每任务最多保存页数，0 = 不限制"
+    )
+    raw_responses_keep_only_failed: bool = Field(
+        default=True, description="仅在解析失败时保留原始响应（用于调试）"
     )
 
     # 浏览器健康与长时间运行配置

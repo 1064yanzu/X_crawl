@@ -393,7 +393,7 @@ def _search_with_time_splits(
                     task_id=task_id,
                     keyword=segment_keyword,
                     product=product,
-                    tweets_so_far=segment_result.tweets,
+                    tweets_count=len(segment_result.tweets),  # 只传计数
                     next_cursor=None,
                     page_fetched=0,
                     extra={
@@ -642,7 +642,7 @@ def _wait_search_packet_with_recovery(
             tab.listen.stop()
         except Exception:
             pass
-        tab.listen.start(SEARCH_TIMELINE_PATTERN)
+        tab.listen.start(SEARCH_TIMELINE_PATTERN, max_record=50)  # 限制缓存上限
         ok = navigate_with_retry(
             tab,
             tab.url,
@@ -874,14 +874,39 @@ def search(
         page_fetched_to_save: int,
         *,
         sync: bool = False,
+        force: bool = False,  # 新增 force 参数，任务结束时强制保存
     ) -> None:
+        """保存 checkpoint，支持节流（每 3 秒最多保存一次）"""
+        nonlocal _last_checkpoint_persist
+
+        # 同步模式或强制模式：立即保存
+        if sync or force:
+            extra = _build_checkpoint_extra(tweets_so_far)
+            _save = save_checkpoint_sync if sync else save_checkpoint
+            _save(
+                task_id=task_id,
+                keyword=_search_keyword,
+                product=_search_product,
+                tweets_count=len(tweets_so_far),
+                next_cursor=next_cursor,
+                page_fetched=page_fetched_to_save,
+                extra=extra,
+            )
+            _last_checkpoint_persist = time.monotonic()
+            return
+
+        # 节流：距上次保存 <3s 时跳过
+        now = time.monotonic()
+        if now - _last_checkpoint_persist < _PROGRESS_THROTTLE_SEC:
+            return
+
+        _last_checkpoint_persist = now
         extra = _build_checkpoint_extra(tweets_so_far)
-        _save = save_checkpoint_sync if sync else save_checkpoint
-        _save(
+        save_checkpoint(
             task_id=task_id,
             keyword=_search_keyword,
             product=_search_product,
-            tweets_so_far=tweets_so_far,
+            tweets_count=len(tweets_so_far),
             next_cursor=next_cursor,
             page_fetched=page_fetched_to_save,
             extra=extra,
@@ -914,6 +939,7 @@ def search(
 
     _last_progress_persist: float = 0.0  # checkpoint 节流计时器
     _PROGRESS_THROTTLE_SEC = 3.0  # 最低写入间隔
+    _last_checkpoint_persist: float = 0.0  # checkpoint 单独节流计时器
 
     # ── Pipeline 模式：fetch_replies=True 时启用双 Tab 并发 ──────────
     _pipeline = None
@@ -1183,7 +1209,7 @@ def search(
         )
 
         # ── 3. 开启监听 ─────────────────────────────────────────────
-        tab.listen.start(SEARCH_TIMELINE_PATTERN)
+        tab.listen.start(SEARCH_TIMELINE_PATTERN, max_record=50)  # 限制缓存上限
 
         # ── 4. 访问搜索页面（含错误页自动刷新）───────────────────────────
         # X 的搜索框原生支持高级语法（如 since:、from:、min_faves: 等）
@@ -1230,6 +1256,8 @@ def search(
             pass
 
         page_num = page_fetched + 1
+        _cursor_only_streak = 0  # cursor-only 包连续计数器
+        _MAX_CURSOR_ONLY_STREAK = 3  # 连续 3 个 cursor-only 包后强制翻页或停止
 
         while True:
             # 每页开始前检查控制信号
@@ -1309,17 +1337,33 @@ def search(
                     _last_bottom_cursor = bottom_cursor  # 追踪最后有效 cursor
 
                 if not tweets_page and bottom_cursor:
+                    _cursor_only_streak += 1
                     logger.info(
-                        f"第 {page_num} 页收到仅游标 SearchTimeline 包，继续等待当前页真实结果"
+                        f"第 {page_num} 页收到仅游标 SearchTimeline 包（连续 {_cursor_only_streak}/{_MAX_CURSOR_ONLY_STREAK}），继续等待当前页真实结果"
                     )
                     telemetry.record_event(
                         task_id,
                         "search_cursor_only_packet",
                         status="running",
-                        phase=f"第 {page_num} 页收到仅游标数据包，继续等待真实结果",
+                        phase=f"第 {page_num} 页收到仅游标数据包（连续 {_cursor_only_streak}），继续等待真实结果",
                         page=page_num,
                     )
+                    # 连续多个 cursor-only 包：可能是 X 的异常响应，强制翻页
+                    if _cursor_only_streak >= _MAX_CURSOR_ONLY_STREAK:
+                        logger.warning(
+                            f"连续 {_MAX_CURSOR_ONLY_STREAK} 个 cursor-only 包，"
+                            f"可能是 X 异常响应，尝试滚动触发新请求"
+                        )
+                        try:
+                            tab.scroll.down(500)
+                            jittered_sleep(1.5, task_id=task_id)
+                        except Exception as scroll_err:
+                            logger.debug(f"滚动失败: {scroll_err}")
+                        _cursor_only_streak = 0  # 重置计数器
                     continue
+                else:
+                    # 收到真实数据，重置计数器
+                    _cursor_only_streak = 0
 
                 # 去重
                 new_tweets = [t for t in tweets_page if t.get("id") not in seen_ids]
@@ -1457,7 +1501,7 @@ def search(
                                 )
                             raise
                         finally:
-                            tab.listen.start(SEARCH_TIMELINE_PATTERN)
+                            tab.listen.start(SEARCH_TIMELINE_PATTERN, max_record=50)  # 限制缓存上限
                             if task_id:
                                 clear_reply_checkpoint(task_id)
 
@@ -1476,6 +1520,12 @@ def search(
                     delta_tweets=len(new_tweets),
                     meta={"page_total": len(tweets_page), "all_total": len(all_tweets)},
                 )
+
+                # 清理已处理的缓存包，防止堆积
+                try:
+                    tab.listen.clear()
+                except Exception:
+                    pass
 
                 # 写检查点（每页立即保存）
                 if task_id:
@@ -1566,7 +1616,7 @@ def search(
                         tab.listen.stop()
                     except Exception:
                         pass
-                    tab.listen.start(SEARCH_TIMELINE_PATTERN)
+                    tab.listen.start(SEARCH_TIMELINE_PATTERN, max_record=50)  # 限制缓存上限
                     _navigate_direct(
                         tab=tab,
                         search_url=search_url,

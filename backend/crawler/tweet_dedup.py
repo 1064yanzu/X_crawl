@@ -21,6 +21,7 @@ import json
 import logging
 import sqlite3
 import threading
+import zlib
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,14 @@ def _get_conn() -> sqlite3.Connection:
             raise RuntimeError("task_db 未初始化")
         conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+
+        # SQLite 性能优化配置
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA cache_size=-20000")
+        conn.execute("PRAGMA mmap_size=268435456")
+
         _local.dedup_conn = conn
     return conn
 
@@ -46,14 +55,17 @@ def compute_fingerprint(tweet: dict) -> str:
     """
     计算推文互动指标指纹。
 
-    指纹仅基于可变的互动数据（评论数/转发数/点赞数），
+    指纹仅基于可变的互动数据（评论数/转发数/点赞数 + 最新评论时间），
     推文文本和发布时间是不变量，不纳入指纹。
+
+    添加 latest_reply_at 可防止"删 1 加 1"场景下的指纹漏检。
     """
     metrics = tweet.get("metrics") or {}
     data = {
         "replies": metrics.get("replies", 0),
         "retweets": metrics.get("retweets", 0),
         "likes": metrics.get("likes", 0),
+        "latest_reply_at": tweet.get("latest_reply_at", ""),  # 防止删1加1漏检
     }
     raw = json.dumps(data, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -85,10 +97,19 @@ def check_dedup(tweet: dict) -> tuple[bool, list[dict] | None]:
 
         if row["fingerprint"] == fp:
             try:
-                cached = json.loads(row["replies_json"] or "[]")
+                raw_data = row["replies_json"]
+                # 尝试解压缩（新格式是压缩的 blob）
+                if isinstance(raw_data, bytes):
+                    decompressed = zlib.decompress(raw_data)
+                    cached = json.loads(decompressed.decode("utf-8"))
+                else:
+                    # 旧格式是纯文本 JSON
+                    cached = json.loads(raw_data or "[]")
+
                 logger.debug(f"去重命中: tweet_id={tweet_id}, 复用 {len(cached)} 条缓存评论")
                 return True, cached
-            except (json.JSONDecodeError, TypeError):
+            except (json.JSONDecodeError, TypeError, zlib.error) as decode_err:
+                logger.debug(f"缓存数据解析失败: {decode_err}")
                 return False, None
 
         # 指纹不同 → 推文有更新
@@ -108,6 +129,7 @@ def register_tweets(
     批量注册推文指纹和评论缓存。
 
     在评论抓取完成后调用，将推文的指纹 + 评论数据写入数据库。
+    使用 zlib 压缩评论数据以节省磁盘空间。
 
     Returns:
         成功注册的数量
@@ -132,13 +154,16 @@ def register_tweets(
                 continue
 
             fp = compute_fingerprint(tweet)
+
+            # 使用 zlib 压缩评论数据（通常有 4-10x 压缩比）
             replies_json = json.dumps(replies, ensure_ascii=False)
+            compressed_data = zlib.compress(replies_json.encode("utf-8"), level=6)
 
             conn.execute("""
                 INSERT OR REPLACE INTO tweet_fingerprints
                     (tweet_id, fingerprint, last_task_id, replies_json, updated_at)
                 VALUES (?, ?, ?, ?, ?)
-            """, (tweet_id, fp, task_id, replies_json, now))
+            """, (tweet_id, fp, task_id, compressed_data, now))
             count += 1
 
         conn.commit()

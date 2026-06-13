@@ -43,6 +43,14 @@ def _get_conn() -> sqlite3.Connection:
     if conn is None:
         conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+
+        # SQLite 性能优化配置
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA cache_size=-20000")  # 20MB
+        conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+
         _local.conn = conn
     return conn
 
@@ -156,6 +164,23 @@ def init_db(db_path: str | Path) -> None:
             """
         )
 
+        # 添加关键索引以提升查询性能
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_tasks_queue_id ON tasks(queue_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_failed_replies_status ON failed_replies(status)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fingerprints_updated ON tweet_fingerprints(updated_at)"
+        )
+
         # 用户设置持久化表
         conn.execute(
             """
@@ -206,6 +231,16 @@ def init_db(db_path: str | Path) -> None:
         _ensure_column(conn, "tasks", "source_task_ids_json", "TEXT DEFAULT '[]'")
         _ensure_column(conn, "tasks", "concurrency", "INTEGER DEFAULT 1")
         _ensure_column(conn, "tasks", "youtube_params_json", "TEXT")
+
+        # 启动时清理超过 30 天的 tweet_fingerprints 记录，节省空间
+        try:
+            deleted_count = conn.execute(
+                "DELETE FROM tweet_fingerprints WHERE updated_at < datetime('now','-30 days')"
+            ).rowcount
+            if deleted_count > 0:
+                logger.info(f"已清理 {deleted_count} 条过期的 tweet_fingerprints 记录")
+        except Exception as cleanup_err:
+            logger.warning(f"清理过期 tweet_fingerprints 失败: {cleanup_err}")
 
         conn.commit()
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
@@ -569,6 +604,15 @@ def delete_task(task_id: str) -> None:
             conn.execute("DELETE FROM task_results WHERE task_id = ?", (task_id,))
             conn.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
             conn.commit()
+
+            # 定期触发 VACUUM 以回收已删除数据的磁盘空间
+            # 使用概率触发，避免每次删除都执行昂贵的 VACUUM 操作
+            import random
+            if random.random() < 0.05:  # 5% 概率
+                try:
+                    conn.execute("PRAGMA incremental_vacuum(100)")  # 释放最多 100 页
+                except Exception as vacuum_err:
+                    logger.debug(f"增量 VACUUM 执行失败: {vacuum_err}")
     except Exception as e:
         logger.error(f"删除任务记录失败 task_id={task_id}: {e}", exc_info=True)
 
