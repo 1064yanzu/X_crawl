@@ -1,0 +1,124 @@
+name: Release
+
+# 推送 v* tag 时触发：双平台打包 → 生成 SHA256 → 创建 GitHub Release 草稿
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: mac
+          - os: windows-latest
+            platform: win
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ── 后端：PyInstaller 打包 ──────────────────────────────────────────
+      - name: Build backend
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+          pyinstaller xcrawl-backend.spec --noconfirm --clean
+
+      # ── 前端：Next.js standalone 构建 ───────────────────────────────────
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:desktop
+
+      # ── 桌面：electron-builder 打包 ─────────────────────────────────────
+      - name: Build desktop (mac)
+        if: matrix.platform == 'mac'
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run pack:mac
+
+      - name: Build desktop (win)
+        if: matrix.platform == 'win'
+        working-directory: desktop
+        run: |
+          npm ci
+          npm run pack:win
+
+      # ── 生成 SHA256 ─────────────────────────────────────────────────────
+      - name: Generate checksums (mac)
+        if: matrix.platform == 'mac'
+        working-directory: desktop/release
+        shell: bash
+        run: |
+          for f in *.dmg; do
+            [ -e "$f" ] || continue
+            shasum -a 256 "$f" > "$f.sha256"
+            cat "$f.sha256"
+          done
+
+      - name: Generate checksums (win)
+        if: matrix.platform == 'win'
+        working-directory: desktop/release
+        shell: bash
+        run: |
+          for f in *.exe; do
+            [ -e "$f" ] || continue
+            sha256sum "$f" > "$f.sha256" || certutil -hashfile "$f" SHA256 > "$f.sha256"
+            cat "$f.sha256"
+          done
+
+      # ── 上传构建产物 ─────────────────────────────────────────────────────
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcrawl-${{ matrix.platform }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+            desktop/release/*.sha256
+          if-no-files-found: warn
+
+  release:
+    name: Create draft release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.exe
+            artifacts/**/*.sha256

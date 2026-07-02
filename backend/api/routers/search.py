@@ -68,13 +68,26 @@ async def get_search_task(
     task_id: str,
     include_tweets: bool = Query(
         default=True,
-        description="是否返回完整 tweets 列表。轮询建议 false，减少传输开销。",
+        description="是否返回 tweets 列表。轮询建议 false，减少传输开销。",
+    ),
+    offset: int = Query(
+        default=0, ge=0, description="tweets 窗口起始下标（与 since 二选一，since 优先）。"
+    ),
+    limit: int | None = Query(
+        default=None, ge=1, le=5000,
+        description="tweets 窗口最大条数；留空返回全部。建议增量轮询时配合 since 使用。",
+    ),
+    since: str | None = Query(
+        default=None,
+        description="只返回该 tweet_id 之后的增量；用于前端增量拉取，避免重复传输已有数据。",
     ),
 ) -> TaskOut:
-    if include_tweets:
-        task_data = task_manager.get_task_full(task_id)
-    else:
+    if not include_tweets:
         task_data = task_manager.get_task_summary(task_id)
+    else:
+        task_data = task_manager.get_task_detail(
+            task_id, offset=offset, limit=limit, since=since
+        )
     if not task_data:
         raise HTTPException(status_code=404, detail=f"任务不存在: {task_id}")
     return TaskOut(**task_data)

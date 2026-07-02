@@ -144,7 +144,7 @@ class Settings(BaseSettings):
         default=60.0, description="连续错误触发冻结后的休眠时长（秒），默认 1 分钟"
     )
     crawler_max_concurrent_tasks: int = Field(
-        default=1, description="允许并发运行的任务数上限（1 表示串行）"
+        default=3, description="允许并发运行的任务数上限（1 表示串行，受可用账号数与资源压力进一步约束）"
     )
     comment_backfill_group_max_concurrency: int = Field(
         default=3, description="评论补采任务组内最大并发 Pipeline 数（受可用账号数约束）"
@@ -251,6 +251,21 @@ class Settings(BaseSettings):
     raw_responses_keep_only_failed: bool = Field(
         default=True, description="仅在解析失败时保留原始响应（用于调试）"
     )
+    raw_responses_cleanup_enabled: bool = Field(
+        default=True, description="是否启用 raw_responses 滚动清理（后台周期 + 启动时各执行一次）"
+    )
+    raw_responses_cleanup_interval_min: int = Field(
+        default=30, description="raw_responses 滚动清理后台执行间隔（分钟）"
+    )
+    raw_responses_terminal_ttl_hours: float = Field(
+        default=24.0, description="终态任务（done/stopped/failed）的归档目录保留时长（小时），超过即清理"
+    )
+    raw_responses_task_max_mb: float = Field(
+        default=512.0, description="单任务归档总大小上限（MB），超过即清理该任务目录（仅终态任务）"
+    )
+    raw_responses_global_max_gb: float = Field(
+        default=2.0, description="全局归档总大小上限（GB），超过时按最旧优先删除终态任务目录"
+    )
 
     # 浏览器健康与长时间运行配置
     browser_restart_every_n_pages: int = Field(
@@ -279,6 +294,21 @@ class Settings(BaseSettings):
     # 任务历史数据库
     tasks_db_path: str = Field(
         default="tasks.db", description="任务历史 SQLite 数据库路径（相对于 backend/ 或绝对路径）"
+    )
+    db_busy_timeout_ms: int = Field(
+        default=5000, description="SQLite busy_timeout（毫秒），避免并发写入偶发 database is locked"
+    )
+    db_wal_checkpoint_interval_min: int = Field(
+        default=10, description="后台周期执行 PRAGMA wal_checkpoint(TRUNCATE) 的间隔（分钟），0=禁用"
+    )
+
+    # 任务结果内存缓存（LRU）
+    crawler_result_cache_max_size: int = Field(
+        default=16, description="任务结果 LRU 缓存最大条目数（不淘汰运行中/暂停任务）"
+    )
+    crawler_result_cache_max_mb: float = Field(
+        default=512.0,
+        description="任务结果 LRU 缓存内存上限（MB，粗估：条目数×经验系数），超过即淘汰最旧条目",
     )
 
     # 多账号池配置

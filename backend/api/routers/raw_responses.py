@@ -12,10 +12,20 @@ from crawler.response_saver import (
     list_all_tasks,
     delete_task_responses,
     get_task_response_dir,
+    sweep_raw_responses,
 )
 from config import settings
 
 router = APIRouter(prefix="/api/v1/raw-responses", tags=["raw-responses"])
+
+
+@router.post("/sweep", summary="立即执行一次滚动清理")
+async def sweep_now():
+    """
+    按当前清理策略（终态 TTL / 单任务大小 / 全局大小）立即清理归档。
+    返回删除目录数、释放字节、剩余字节。仅清理终态任务，绝不删正在写入的目录。
+    """
+    return sweep_raw_responses(reason="manual")
 
 
 @router.get("/", summary="列出所有已保存原始响应的任务")

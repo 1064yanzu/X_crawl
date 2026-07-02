@@ -56,6 +56,19 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <meta
+          httpEquiv="Content-Security-Policy"
+          content={[
+            "default-src 'self' http://127.0.0.1:*",
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data: blob: https://*.twimg.com https://*.x.com https://*.youtube.com https://yt3.ggpht.com",
+            "media-src 'self' blob: https://*.twimg.com",
+            "connect-src 'self' http://127.0.0.1:* http://localhost:*",
+            "font-src 'self' data:",
+            "frame-src 'none'",
+          ].join("; ")}
+        />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="min-h-screen bg-background font-sans text-foreground">

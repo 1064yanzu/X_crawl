@@ -1,7 +1,7 @@
 {
   "name": "xcrawl-desktop",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "X_crawl 桌面端壳 —— Electron + FastAPI + Next.js standalone",
   "main": "dist/main.js",
   "scripts": {
@@ -58,7 +58,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "deleteAppDataOnUninstall": false
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
     }
   }
 }

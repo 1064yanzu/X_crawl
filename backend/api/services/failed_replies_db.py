@@ -62,16 +62,39 @@ def record_failed_reply(
 
 
 def record_failed_replies_batch(records: list[dict]) -> None:
-    """批量记录失败评论"""
-    for rec in records:
-        record_failed_reply(
-            task_id=rec["task_id"],
-            tweet_id=rec["tweet_id"],
-            screen_name=rec.get("screen_name", ""),
-            expected_count=rec.get("expected_count", 0),
-            fetched_count=rec.get("fetched_count", 0),
-            error_reason=rec.get("error_reason", ""),
+    """批量记录失败评论（单次 commit + executemany，避免逐条事务开销）。"""
+    if not records:
+        return
+    now = _now_iso()
+    rows = [
+        (
+            rec["task_id"],
+            rec["tweet_id"],
+            rec.get("screen_name", ""),
+            int(rec.get("expected_count", 0) or 0),
+            int(rec.get("fetched_count", 0) or 0),
+            rec.get("error_reason", ""),
+            now,
         )
+        for rec in records
+        if rec.get("task_id") and rec.get("tweet_id")
+    ]
+    if not rows:
+        return
+    try:
+        with _get_conn() as conn:
+            conn.executemany(
+                """
+                INSERT INTO failed_replies
+                    (task_id, tweet_id, screen_name, expected_count, fetched_count,
+                     error_reason, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                rows,
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"批量记录失败评论失败（rows={len(rows)}）: {e}", exc_info=True)
 
 
 def list_failed_replies(task_id: str) -> list[dict]:

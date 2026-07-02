@@ -39,7 +39,7 @@ export async function startBackend(port: number): Promise<void> {
     backendProc = null;
   });
 
-  await waitForHttp(`http://127.0.0.1:${port}/docs`, 60_000);
+  await waitForHttp(`http://127.0.0.1:${port}/health`, 60_000);
 }
 
 export async function startFrontend(port: number, backendPort: number): Promise<void> {

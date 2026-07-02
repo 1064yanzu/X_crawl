@@ -27,7 +27,7 @@ class CrawlerConfig(BaseModel):
     crawler_challenge_retry_times: int = Field(description="挑战页自动重试次数", ge=0, le=8)
     crawler_challenge_cooldown: float = Field(description="挑战页重试冷却时间（秒）", ge=1.0, le=60.0)
     crawler_cloudflare_wait_seconds: float = Field(default=60.0, description="Cloudflare 验证等待时长（秒）", ge=10.0, le=300.0)
-    crawler_max_concurrent_tasks: int = Field(description="并发运行任务上限", ge=1, le=5)
+    crawler_max_concurrent_tasks: int = Field(description="并发运行任务上限", ge=1, le=8)
     crawler_cross_platform_concurrent: bool = Field(default=True, description="是否允许 X 和微博任务跨平台并发执行")
     scheduler_backend: str = Field(default="memory", description="调度后端：memory/redis")
     crawler_adaptive_wait_enabled: bool = Field(default=True, description="是否启用自适应等待")

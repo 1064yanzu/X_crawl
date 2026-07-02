@@ -110,7 +110,7 @@
 <body>
   <div class="wrap">
     <div>
-      <div class="eyebrow">Issue 01 · Cover</div>
+      <div class="eyebrow">第 01 期 · 封面</div>
       <div class="rule"></div>
       <div class="title">X_crawl<br/><em>正在启动</em></div>
       <div class="subtitle">多平台数据采集引擎。请稍候，服务正在初始化。</div>
@@ -125,9 +125,10 @@
     </div>
   </div>
   <script>
-    const { ipcRenderer } = require('electron');
     const el = document.getElementById('status');
-    ipcRenderer.on('splash:status', (_e, text) => { el.textContent = text; });
+    if (window.xcrawlSplash && typeof window.xcrawlSplash.onStatus === 'function') {
+      window.xcrawlSplash.onStatus(function (text) { el.textContent = text; });
+    }
   </script>
 </body>
 </html>

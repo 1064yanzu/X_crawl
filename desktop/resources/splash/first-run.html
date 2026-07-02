@@ -145,7 +145,7 @@
 </head>
 <body>
   <div class="container">
-    <div class="eyebrow">Issue 01 · Notice</div>
+    <div class="eyebrow">第 01 期 · 提示</div>
     <div class="rule"></div>
     <h1>需要先安装 Chrome 或 Edge</h1>
     <p class="lead">
@@ -165,14 +165,13 @@
     <p class="footer">X_crawl · Multi-platform Crawler · 2026</p>
   </div>
   <script>
-    const { ipcRenderer, shell } = require('electron');
     document.getElementById('retry').addEventListener('click', () => {
-      ipcRenderer.send('first-run:retry');
+      window.xcrawlFirstRun && window.xcrawlFirstRun.retryDetect();
     });
     document.querySelectorAll('a[target="_blank"]').forEach((a) => {
       a.addEventListener('click', (ev) => {
         ev.preventDefault();
-        shell.openExternal(a.href);
+        window.xcrawlFirstRun && window.xcrawlFirstRun.openExternal(a.href);
       });
     });
   </script>

@@ -37,7 +37,7 @@ export default function AnalyticsPage() {
     return (
         <div className="space-y-14 pb-16 editorial-rise">
             <PageHeader
-                eyebrow="Issue 01 · Data desk"
+                eyebrow="第 01 期 · 数据台"
                 icon={BarChart3}
                 title="数据看板"
                 description="查看全局采集数据的趋势与分布。"

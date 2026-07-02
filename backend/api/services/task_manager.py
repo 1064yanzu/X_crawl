@@ -19,9 +19,58 @@ logger = logging.getLogger(__name__)
 
 _tasks: dict[str, dict] = {}
 _task_results: OrderedDict[str, list[dict]] = OrderedDict()  # 改为 OrderedDict 支持 LRU
-_task_results_max_size = 8  # LRU 缓存最大容量
 _loaded_task_results: set[str] = set()
 _tasks_lock = threading.RLock()
+
+# LRU 缓存计量（容量与字节双门限，运行中/暂停任务不淘汰）
+_DEFAULT_RESULT_CACHE_MAX_SIZE = 16
+_RESULT_BYTES_PER_TWEET = 32 * 1024  # 每条推文（含回复树）粗估占用，仅用于上界估算
+_lru_evictions = 0  # 累计淘汰次数（含字节门限触发），供 memory-stats 观测
+
+
+def _result_cache_max_size() -> int:
+    """LRU 条目上限（读 settings，默认 16，硬上限 256 防误配）。"""
+    from config import settings
+
+    raw = getattr(settings, "crawler_result_cache_max_size", _DEFAULT_RESULT_CACHE_MAX_SIZE)
+    try:
+        return max(1, min(256, int(raw)))
+    except (TypeError, ValueError):
+        return _DEFAULT_RESULT_CACHE_MAX_SIZE
+
+
+def _result_cache_max_bytes() -> int:
+    """LRU 字节上限（读 settings，默认 512MB，下限 64MB）。"""
+    from config import settings
+
+    try:
+        mb = float(getattr(settings, "crawler_result_cache_max_mb", 512.0))
+    except (TypeError, ValueError):
+        mb = 512.0
+    return int(max(64.0, mb) * 1024 * 1024)
+
+
+def _estimate_cache_bytes() -> int:
+    """粗估 LRU 当前占用字节（条目推文数 × 经验系数，不做昂贵的 getsizeof）。"""
+    return sum(len(v) for v in _task_results.values()) * _RESULT_BYTES_PER_TWEET
+
+
+def get_memory_stats() -> dict:
+    """返回任务结果 LRU 缓存的实时占用与命中/淘汰指标，供 /system/memory-stats。"""
+    with _tasks_lock:
+        entries = len(_task_results)
+        total_tweets = sum(len(v) for v in _task_results.values())
+        loaded = len(_loaded_task_results)
+        evictions = _lru_evictions
+    return {
+        "lru_entries": entries,
+        "lru_loaded_marks": loaded,
+        "lru_total_tweets": total_tweets,
+        "lru_max_size": _result_cache_max_size(),
+        "lru_max_mb": round(_result_cache_max_bytes() / 1024 / 1024, 1),
+        "lru_estimated_mb": round(total_tweets * _RESULT_BYTES_PER_TWEET / 1024 / 1024, 2),
+        "lru_evictions": evictions,
+    }
 
 _task_signals: dict[str, str] = {}
 _signal_lock = threading.Lock()
@@ -292,18 +341,26 @@ def _set_task_result_locked(task_id: str, tweets: list[dict]) -> None:
 
     _loaded_task_results.add(task_id)
 
-    # LRU 淘汰：超过容量时移除最旧的（但不淘汰活跃任务）
-    while len(_task_results) > _task_results_max_size:
-        oldest_id, _ = _task_results.popitem(last=False)
-        # 如果最旧的任务还在运行，不淘汰它
-        if oldest_id in _tasks:
-            task_status = _tasks[oldest_id].get("status")
-            if task_status in ("running", "paused"):
-                # 重新放回并移到最新
-                _task_results[oldest_id] = _
-                _task_results.move_to_end(oldest_id)
-                continue
+    # LRU 淘汰：条目数 OR 估算字节超限时移除最旧的（但不淘汰运行中/暂停任务）
+    global _lru_evictions
+    max_size = _result_cache_max_size()
+    max_bytes = _result_cache_max_bytes()
+    guard = 0
+    limit = len(_task_results) + 4  # 护栏：全是活跃任务时避免空转死循环
+    while len(_task_results) > 1 and (
+        len(_task_results) > max_size or _estimate_cache_bytes() > max_bytes
+    ):
+        guard += 1
+        if guard > limit:
+            break
+        oldest_id, oldest_val = _task_results.popitem(last=False)
+        # 如果最旧的任务还在运行/暂停，不淘汰它
+        if oldest_id in _tasks and _tasks[oldest_id].get("status") in ("running", "paused"):
+            _task_results[oldest_id] = oldest_val
+            _task_results.move_to_end(oldest_id)
+            continue
         _loaded_task_results.discard(oldest_id)
+        _lru_evictions += 1
         logger.debug(f"LRU 淘汰任务结果: {oldest_id}")
 
 
@@ -1033,6 +1090,61 @@ def get_task_full(task_id: str) -> Optional[dict]:
     return _build_task_view(task_id, include_tweets=True)
 
 
+def get_task_detail(
+    task_id: str,
+    *,
+    offset: int = 0,
+    limit: Optional[int] = None,
+    since: Optional[str] = None,
+) -> Optional[dict]:
+    """只读详情视图：摘要 + 有界、浅拷贝的 tweets 窗口。
+
+    与 get_task_full 的区别：
+    - tweets 走浅拷贝（list(...) + dict(t)），不对整棵回复树 deepcopy。写入方对
+      tweet / replies 均为整体替换（非原地改键/原地 append），故浅拷贝读取安全。
+    - 支持 offset / limit / since 增量窗口；默认（limit=None, since=None）等价旧
+      include_tweets=true 的"返回全部"语义，但开销从 deepcopy 降到浅拷贝。
+    """
+    _ensure_db()
+    from api.services.task_watchdog import maybe_heal_stale_active_tasks
+
+    maybe_heal_stale_active_tasks()
+
+    summary = _get_task_summary_snapshot(task_id)
+    if not summary:
+        return None
+    queue_position = (
+        _queue_positions().get(task_id) if summary.get("status") == "pending" else None
+    )
+    view = _decorate_task_runtime(summary, queue_position=queue_position)
+
+    # 取底层引用（不 deepcopy），再做有界浅拷贝
+    with _tasks_lock:
+        base = _task_results.get(task_id) if task_id in _loaded_task_results else None
+    if base is None:
+        loaded = _get_db().load_task_result(task_id)
+        with _tasks_lock:
+            if task_id not in _loaded_task_results:
+                _set_task_result_locked(task_id, loaded)
+            base = _task_results.get(task_id, loaded)
+
+    start = max(0, int(offset or 0))
+    if since:
+        sid = str(since)
+        idx = next(
+            (
+                i for i, t in enumerate(base)
+                if str((t or {}).get("id") or (t or {}).get("mid") or "") == sid
+            ),
+            None,
+        )
+        if idx is not None:
+            start = idx + 1
+    window = base[start:] if limit is None else base[start:start + max(0, int(limit))]
+    view["tweets"] = [dict(t) if isinstance(t, dict) else t for t in list(window)]
+    return view
+
+
 def get_task_tweets_ref(task_id: str) -> list[dict]:
     """获取推文列表的零拷贝引用（评论补采专用）。
 
@@ -1043,13 +1155,37 @@ def get_task_tweets_ref(task_id: str) -> list[dict]:
     return _get_task_result_ref(task_id, load=True)
 
 
+def _shallow_copy_task(task: dict) -> dict:
+    """浅拷贝任务摘要（list_tasks 只读视图专用）。
+
+    复制已知的可变嵌套容器（dict/小 list），其余标量直接共享引用，
+    避免对每个任务做整树 deepcopy。preview_tweets 由写入方整体替换而非原地
+    改键，故共享其内部对象引用是安全的。
+    """
+    snap = dict(task)
+    for k in (
+        "runtime_metrics", "live_metrics", "time_coverage",
+        "segment_progress", "comment_backfill_progress",
+    ):
+        v = task.get(k)
+        if isinstance(v, dict):
+            snap[k] = dict(v)
+    for k in ("preview_tweets", "source_task_ids", "exclude_tweet_ids"):
+        v = task.get(k)
+        if isinstance(v, list):
+            snap[k] = list(v)
+    return snap
+
+
 def list_tasks(*, include_payload: bool = False) -> list[dict]:
     _ensure_db()
     from api.services.task_watchdog import maybe_heal_stale_active_tasks
 
     maybe_heal_stale_active_tasks()
     with _tasks_lock:
-        tasks = [copy.deepcopy(t) for t in _tasks.values()]
+        # 浅拷贝替代整树 deepcopy：摘要 dict 不含全量 tweets（tweets 在 _task_results），
+        # 此处只需隔离嵌套容器，500+ 任务列表从 deepcopy 的数百毫秒降到亚毫秒级。
+        tasks = [_shallow_copy_task(t) for t in _tasks.values()]
     queue_positions = _queue_positions()
     views = []
     for task in tasks:

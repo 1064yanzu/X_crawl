@@ -470,7 +470,7 @@ export default function TasksPage() {
         <>
             <div className="space-y-10 pb-16 editorial-rise">
                 <PageHeader
-                    eyebrow="Issue 01 · Task center"
+                    eyebrow="第 01 期 · 任务中心"
                     icon={Database}
                     title="采集队列"
                     description="查看和管理采集任务。"

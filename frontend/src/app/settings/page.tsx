@@ -4,9 +4,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { BrowserSelector } from "@/components/features/BrowserSelector";
 import { CrawlerConfigCard } from "@/components/features/settings/CrawlerConfigCard";
+import { ConcurrencyCard } from "@/components/features/settings/ConcurrencyCard";
+import { PerformanceCard } from "@/components/features/settings/PerformanceCard";
+import { DesktopCard } from "@/components/features/settings/DesktopCard";
 import { EngineConfigCard } from "@/components/features/settings/EngineConfigCard";
 import { ProxyConfigCard } from "@/components/features/settings/ProxyConfigCard";
 import { RawResponseStorageCard } from "@/components/features/settings/RawResponseStorageCard";
+import { AboutCard } from "@/components/features/settings/AboutCard";
 
 export default function GeneralSettingsPage() {
     return (
@@ -26,9 +30,13 @@ export default function GeneralSettingsPage() {
             </Card>
 
             <CrawlerConfigCard />
+            <ConcurrencyCard />
+            <PerformanceCard />
+            <DesktopCard />
             <EngineConfigCard />
             <ProxyConfigCard />
             <RawResponseStorageCard />
+            <AboutCard />
 
             <Card className="rounded-lg border-red-200/70 bg-red-50/70 dark:border-red-500/20 dark:bg-red-500/10">
                 <CardHeader>

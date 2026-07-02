@@ -10,7 +10,7 @@ export default function Home() {
         <article className="space-y-14 pb-16">
             <div className="editorial-rise">
                 <PageHeader
-                    eyebrow="Issue 01 · Console"
+                    eyebrow="第 01 期 · 控制台"
                     icon={Activity}
                     title="采集控制台"
                     description="创建任务、监听进度、收纳成果。先确认环境，再开始。"

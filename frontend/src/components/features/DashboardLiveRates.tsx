@@ -75,7 +75,7 @@ export function DashboardLiveRates() {
             <div className="flex items-baseline justify-between gap-3">
                 <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-[color:var(--fg-subtle)]">
-                        Live wire
+                        实时数据
                     </p>
                     <h2
                         id="live-rates-heading"

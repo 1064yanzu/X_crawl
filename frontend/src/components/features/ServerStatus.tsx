@@ -32,6 +32,8 @@ export function ServerStatus() {
     React.useEffect(() => {
         const toMessage = (value: unknown) => (value instanceof Error ? value.message : String(value ?? "fallback failed"));
         const run = async () => {
+            // 隐藏页签时跳过 fallback 探活，避免后台空转浪费请求
+            if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
             try {
                 const resp = await fetch(`${API_BASE_URL}/health?t=${Date.now()}`, { cache: "no-store" });
                 setLastCheckAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
@@ -48,7 +50,14 @@ export function ServerStatus() {
         };
         if (isError) run();
         const timer = setInterval(run, 10000);
-        return () => clearInterval(timer);
+        const onVisible = () => {
+            if (document.visibilityState === "visible") run();
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener("visibilitychange", onVisible);
+        };
     }, [isError]);
 
     const effective = fallbackHealth ?? health;
@@ -71,7 +80,7 @@ export function ServerStatus() {
             <div className="flex items-baseline justify-between gap-3">
                 <div>
                     <p className="font-mono text-[10px] uppercase tracking-[0.28em] text-[color:var(--fg-subtle)]">
-                        System dispatch
+                        系统状态 · System
                     </p>
                     <h2
                         id="server-status-heading"

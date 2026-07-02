@@ -42,7 +42,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
                         <div className="mt-auto px-3">
                             <p className="font-mono text-[10px] uppercase tracking-[0.24em] text-[color:var(--fg-subtle)]">
-                                Issue 01 · 2026
+                                第 01 期 · 2026
                             </p>
                             <p className="mt-2 font-serif text-[13px] italic leading-6 text-[color:var(--fg-muted)]">
                                 &ldquo;A crawler that reads, not just one that fetches.&rdquo;

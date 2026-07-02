@@ -639,29 +639,135 @@ export interface StorageInfo {
     tasks: StorageTask[];
 }
 
-/**
- * Common fetch utility that handles JSON parsing and error throwing.
- */
-async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
+export interface SweepResult {
+    deleted_tasks: number;
+    freed_bytes: number;
+    remaining_bytes: number;
+    reason: string;
+}
 
+export interface MemoryStats {
+    lru_entries: number;
+    lru_loaded_marks: number;
+    lru_total_tweets: number;
+    lru_max_size: number;
+    lru_max_mb: number;
+    lru_estimated_mb: number;
+    lru_evictions: number;
+    scheduler_running?: number;
+    scheduler_queue?: number;
+    effective_worker_limit?: number;
+    process_rss_mb?: number;
+}
+
+export interface PerformanceConfig {
+    crawler_result_cache_max_size: number;
+    crawler_result_cache_max_mb: number;
+    raw_responses_cleanup_enabled: boolean;
+    raw_responses_cleanup_interval_min: number;
+    raw_responses_terminal_ttl_hours: number;
+    raw_responses_task_max_mb: number;
+    raw_responses_global_max_gb: number;
+    db_wal_checkpoint_interval_min: number;
+}
+
+export interface SystemAbout {
+    version: string;
+    python: string;
+    platform: string;
+    data_dir: string;
+    tasks_db: string;
+    raw_responses_dir: string;
+    log_dir: string;
+    dev_mode: boolean;
+    migrations?: {
+        current_version?: number;
+        latest_version?: number;
+        registered?: { version: number; description: string }[];
+        error?: string;
+    };
+}
+
+/**
+ * 统一的 API 错误类型。组件可按 status 区分场景（401/403/5xx/network/timeout）。
+ */
+export class ApiError extends Error {
+    readonly status: number;
+    readonly detail: string;
+    readonly url: string;
+    readonly cause?: unknown;
+    constructor(opts: { status: number; detail: string; url: string; cause?: unknown }) {
+        super(`${opts.status === 0 ? "网络错误" : `API ${opts.status}`} · ${opts.detail}`);
+        this.name = "ApiError";
+        this.status = opts.status;
+        this.detail = opts.detail;
+        this.url = opts.url;
+        this.cause = opts.cause;
+    }
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+function buildSignal(externalSignal: AbortSignal | undefined, timeoutMs: number): AbortSignal | undefined {
+    const signals: AbortSignal[] = [];
+    if (externalSignal) signals.push(externalSignal);
+    if (timeoutMs > 0 && typeof AbortSignal !== "undefined" && "timeout" in AbortSignal) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        signals.push((AbortSignal as any).timeout(timeoutMs));
+    }
+    if (!signals.length) return undefined;
+    if (signals.length === 1) return signals[0];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((AbortSignal as any).any) return (AbortSignal as any).any(signals);
+    return signals[0];
+}
+
+/**
+ * Common fetch utility that handles JSON parsing, timeouts, AbortSignal, and structured errors.
+ */
+async function fetchApi<T>(
+    endpoint: string,
+    options?: RequestInit & { timeoutMs?: number },
+): Promise<T> {
+    const url = `${API_BASE_URL}${endpoint}`;
     const headers = {
- "Content-Type": "application/json",
+        "Content-Type": "application/json",
         ...options?.headers,
     };
+    const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const signal = buildSignal(options?.signal ?? undefined, timeoutMs);
 
-    const response = await fetch(url, { ...options, headers });
+    let response: Response;
+    try {
+        response = await fetch(url, { ...options, headers, signal });
+    } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+            // 超时或外部 cancel
+            throw new ApiError({
+                status: 0,
+                detail: timeoutMs > 0 ? `请求超时（${timeoutMs / 1000}s）` : "请求已取消",
+                url,
+                cause: err,
+            });
+        }
+        throw new ApiError({
+            status: 0,
+            detail: err instanceof Error ? err.message : "网络错误",
+            url,
+            cause: err,
+        });
+    }
 
     if (!response.ok) {
-        let errorDetail = response.statusText;
+        let errorDetail = response.statusText || `HTTP ${response.status}`;
         try {
             const errorData = await response.json();
-            if (errorData.detail) errorDetail = errorData.detail;
-            else if (errorData.message) errorDetail = errorData.message;
+            if (errorData.detail) errorDetail = String(errorData.detail);
+            else if (errorData.message) errorDetail = String(errorData.message);
         } catch {
             // Ignore JSON parse err
         }
-        throw new Error(`API Error: ${response.status} - ${errorDetail}`);
+        throw new ApiError({ status: response.status, detail: errorDetail, url });
     }
 
     return response.json();
@@ -669,21 +775,33 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 
 async function fetchFormApi<T>(endpoint: string, formData: FormData): Promise<T> {
     const url = `${API_BASE_URL}${endpoint}`;
-    const response = await fetch(url, {
-        method: "POST",
-        body: formData,
-    });
+    // 文件上传可能较大，超时给到 5 分钟
+    const signal = buildSignal(undefined, 300_000);
+    let response: Response;
+    try {
+        response = await fetch(url, { method: "POST", body: formData, signal });
+    } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+            throw new ApiError({ status: 0, detail: "上传超时", url, cause: err });
+        }
+        throw new ApiError({
+            status: 0,
+            detail: err instanceof Error ? err.message : "网络错误",
+            url,
+            cause: err,
+        });
+    }
 
     if (!response.ok) {
-        let errorDetail = response.statusText;
+        let errorDetail = response.statusText || `HTTP ${response.status}`;
         try {
             const errorData = await response.json();
-            if (errorData.detail) errorDetail = errorData.detail;
-            else if (errorData.message) errorDetail = errorData.message;
+            if (errorData.detail) errorDetail = String(errorData.detail);
+            else if (errorData.message) errorDetail = String(errorData.message);
         } catch {
             // Ignore JSON parse err
         }
-        throw new Error(`API Error: ${response.status} - ${errorDetail}`);
+        throw new ApiError({ status: response.status, detail: errorDetail, url });
     }
 
     return response.json();
@@ -829,8 +947,18 @@ export const api = {
                 method: "POST",
                 body: JSON.stringify(data),
             }),
-        get: (taskId: string, includeTweets = true) =>
-            fetchApi<TaskOut>(`/api/v1/search/${taskId}?include_tweets=${includeTweets ? "true" : "false"}`),
+        get: (
+            taskId: string,
+            includeTweets = true,
+            opts?: { offset?: number; limit?: number; since?: string },
+        ) => {
+            const params = new URLSearchParams();
+            params.set("include_tweets", includeTweets ? "true" : "false");
+            if (opts?.offset != null) params.set("offset", String(opts.offset));
+            if (opts?.limit != null) params.set("limit", String(opts.limit));
+            if (opts?.since) params.set("since", opts.since);
+            return fetchApi<TaskOut>(`/api/v1/search/${taskId}?${params.toString()}`);
+        },
     },
     commentBackfill: {
         analyze: (file: File, platform: Platform) => {
@@ -1105,6 +1233,8 @@ export const api = {
             fetchApi<{ task_id: string; deleted_files: number }>(`/api/v1/raw-responses/${taskId}`, { method: "DELETE" }),
         deleteAll: () =>
             fetchApi<{ deleted_tasks: number; deleted_files: number }>("/api/v1/raw-responses/all", { method: "DELETE" }),
+        sweep: () =>
+            fetchApi<SweepResult>("/api/v1/raw-responses/sweep", { method: "POST" }),
     },
     accounts: {
         list: () =>
@@ -1223,6 +1353,21 @@ export const api = {
         validate: (keyId: string) =>
             fetchApi<YouTubeValidateResponse>(`/api/v1/youtube-api-keys/${keyId}/validate`, {
                 method: "POST",
+            }),
+    },
+    system: {
+        memoryStats: () => fetchApi<MemoryStats>("/api/v1/system/memory-stats"),
+        getPerformanceConfig: () => fetchApi<PerformanceConfig>("/api/v1/system/performance-config"),
+        updatePerformanceConfig: (config: PerformanceConfig) =>
+            fetchApi<PerformanceConfig>("/api/v1/system/performance-config", {
+                method: "PUT",
+                body: JSON.stringify(config),
+            }),
+        getAbout: () => fetchApi<SystemAbout>("/api/v1/system/about"),
+        diagnose: () =>
+            fetchApi<{ path: string; size_bytes: number; filename: string }>("/api/v1/system/diagnose", {
+                method: "POST",
+                timeoutMs: 60_000,
             }),
     },
 };

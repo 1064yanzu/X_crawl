@@ -13,6 +13,7 @@ import {
     Radio,
     Youtube as YoutubeIcon,
 } from "lucide-react";
+import { sanitizeReplyHtml } from "@/lib/sanitize-html";
 import { cn } from "@/lib/utils";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,7 +89,7 @@ function YouTubeCommentCard({ reply }: ReplyProps) {
                     </div>
                     <div
                         className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90"
-                        dangerouslySetInnerHTML={{ __html: reply.text || "" }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeReplyHtml(reply.text || "") }}
                     />
                     <div className="mt-2 flex items-center gap-4 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1">

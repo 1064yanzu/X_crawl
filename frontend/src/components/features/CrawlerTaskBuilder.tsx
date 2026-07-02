@@ -38,7 +38,7 @@ export function CrawlerTaskBuilder() {
             <header className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2">
                     <p className="font-mono text-[10.5px] uppercase tracking-[0.28em] text-[color:var(--fg-subtle)]">
-                        Lead story · Task builder
+                        今日要事 · 任务构造
                     </p>
                     <h2
                         id="task-builder-heading"

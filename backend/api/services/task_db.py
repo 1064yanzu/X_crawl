@@ -50,6 +50,14 @@ def _get_conn() -> sqlite3.Connection:
         conn.execute("PRAGMA temp_store=MEMORY")
         conn.execute("PRAGMA cache_size=-20000")  # 20MB
         conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+        # 并发写入下避免偶发 "database is locked"：等待持锁者释放而非立即报错
+        try:
+            from config import settings as _settings
+
+            busy_ms = max(0, int(getattr(_settings, "db_busy_timeout_ms", 5000)))
+        except Exception:
+            busy_ms = 5000
+        conn.execute(f"PRAGMA busy_timeout={busy_ms}")
 
         _local.conn = conn
     return conn
@@ -243,6 +251,18 @@ def init_db(db_path: str | Path) -> None:
             logger.warning(f"清理过期 tweet_fingerprints 失败: {cleanup_err}")
 
         conn.commit()
+    # 启动时执行 schema 迁移（用 user_version 控制，幂等）
+    try:
+        from api.services.migrations import apply_pending
+
+        result = apply_pending(_get_conn(), _DB_PATH)
+        if result.get("applied"):
+            logger.info(
+                f"schema 迁移完成 v{result['from']}→v{result['to']}: "
+                f"applied={result['applied']}, backup={result.get('backup')}"
+            )
+    except Exception as e:
+        logger.warning(f"schema 迁移失败（不阻塞启动）: {e}")
     logger.info(f"任务数据库已初始化: {_DB_PATH}")
 
 
@@ -661,3 +681,70 @@ def load_task_queues() -> list[dict]:
     except Exception as e:
         logger.error(f"读取任务队列失败: {e}", exc_info=True)
         return []
+
+
+# ─── 异步友好包装 + WAL 维护 ────────────────────────────────────────────────
+
+async def run_in_pool(fn, *args, **kwargs):
+    """把同步 SQLite 调用丢到线程池执行，避免阻塞 FastAPI 事件循环。
+
+    用法：``rows = await run_in_pool(load_all_tasks)``。
+    仅建议在 async 路由里、对可能较慢的查询使用；高频内存层操作无需包装。
+    """
+    import asyncio
+
+    return await asyncio.to_thread(lambda: fn(*args, **kwargs))
+
+
+def wal_checkpoint(mode: str = "TRUNCATE") -> bool:
+    """执行 WAL checkpoint，回收 -wal 文件空间。失败不抛出。"""
+    if _DB_PATH is None:
+        return False
+    try:
+        with _get_conn() as conn:
+            conn.execute(f"PRAGMA wal_checkpoint({mode})")
+        return True
+    except Exception as e:
+        logger.debug(f"WAL checkpoint 失败（忽略）: {e}")
+        return False
+
+
+_maint_thread: Optional["threading.Thread"] = None
+_maint_stop = threading.Event()
+
+
+def _maintenance_loop() -> None:
+    while not _maint_stop.is_set():
+        try:
+            from config import settings
+
+            interval_min = int(getattr(settings, "db_wal_checkpoint_interval_min", 10))
+        except Exception:
+            interval_min = 10
+        if interval_min <= 0:
+            # 禁用：休眠较长时间后再检查配置是否被改回
+            if _maint_stop.wait(timeout=300):
+                break
+            continue
+        if _maint_stop.wait(timeout=interval_min * 60):
+            break
+        wal_checkpoint("TRUNCATE")
+
+
+def start_db_maintenance() -> None:
+    """启动 WAL checkpoint 周期维护守护线程（幂等）。"""
+    global _maint_thread
+    if _maint_thread is not None and _maint_thread.is_alive():
+        return
+    _maint_stop.clear()
+    _maint_thread = threading.Thread(
+        target=_maintenance_loop, daemon=True, name="task-db-maintenance"
+    )
+    _maint_thread.start()
+    logger.info("任务数据库 WAL 维护守护线程已启动")
+
+
+def stop_db_maintenance() -> None:
+    _maint_stop.set()
+    # 退出前做一次 checkpoint，尽量缩小 -wal 文件
+    wal_checkpoint("TRUNCATE")

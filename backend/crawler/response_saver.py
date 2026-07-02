@@ -164,75 +164,158 @@ def delete_task_responses(task_id: str) -> int:
 
 
 def cleanup_old_responses() -> dict:
-    """
-    启动时清理超过 7 天且任务状态为 done 的 raw_responses 目录。
+    """启动时执行一次滚动清理（保持向后兼容的入口名，委托 sweep_raw_responses）。"""
+    return sweep_raw_responses(reason="startup")
 
-    Returns:
-        清理统计信息
-    """
-    import shutil
-    import time
 
-    base = resolve_data_path(settings.raw_responses_dir)
-    if not base.exists():
-        return {"deleted_tasks": 0, "freed_bytes": 0}
+# ─── 滚动清理：终态 TTL / 单任务大小 / 全局大小 三条规则 ───────────────────
 
-    # 获取所有已完成任务的 task_id
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+
+_cleanup_thread: Optional[threading.Thread] = None
+_cleanup_stop = threading.Event()
+_cleanup_wake = threading.Event()
+
+
+def _terminal_task_ids() -> set:
+    """已完成/已停止/失败的任务 ID 集合（只清理终态任务，永不动正在写入的目录）。"""
     try:
         from api.services import task_db
+
         conn = task_db._get_conn()
-        done_task_ids = set(
+        return set(
             row["task_id"]
             for row in conn.execute(
                 "SELECT task_id FROM tasks WHERE status IN ('done', 'stopped', 'failed')"
             ).fetchall()
         )
     except Exception as e:
-        logger.warning(f"无法获取已完成任务列表: {e}")
-        done_task_ids = set()
+        logger.warning(f"无法获取终态任务列表（跳过本轮清理）: {e}")
+        return set()
 
-    deleted_count = 0
-    freed_bytes = 0
-    cutoff_time = time.time() - (7 * 24 * 3600)  # 7 天前
 
-    for task_dir in base.iterdir():
-        if not task_dir.is_dir():
+def _dir_size_bytes(path: Path) -> int:
+    try:
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except Exception:
+        return 0
+
+
+def sweep_raw_responses(*, reason: str = "scheduled") -> dict:
+    """
+    按三条规则滚动清理 raw_responses 归档（仅终态任务，正在写入的目录绝不删）：
+      1. 终态任务归档目录 mtime 超过 TTL（raw_responses_terminal_ttl_hours）
+      2. 单任务归档总大小超过 raw_responses_task_max_mb
+      3. 全局归档总大小超过 raw_responses_global_max_gb → 按最旧优先删终态目录至回落
+
+    Returns: {"deleted_tasks", "freed_bytes", "remaining_bytes", "reason"}
+    """
+    import shutil
+
+    base = resolve_data_path(settings.raw_responses_dir)
+    if not base.exists():
+        return {"deleted_tasks": 0, "freed_bytes": 0, "remaining_bytes": 0, "reason": reason}
+
+    terminal = _terminal_task_ids()
+    ttl_sec = max(0.0, float(getattr(settings, "raw_responses_terminal_ttl_hours", 24.0))) * 3600.0
+    task_max = max(0.0, float(getattr(settings, "raw_responses_task_max_mb", 512.0))) * 1024 * 1024
+    global_max = max(0.0, float(getattr(settings, "raw_responses_global_max_gb", 2.0))) * 1024 ** 3
+    now = _time.time()
+
+    deleted = 0
+    freed = 0
+
+    # 收集目录信息
+    dirs: list[tuple] = []  # (task_id, path, size, mtime)
+    for d in base.iterdir():
+        if not d.is_dir():
             continue
-
-        task_id = task_dir.name
-        # 只清理已完成的任务
-        if task_id not in done_task_ids:
-            continue
-
-        # 检查目录修改时间
         try:
-            mtime = task_dir.stat().st_mtime
-            if mtime > cutoff_time:
-                continue
-
-            # 计算目录大小
-            total_size = sum(
-                f.stat().st_size
-                for f in task_dir.rglob("*")
-                if f.is_file()
-            )
-
-            # 删除目录
-            shutil.rmtree(task_dir, ignore_errors=True)
-            deleted_count += 1
-            freed_bytes += total_size
-            logger.info(f"已清理过期 raw_responses 目录: {task_id} ({total_size / 1024 / 1024:.1f} MB)")
-
-        except Exception as e:
-            logger.debug(f"清理目录 {task_dir} 失败: {e}")
+            dirs.append((d.name, d, _dir_size_bytes(d), d.stat().st_mtime))
+        except Exception:
             continue
 
-    if deleted_count > 0:
-        logger.info(
-            f"启动时清理完成: 删除 {deleted_count} 个过期目录，释放 {freed_bytes / 1024 / 1024:.1f} MB"
-        )
+    # 规则 1 + 2：终态任务 且（TTL 超时 或 单任务超限）
+    survivors: list[tuple] = []
+    for tid, path, size, mtime in dirs:
+        is_terminal = tid in terminal
+        over_ttl = ttl_sec > 0 and (now - mtime) > ttl_sec
+        over_size = task_max > 0 and size > task_max
+        if is_terminal and (over_ttl or over_size):
+            shutil.rmtree(path, ignore_errors=True)
+            deleted += 1
+            freed += size
+            logger.info(
+                f"滚动清理归档目录 {tid} ({size/1024/1024:.1f} MB, "
+                f"{'TTL' if over_ttl else '超限'})"
+            )
+        else:
+            survivors.append((tid, path, size, mtime))
 
-    return {"deleted_tasks": deleted_count, "freed_bytes": freed_bytes}
+    # 规则 3：全局超限 → 删最旧的终态目录直到回落
+    total = sum(s for _, _, s, _ in survivors)
+    if global_max > 0 and total > global_max:
+        for tid, path, size, mtime in sorted(survivors, key=lambda x: x[3]):
+            if total <= global_max:
+                break
+            if tid not in terminal:
+                continue  # 活跃任务不动
+            shutil.rmtree(path, ignore_errors=True)
+            deleted += 1
+            freed += size
+            total -= size
+            logger.info(f"全局归档超限，清理最旧目录 {tid} ({size/1024/1024:.1f} MB)")
+
+    if deleted > 0:
+        logger.info(
+            f"raw_responses 滚动清理完成（{reason}）: 删除 {deleted} 个目录，"
+            f"释放 {freed/1024/1024:.1f} MB，剩余 {total/1024/1024:.1f} MB"
+        )
+    return {
+        "deleted_tasks": deleted,
+        "freed_bytes": freed,
+        "remaining_bytes": int(total),
+        "reason": reason,
+    }
+
+
+def _cleanup_loop() -> None:
+    while not _cleanup_stop.is_set():
+        interval_min = max(5, int(getattr(settings, "raw_responses_cleanup_interval_min", 30)))
+        _cleanup_wake.wait(timeout=interval_min * 60)
+        _cleanup_wake.clear()
+        if _cleanup_stop.is_set():
+            break
+        if not bool(getattr(settings, "raw_responses_cleanup_enabled", True)):
+            continue
+        try:
+            sweep_raw_responses(reason="scheduled")
+        except Exception as e:
+            logger.warning(f"后台滚动清理异常（忽略继续）: {e}")
+
+
+def start_cleanup_daemon() -> None:
+    """启动 raw_responses 滚动清理后台守护线程（幂等）。"""
+    global _cleanup_thread
+    if _cleanup_thread is not None and _cleanup_thread.is_alive():
+        return
+    _cleanup_stop.clear()
+    _cleanup_thread = threading.Thread(
+        target=_cleanup_loop, daemon=True, name="raw-responses-cleanup"
+    )
+    _cleanup_thread.start()
+    logger.info("raw_responses 滚动清理守护线程已启动")
+
+
+def stop_cleanup_daemon() -> None:
+    _cleanup_stop.set()
+    _cleanup_wake.set()
+
+
+def reschedule_cleanup() -> None:
+    """配置变更后唤醒清理循环，立即按新阈值执行一次并重排间隔。"""
+    _cleanup_wake.set()
 
 
 # ═══════════════════════════════════════════════════════════════════

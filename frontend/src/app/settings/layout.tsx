@@ -36,7 +36,7 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     return (
         <div className="space-y-12 pb-16 editorial-rise">
             <PageHeader
-                eyebrow="Issue 01 · Settings"
+                eyebrow="第 01 期 · 设置"
                 icon={Settings}
                 title="系统设置"
                 description="管理系统与平台配置。"

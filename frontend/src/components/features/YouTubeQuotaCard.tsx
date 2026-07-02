@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Activity, Gauge, Loader2, RefreshCw, ShieldCheck, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,32 +18,33 @@ function formatDateTime(iso: string | null): string {
     }
 }
 
+const QUOTA_QUERY_KEY = ["youtube-quota"] as const;
+const QUOTA_POLL_MS = 60_000;
+
 export function YouTubeQuotaCard() {
     const { push } = useToast();
-    const [summary, setSummary] = React.useState<YouTubeQuotaSummary | null>(null);
-    const [loading, setLoading] = React.useState(true);
+    const errorReportedRef = React.useRef(false);
 
-    const refresh = React.useCallback(async () => {
-        setLoading(true);
-        try {
-            const result = await api.youtubeApiKeys.quota();
-            setSummary(result);
-        } catch (error) {
+    const { data: summary, isLoading: loading, error, refetch } = useQuery<YouTubeQuotaSummary>({
+        queryKey: QUOTA_QUERY_KEY,
+        queryFn: () => api.youtubeApiKeys.quota(),
+        refetchInterval: QUOTA_POLL_MS,
+        refetchIntervalInBackground: false,
+        placeholderData: (prev) => prev,
+    });
+
+    React.useEffect(() => {
+        if (error && !errorReportedRef.current) {
+            errorReportedRef.current = true;
             push({
                 type: "error",
                 title: "加载配额失败",
                 description: error instanceof Error ? error.message : String(error),
             });
-        } finally {
-            setLoading(false);
+        } else if (!error) {
+            errorReportedRef.current = false;
         }
-    }, [push]);
-
-    React.useEffect(() => {
-        void refresh();
-        const timer = window.setInterval(refresh, 60_000);
-        return () => window.clearInterval(timer);
-    }, [refresh]);
+    }, [error, push]);
 
     const usagePct = React.useMemo(() => {
         if (!summary || summary.total_daily_limit <= 0) return 0;
@@ -60,7 +62,7 @@ export function YouTubeQuotaCard() {
                         每个 YouTube API Key 默认每日 10,000 单位；搜索 100 单位/次，list 类 1 单位/次。
                     </CardDescription>
                 </div>
-                <Button variant="outline" size="sm" className="rounded-md" onClick={refresh} disabled={loading}>
+                <Button variant="outline" size="sm" className="rounded-md" onClick={() => { void refetch(); }} disabled={loading}>
                     <RefreshCw className={cn("mr-1 h-4 w-4", loading && "animate-spin")} />
                     刷新
                 </Button>
